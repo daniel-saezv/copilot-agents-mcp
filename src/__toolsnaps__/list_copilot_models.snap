@@ -48,7 +48,10 @@
               "type": "object",
               "properties": {
                 "state": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -115,6 +118,7 @@
             "name",
             "vendor",
             "preview",
+            "policy",
             "billing"
           ],
           "additionalProperties": false

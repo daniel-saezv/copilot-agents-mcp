@@ -59,7 +59,7 @@ Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ej
 - `src/cli.ts` arranca stdio, HTTP o el subcomando `watch`.
 - `src/server.ts` registra las herramientas. `src/http.ts` escucha en `127.0.0.1`. `src/selection.ts` aplica toolsets y cabeceras `X-MCP-*`.
 - `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial.
-- `src/swe-models.ts` valida y lee `GET /agents/swe/models`. La base sale de GraphQL y no está escrita en el código.
+- `src/swe-models.ts` valida y lee `GET /agents/swe/models`. La base sale de GraphQL y no está escrita en el código. `policy` es opcional: si falta, la salida pone `policy.state` a `null`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`.
 - `src/state.ts`, `src/watch.ts` y `src/notify.ts` guardan el estado local y avisan una vez.
 - `fixtures/` trae los ejemplos del OpenAPI. `src/__toolsnaps__/` fija `tools/list`.
 

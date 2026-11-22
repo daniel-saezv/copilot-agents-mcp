@@ -25,7 +25,7 @@ const sweModelSchema = z.object({
   name: z.string(),
   vendor: z.string(),
   preview: z.boolean(),
-  policy: z.object({ state: z.string() }).strict().optional(),
+  policy: z.object({ state: z.string().nullable() }).strict(),
   billing: z.object({
     token_prices: tokenPricesSchema.optional(),
     promo: promoSchema.optional(),
@@ -139,32 +139,35 @@ async function readJson(fetchImpl: typeof fetch, token: string, url: string, ini
 function readModel(item: unknown, index: number): SweModel {
   const where = `data[${index}]`;
   if (!isRecord(item)) throw new ModelsError(`${where} no es un objeto`);
+  if (!isRecord(item.billing)) throw new ModelsError(`falta ${where}.billing`);
+  const hasMultiplier = Object.prototype.hasOwnProperty.call(item.billing, "multiplier");
+  const hasPrices = Object.prototype.hasOwnProperty.call(item.billing, "token_prices");
   const model: SweModel = {
     id: readString(item, "id", `${where}.id`),
     name: readString(item, "name", `${where}.name`),
     vendor: readString(item, "vendor", `${where}.vendor`),
     preview: readBoolean(item, "preview", `${where}.preview`),
+    policy: readPolicy(item, `${where}.policy`),
     billing: {},
   };
-  if (!isRecord(item.billing)) throw new ModelsError(`falta ${where}.billing`);
-  const multiplier = Object.prototype.hasOwnProperty.call(item.billing, "multiplier");
-  if (multiplier) {
+  if (hasMultiplier) {
     model.billing.multiplier = readNumber(item.billing, "multiplier", `${where}.billing.multiplier`);
-  } else {
-    if (!isRecord(item.policy)) throw new ModelsError(`falta ${where}.policy.state`);
-    model.policy = { state: readString(item.policy, "state", `${where}.policy.state`) };
-    model.billing.token_prices = readPrices(item.billing.token_prices, `${where}.billing.token_prices`);
   }
-  if (isRecord(item.policy) && multiplier) {
-    model.policy = { state: readString(item.policy, "state", `${where}.policy.state`) };
-  }
-  if (Object.prototype.hasOwnProperty.call(item.billing, "token_prices") && multiplier) {
+  if (hasPrices || !hasMultiplier) {
     model.billing.token_prices = readPrices(item.billing.token_prices, `${where}.billing.token_prices`);
   }
   if (Object.prototype.hasOwnProperty.call(item.billing, "promo")) {
     model.billing.promo = readPromo(item.billing.promo, `${where}.billing.promo`);
   }
   return model;
+}
+
+function readPolicy(item: Record<string, unknown>, path: string): { state: string | null } {
+  if (!Object.prototype.hasOwnProperty.call(item, "policy") || item.policy === undefined || item.policy === null) {
+    return { state: null };
+  }
+  if (!isRecord(item.policy)) throw new ModelsError(`${path} no es un objeto`);
+  return { state: readString(item.policy, "state", `${path}.state`) };
 }
 
 function readPrices(value: unknown, path: string): SweModel["billing"]["token_prices"] {

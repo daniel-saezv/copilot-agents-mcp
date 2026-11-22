@@ -74,7 +74,7 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 
 `create_agent_task` recibe `repo` (`owner/name`), `prompt`, `model` y, si quieres, `base_ref`, `head_ref`, `custom_agent` y `create_pull_request`. El modelo se envía tal cual: no hay una lista en el código. La API responde 201 y puede rechazar el modelo después. Si ya se vio ese rechazo, la herramienta corta con `isError` y lista los modelos vistos aceptados. Si el rechazo llega más tarde, el mismo error queda en el estado y en el aviso.
 
-`get_agent_task` hace una sola lectura. `list_copilot_models` pide a GraphQL (`viewer.copilotEndpoints.api`) la base de la API de Copilot y, en cada llamada, lee `{api}/agents/swe/models`. No guarda caché ni mezcla tareas. La respuesta cita esa URL y `fetched_at`. Si GraphQL o el GET no responden 200, o el formato no cuadra, devuelve un error y no inventa modelos. Los precios salen tal cual, con `batch_size`. Un modelo con `billing.multiplier` no necesita `policy` ni `token_prices`.
+`get_agent_task` hace una sola lectura. `list_copilot_models` pide a GraphQL (`viewer.copilotEndpoints.api`) la base de la API de Copilot y, en cada llamada, lee `{api}/agents/swe/models`. No guarda caché ni mezcla tareas. La respuesta cita esa URL y `fetched_at`. Si GraphQL o el GET no responden 200, o el formato no cuadra, devuelve un error y no inventa modelos. Los precios salen tal cual, con `batch_size`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`. `policy` es opcional: si no viene, la salida pone `policy.state` a `null`; si viene, `state` es un string.
 
 ## Aviso al terminar
 

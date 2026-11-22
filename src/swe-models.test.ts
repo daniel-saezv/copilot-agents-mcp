@@ -45,6 +45,14 @@ const promoModel = {
   },
 };
 
+const pricedWithoutPolicy = {
+  id: "test-model-c",
+  name: "Modelo sin política",
+  vendor: "Fabricante Ficticio",
+  preview: false,
+  billing: { token_prices: { input_price: 7, output_price: 8, cache_price: 2, batch_size: 100 } },
+};
+
 const routerModel = {
   id: "test-router",
   name: "Enrutador de prueba",
@@ -71,10 +79,11 @@ const routerWithPromo = {
 const fixtures = [
   { data: [] },
   { data: [tokenModel] },
+  { data: [pricedWithoutPolicy] },
   { data: [promoModel] },
   { data: [routerModel] },
   { data: [routerWithPromo] },
-  { data: [tokenModel, promoModel, routerModel, routerWithPromo] },
+  { data: [tokenModel, promoModel, pricedWithoutPolicy, routerModel, routerWithPromo] },
 ];
 
 describe("validador de /agents/swe/models", () => {
@@ -104,8 +113,11 @@ describe("validador de /agents/swe/models", () => {
     expect(() => validateSweModels({ data: [{ id: "test-router", name: "Enrutador", vendor: "Ficticio", preview: false, billing: { multiplier: "alto" } }] })).toThrow(/data\[0\]\.billing\.multiplier no es number/);
     expect(() => validateSweModels({ data: [{ ...promoModel, billing: { ...promoModel.billing, promo: { discount_percent: 15, message: "sin fecha" } } }] })).toThrow(/falta data\[0\]\.billing\.promo\.ends_at/);
     expect(() => validateSweModels({
-      data: [tokenModel, { id: "test-model-c", name: "Incompleto", vendor: "Ficticio", preview: false, policy: { state: "enabled" }, billing: {} }],
+      data: [tokenModel, { id: "test-model-d", name: "Incompleto", vendor: "Ficticio", preview: false, policy: { state: "enabled" }, billing: {} }],
     })).toThrow(/falta data\[1\]\.billing\.token_prices/);
+    expect(() => validateSweModels({
+      data: [{ ...pricedWithoutPolicy, policy: {} }],
+    })).toThrow(/falta data\[0\]\.policy\.state/);
   });
 
   it("no guarda la URL del endpoint ni modelos reales", () => {
@@ -179,6 +191,17 @@ describe("lectura de /agents/swe/models", () => {
     expect(textOf(result)).not.toContain("test-model-a");
     expect(result).not.toHaveProperty("structuredContent");
   });
+
+  it("devuelve isError si policy viene sin state", async () => {
+    const result = await toolError(async (url) => {
+      if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
+      return json({ data: [{ ...pricedWithoutPolicy, policy: { terms: "sin estado" } }] });
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("HTTP 200");
+    expect(textOf(result)).toContain("falta data[0].policy.state");
+    expect(textOf(result)).not.toContain("test-model-c");
+  });
 });
 
 function expectSame(input: {
@@ -198,7 +221,7 @@ function expectSame(input: {
   expect(output.vendor).toBe(input.vendor);
   expect(output.preview).toBe(input.preview);
   if (input.policy) expect(output.policy).toEqual({ state: input.policy.state });
-  else expect(output.policy).toBeUndefined();
+  else expect(output.policy).toEqual({ state: null });
   if (input.billing.token_prices) expect(output.billing.token_prices).toEqual(input.billing.token_prices);
   else expect(output.billing.token_prices).toBeUndefined();
   if (input.billing.promo) expect(output.billing.promo).toEqual(input.billing.promo);
