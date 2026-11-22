@@ -1,74 +1,72 @@
 ---
 name: technical-writing
-description: Estándar de escritura técnica en capas (Diátaxis, estilo desarrollador, instrucciones claras). Usar al redactar o revisar docs, RFCs, README, descripciones de PR o mensajes de commit.
+description: "Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages."
+disable-model-invocation: true
 ---
 
-# Escritura técnica
+# Technical writing
 
-Escribe para que alguien cansado entienda a la primera.
+In Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per session before you follow this skill. It maps the Cursor names in pstack skills to Claude Code.
 
-- Quita cada palabra que no trabaja.
-- Usa la palabra corta y cotidiana: «usa», no «utiliza».
-- Si una regla empeora una frase, arréglala de otro modo o déjala.
-- Escribe el símbolo, archivo, flag o comando real, no un sinónimo.
-- No inventes jerga. Usa lo que un desarrollador diría en voz alta. Explica un patrón con nombre la primera vez.
+Write so a tired engineer understands on the first read.
 
-## Ritmo
+- Cut every word that does no work.
+- Use the short, everyday word: "use", not "utilize".
+- When a rule makes a sentence worse, fix the sentence another way or leave it alone.
+- Write the real symbol, file, flag, or command name, not a synonym or a description of it.
+- Don't invent jargon. Use the words a developer would say out loud. Say what a named pattern means the first time.
 
-- Alterna longitudes de frase. Parte la que lleva dos ideas. Conserva la larga que lleva una sola.
-- En explicación puede haber opinión; en referencia, secado.
-- Sé concreto. No «los cambios de esquema pueden dar problemas», sino «un renombre de columna rompe el build».
+## Vary the rhythm
 
-## Elige el modo primero (Diátaxis)
+- Mix sentence lengths. Split the sentence that carries two thoughts. Keep the long sentence that carries one.
+- Have a view in explanation. Keep reference dry.
+- Be specific. Not "schema changes can cause issues" but "a column rename fails the build".
 
-Un documento, un modo. No mezcles; divide y enlaza.
+## Pick the mode first (Diátaxis)
 
-- **Tutorial: aprender haciendo.** Di qué construirá quien aprende. Cada paso produce un resultado visible y dices qué debe ver. La explicación, una cláusula y un enlace.
-- **Guía práctica: pasos hacia un objetivo.** Resuelve el problema del lector. Asume competencia. Solo acción. Permite bifurcaciones. Nombra la guía por la tarea.
-- **Referencia: hechos para consultar.** Solo describe. Seco, completo y seguro. Refleja la estructura de lo descrito.
-- **Explicación: entender el porqué.** Un tema acotado. Contexto: decisiones de diseño, historia, restricciones, alternativas. La opinión solo aquí.
+One document, one mode. Don't mix modes. Split and link instead.
 
-## Frases al lector (estilo desarrollador)
+- **Tutorial: learning by doing.** Say what the learner will build. Every step produces a visible result, and you say what they should see. Explanation gets one clause and a link.
+- **How-to: steps to a goal.** Solve the reader's problem. Assume competence. Action only. Allow forks. Name the guide by the task.
+- **Reference: facts for lookup.** Only describe. Be dry, complete, and sure. Mirror the structure of the thing described.
+- **Explanation: understanding and why.** One bounded topic. Give context: design decisions, history, constraints, alternatives. Opinion is allowed here and nowhere else.
 
-- Habla al lector como «tú», en presente.
-- Di quién hace qué. La pasiva solo si el actor es irrelevante o desconocido.
-- Instrucciones como órdenes. Condición antes del paso; caso habitual primero.
-- Sin buzzwords, sin metáforas, sin «por favor», y nunca «simplemente», «fácil» o «rápido» en un procedimiento.
-- No anuncies lo que vas a decir; no empieces frases seguidas igual.
-- Enlaces con palabras que digan el destino.
-- Títulos con el punto, en estilo frase. Un h1 por página, sin saltar niveles.
-- Listas numeradas para secuencias; viñetas para el resto. Introduce la lista con frase completa. Ítems paralelos.
-- Código en fuente monoespaciada. Elementos de interfaz en negrita. Comas seriadas. Sin «etc.».
+## Write sentences to the reader (Google developer style)
 
-## Una idea por frase
+- Talk to the reader as "you", in the present tense.
+- Say who does what. Passive is fine only when the actor is unknown or beside the point.
+- Write instructions as commands. Put the condition before the instruction and the common case first.
+- No buzzwords, no figurative language, no "please", and never "simply", "easy", or "quickly" in a procedure.
+- Don't pre-announce, and don't start consecutive sentences with the same phrase.
+- Link with words that say where the link goes.
+- Headings carry the point, in sentence case. One h1 per page, no skipped levels.
+- Numbered lists for sequences, bullets for everything else. Introduce a list with a complete sentence. Keep items parallel.
+- Code goes in code font. UI elements go in bold. Use serial commas. Drop "etc.".
 
-- Una instrucción por frase. Un pensamiento por frase en el resto.
-- Parte instrucciones de más de unas veinte palabras y otras frases de más de unas veinticinco.
-- Advertencia o condición antes del paso que protege.
-- Conserva artículos definidos e indefinidos.
-- Una palabra por acción; un significado por palabra.
-- Procedimientos en imperativo directo, no narración ni pasiva.
-- Evita gerundios donde puedas.
+## Make statements load one at a time (STE rules)
 
-## Sin doble lectura
+- One instruction per sentence. One thought per sentence everywhere else.
+- Split instructions longer than about 20 words and other sentences longer than about 25.
+- Put the warning or condition before the step it guards.
+- Keep "the" and "a".
+- Give each word one meaning, and pick one word per action.
+- Write procedures as direct commands, never as narration and never in the passive.
+- Avoid "-ing" words where you can.
 
-- «Solo» y «no» junto a la palabra que modifican.
-- Rompe cadenas largas de sustantivos.
-- Cada «esto», «ello» o «lo» apunta a algo obvio. No uses «lo cual» para una cláusula entera.
-- No omitas verbos ni palabras de enlace como «que».
-- Repite el artículo en series si evita ambigüedad. Di qué une «y» u «o».
-- Puntos, no punto y coma ni rayas largas. Sin barras ni «(s)». El texto entre paréntesis debe ser gramaticalmente completo.
-- Un nombre por cosa, en todo el documento.
-- Sin modismos, latinismos abreviados ni metáforas.
+## Leave no sentence open to two readings (Global English)
 
-## Relleno típico de IA
+- Keep words like "only" and "not" next to the word they change.
+- Break up long noun strings.
+- Make every "it", "they", and "this" point at one obvious thing. Never use "this" or "which" to point at a whole clause.
+- Don't drop verbs, or the small words that show structure, such as "that".
+- Repeat the article in a series when it prevents a misread. Say which parts "and" or "or" joins.
+- Use periods, not semicolons or em dashes. No slashes, and no "(s)". Make text in parentheses a full grammatical unit.
+- Call each thing by one name, everywhere.
+- Skip idioms, colloquialisms, Latin abbreviations, and metaphors.
 
-Evita vocabulario hueco («robusto», «meticuloso», «crucial», «es importante destacar»), muletillas de transición vacías, hedging innecesario y tablas o listas que no aportan dato nuevo.
+## Voice and repo specifics
 
-## PRs y commits
-
-Las descripciones de PR y los mensajes de commit también son escritura. Todas las capas salvo Diátaxis aplican. El cuerpo de la PR es un briefing de menos de un minuto. No pegues logs largos ni tablas de métricas; enlázalas.
-
-Las cadenas de interfaz de producto no son documentación: sigue las guías de copy del producto.
-
-Indenta fragmentos de código con tabuladores. Rutas reales. Cada conteo o árbol debe ser cierto en el commit que lo afirma, con el comando para regenerarlo.
+- Apply the **unslop** skill to every doc this skill touches. That skill owns the slop-pattern catalog: AI vocabulary, filler, hedging, formatting tells.
+- PR descriptions and commit messages are writing too. Every layer except Diátaxis applies to them. A PR body is a briefing that a reviewer can read in under a minute. Do not paste swarm logs, SHA lists, or metric tables. Link them.
+- Product UI strings are not documentation. Use your product's copy guidelines for those.
+- Indent code snippets with tabs. Write real paths. Make every count or tree claim true at the commit that lands it, and include the command that regenerates it.

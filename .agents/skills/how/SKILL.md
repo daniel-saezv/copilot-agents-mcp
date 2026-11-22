@@ -1,17 +1,23 @@
 ---
 name: how
-description: Para «cómo funciona X», recorridos de código antes de cambiar algo y preguntas de ubicación o capas («dónde vive esto», «qué módulo lo posee»).
+description: "Use for \"how does X work\", code walkthroughs before changing something, and placement / ownership / layering questions (\"where should this live\", \"which package owns this\", \"is this the right layer\"). Explains subsystem architecture, runtime flow, onboarding mental models. Use why for motivation."
+disable-model-invocation: true
 ---
 
-# Cómo funciona
+# How
 
-Explora el código para responder «¿cómo funciona X?».
+In Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per session before you follow this skill. It maps the Cursor names in pstack skills to Claude Code.
 
-Si el alcance es ambiguo, declara tu interpretación y explora. La persona puede corregir el rumbo.
+Explore the codebase to answer "how does X work?" questions.
 
-## Enfoque
+If the scope is ambiguous, state your interpretation and explore. The user can redirect.
 
-1. **Acota la pregunta.** Qué subsistema, flujo o pieza interesa y qué necesita saber quien pregunta para trabajar con confianza.
-2. **Explora de forma sistemática.** Sigue entradas, dependencias y datos reales. Lee el código fuente de bibliotecas llamadas cuando el comportamiento no esté claro en el propio repo.
-3. **Construye un modelo mental.** Arquitectura, flujo en tiempo de ejecución, dueños de estado y contratos entre capas. Bastante para que alguien senior ajeno al área pueda empezar a cambiar cosas con criterio.
-4. **Presenta con claridad.** Prosa directa, referencias a rutas reales. Edita por claridad; no reescribas en exceso ni inventes detalles no vistos en el código.
+## 1. Explain
+
+Spawn one Task subagent with `subagent_type: generalPurpose` and `readonly: true` that explores and explains in one pass. Give it the user's question and this brief:
+
+> You are writing an architectural explanation for a senior engineer. Explore the codebase and write an explanation that a senior engineer unfamiliar with this area could read and walk away with a solid mental model. They should understand the architecture well enough to start working in it confidently. You have read-only access to the codebase.
+
+## 2. Present
+
+Present the subagent's output. Light edits for clarity or context from the conversation are fine. Do not substantially rewrite it.
