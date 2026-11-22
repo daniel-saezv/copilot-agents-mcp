@@ -131,7 +131,8 @@ async function watcherAlive(lockDir: string): Promise<boolean> {
 export function startDetachedWatcher(env: NodeJS.ProcessEnv = process.env): void {
   const logPath = env.COPILOT_AGENTS_LOG;
   const stderr = logPath ? openSync(logPath, "a") : "ignore";
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./cli.ts", import.meta.url)), "watch"], {
+  const entry = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./cli.ts" : "./cli.js", import.meta.url));
+  const child = spawn(process.execPath, [entry, "watch"], {
     detached: true,
     windowsHide: true,
     stdio: ["ignore", "ignore", stderr],

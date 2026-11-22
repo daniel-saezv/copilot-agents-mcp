@@ -52,7 +52,7 @@ Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, leer el est
 
 ### Stack
 
-Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. TypeScript en modo strip de Node: el bin es `src/cli.ts` y no hay paso de compilación. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `ajv` 8, `ajv-formats` 3 y `yaml` 2. Tests con Vitest 5.1.1. Lint con ESLint 9 y `typescript-eslint`. Tipos con `tsc --noEmit`.
+Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `ajv` 8, `ajv-formats` 3 y `yaml` 2. Tests con Vitest 5.1.1. Lint con ESLint 9 y `typescript-eslint`. Tipos con `tsc --noEmit`.
 
 ### Estructura
 
@@ -72,11 +72,13 @@ npm run typecheck
 npm run lint
 npm run licenses
 npm audit --audit-level=low
+npm run build
 node src/cli.ts
+node dist/cli.js --help
 node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`. La segunda pasada de tests dejó 24 tests en 5 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 93 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo. No hay script de build: Node ejecuta los `.ts` directamente.
+`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 93 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
 
 ### Buenas prácticas de este stack
 

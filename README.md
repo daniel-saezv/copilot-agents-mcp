@@ -126,7 +126,10 @@ bash scripts/setup
 npm test
 npm run typecheck
 npm run lint
+npm run build
 ```
+
+`npm run build` genera `dist/`. `prepare` lo hace al instalar desde GitHub, porque Node no ejecuta TypeScript dentro de `node_modules`.
 
 Las reglas para agentes están en `AGENTS.md`.
 
