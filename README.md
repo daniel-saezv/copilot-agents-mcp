@@ -1,45 +1,137 @@
 # copilot-agents-mcp
 
-Servidor MCP remoto para lanzar y seguir agentes de GitHub Copilot en la nube desde cualquier cliente MCP.
+Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado y leer los precios oficiales de los modelos.
 
-Se apoya en la API REST de agent tasks de GitHub (`/agents/...`, versión `2026-03-10`, en public preview).
+No se despliega. Se ejecuta en tu máquina con stdio o, si lo pides, con HTTP en `127.0.0.1`.
 
-## Estado
+## Requisitos
 
-En construcción. Todavía no hay código: este repositorio solo contiene la configuración para agentes, este README y la licencia.
+- Node.js 22.18 o posterior (en Windows también).
+- Un token de GitHub con el permiso «Agent tasks: read and write» en los repositorios donde lances tareas. Hace falta para lanzar y leer. No hace falta para listar las herramientas ni para leer los precios.
 
-## Qué hará el incremento 1
+## Cómo preparar el entorno
 
-- Lanzar una tarea de Copilot en un repositorio, eligiendo el modelo. El modelo se pasa tal cual a la API.
-- Listar los modelos disponibles a partir de una fuente real, no de una tabla en el código. Para cada uno da el nombre exacto que acepta la API, el multiplicador de premium requests y otros datos útiles para elegir.
-- Consultar el estado de una tarea.
-- Avisar cuando la tarea llega a un estado final (`completed`, `failed`, `timed_out`, `cancelled` o `idle`). El aviso es un POST a una URL que se configura como secreto.
-- Si GitHub rechaza un modelo, devolver un error claro con la lista de modelos que ya se han visto aceptados.
+```bash
+bash scripts/setup
+```
 
-## Límites de la API de GitHub
+## Ejecutarlo
 
-- No hay endpoint para cancelar una tarea. Se cancela el run de Actions del agente.
-- No se puede responder dentro de una sesión en curso. Cada seguimiento es una tarea nueva sobre la misma rama (`head_ref`).
-- No hay webhook de fin de sesión.
-- El nivel de razonamiento no se puede elegir al lanzar una tarea.
+```bash
+npx -y github:daniel-saezv/copilot-agents-mcp
+```
 
-## Credenciales
+Eso abre el servidor por stdio. Para HTTP:
 
-- Hace falta un token de GitHub con el permiso «Agent tasks: read and write» en los repositorios donde se lancen tareas.
-- Los tokens se guardan como secretos del entorno de despliegue. Nunca se escriben en el repositorio, en los logs ni en un chat.
+```bash
+npx -y github:daniel-saezv/copilot-agents-mcp --http --port 3333
+```
 
-## Referencias
+El proceso escucha solo en `127.0.0.1`. La ruta es `/mcp`. También acepta `/mcp/readonly`, `/mcp/x/{toolset}` y las cabeceras `X-MCP-Toolsets`, `X-MCP-Tools`, `X-MCP-Exclude-Tools`, `X-MCP-Readonly` y `X-MCP-Features`.
 
-- [Agent tasks REST API](https://docs.github.com/en/rest/agent-tasks/agent-tasks)
-- [github/github-mcp-server](https://github.com/github/github-mcp-server), el MCP oficial cuyos estándares se siguen.
-- [fvegiard/copilot-cloud-agent-mcp](https://github.com/fvegiard/copilot-cloud-agent-mcp), un repositorio archivado con licencia MIT que se usa solo como referencia. Si se copia código suyo, se mantiene su aviso de copyright.
+El vigilante es otro proceso. `create_agent_task` lo arranca desacoplado. También puedes lanzarlo tú:
 
-## Desarrollo con agentes
+```bash
+npx -y github:daniel-saezv/copilot-agents-mcp watch
+```
 
-Las reglas para agentes están en `AGENTS.md` y las skills en `.agents/skills/`. Copilot lee las mismas reglas a través de `.github/copilot-instructions.md`.
+Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idle`. Guarda el estado en un archivo local y, al volver a arrancar, retoma las que no han terminado. Avisa una sola vez por tarea.
 
-En Windows, activa `git config --global core.symlinks true` antes de clonar. Sin esa opción, los enlaces simbólicos de `.claude/skills/` y `.github/copilot-instructions.md` se guardan como archivos de texto.
+## Configurarlo en un cliente MCP
+
+El token vive en el entorno del proceso, no en los argumentos ni en un archivo.
+
+Stdio:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_…",
+        "COPILOT_AGENTS_NOTIFY_URL": "https://ejemplo.invalid/aviso"
+      }
+    }
+  }
+}
+```
+
+HTTP: arranca el proceso con el token en el entorno y apunta el cliente a `http://127.0.0.1:3333/mcp`. El cliente no envía el token de GitHub.
+
+## Herramientas
+
+Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_automations` y `copilot_agent_merge` piden `--features=agent_automations` y `--features=agent_merge`. En esta versión no tienen herramientas.
+
+<!-- START AUTOMATED TOOLS -->
+| Herramienta | Toolset | Solo lectura | Descripción |
+| --- | --- | --- | --- |
+| `create_agent_task` | copilot_tasks | no | Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados. |
+| `get_agent_task` | copilot_tasks | sí | Lee una vez el estado de una tarea del agente de Copilot. |
+| `list_copilot_models` | copilot_models | sí | Lee la tabla oficial de precios de los modelos de Copilot y devuelve el nombre, el precio y las ofertas con fecha de fin. |
+<!-- END AUTOMATED TOOLS -->
+
+`create_agent_task` recibe `repo` (`owner/name`), `prompt`, `model` y, si quieres, `base_ref`, `head_ref`, `custom_agent` y `create_pull_request`. El modelo se envía tal cual: no hay una lista en el código. La API responde 201 y puede rechazar el modelo después. Si ya se vio ese rechazo, la herramienta corta con `isError` y lista los modelos vistos aceptados. Si el rechazo llega más tarde, el mismo error queda en el estado y en el aviso.
+
+`get_agent_task` hace una sola lectura. `list_copilot_models` lee, en cada llamada, la fuente de la página [Models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing). No mezcla tareas ni facturación. Si el formato cambia, devuelve un error y no inventa precios.
+
+## Aviso al terminar
+
+El aviso es una notificación del sistema (toast de Windows, `osascript` en macOS, `notify-send` en Linux) y, si configuras la URL, un POST JSON.
+
+Variables:
+
+- `COPILOT_AGENTS_NOTIFY_URL`: URL del POST. Si no está, no hay POST.
+- `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`: valor de la cabecera `Authorization`. Si no está, el POST no lleva esa cabecera.
+- `COPILOT_AGENTS_STATE_PATH`: archivo de estado. Por defecto, `~/.copilot-agents-mcp/state.json`.
+- `COPILOT_AGENTS_POLL_INTERVAL_MS`: pausa entre lecturas. Por defecto, 15000.
+- `COPILOT_AGENTS_LOG`: si está, el vigilante añade su error estándar a ese archivo.
+
+El POST lleva `Content-Type: application/json` y este cuerpo:
+
+```json
+{
+  "task_id": "0ad0914d-889f-4221-bdae-42074c1ab62e",
+  "repo": "octocat/hello-world",
+  "state": "completed",
+  "requested_model": "grok-4.7",
+  "resolved_model": "sweagent-capi:grok-4.7",
+  "pull_request": { "id": 42 },
+  "branch": { "head_ref": "copilot/demo", "base_ref": "main" },
+  "artifacts": [
+    { "type": "pull", "id": 42 },
+    { "type": "branch", "head_ref": "copilot/demo", "base_ref": "main" }
+  ],
+  "error": null,
+  "usage": { "type": "ai_credits", "amount": 1500000000, "amount_human": 1.5 },
+  "created_at": "2026-11-22T00:00:00Z",
+  "updated_at": "2026-11-22T00:01:00Z",
+  "completed_at": "2026-11-22T00:05:00Z"
+}
+```
+
+`resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `pull_request` y `branch` salen de `artifacts`. `error` es `null` o el texto del fallo; si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades: `amount_human` es ese valor dividido entre 1 000 000 000 y redondeado a un decimal. Con `premium_requests`, `amount_human` es el mismo número.
+
+## Variables del token
+
+`GITHUB_PERSONAL_ACCESS_TOKEN` es la que se usa. Si no está, se aceptan `GH_TOKEN` y, en último lugar, `GITHUB_TOKEN`. El token no se escribe en archivos, logs ni fixtures.
+
+Otras variables del servidor, iguales que en el MCP oficial: `GITHUB_TOOLSETS`, `GITHUB_TOOLS`, `GITHUB_EXCLUDE_TOOLS` y `GITHUB_READ_ONLY`.
+
+## Desarrollo
+
+```bash
+bash scripts/setup
+npm test
+npm run typecheck
+npm run lint
+```
+
+Las reglas para agentes están en `AGENTS.md`.
 
 ## Licencia
 
 [MIT](LICENSE).
+
+La referencia comunitaria [fvegiard/copilot-cloud-agent-mcp](https://github.com/fvegiard/copilot-cloud-agent-mcp) es MIT y no se copia código suyo. Los fixtures de precios vienen de [github/docs](https://github.com/github/docs) (CC-BY-4.0) y los de la API, de [github/rest-api-description](https://github.com/github/rest-api-description) (MIT).

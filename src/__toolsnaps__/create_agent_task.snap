@@ -1,0 +1,94 @@
+{
+  "name": "create_agent_task",
+  "title": "Lanzar tarea de Copilot",
+  "description": "Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string",
+        "description": "Repositorio en la forma owner/name."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "Instrucción para el agente."
+      },
+      "model": {
+        "type": "string",
+        "description": "Modelo. Se envía tal cual a la API, sin una lista cerrada."
+      },
+      "base_ref": {
+        "description": "Rama base para la rama nueva o la pull request.",
+        "type": "string"
+      },
+      "head_ref": {
+        "description": "Rama existente. Con base_ref, el agente hace commit en esa rama.",
+        "type": "string"
+      },
+      "custom_agent": {
+        "description": "Nombre del custom agent, sin la extensión.",
+        "type": "string"
+      },
+      "create_pull_request": {
+        "description": "Si es true, la API abre una pull request.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "repo",
+      "prompt",
+      "model"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string"
+      },
+      "requested_model": {
+        "type": "string"
+      },
+      "created_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "html_url": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "task_id",
+      "repo",
+      "state",
+      "requested_model",
+      "created_at",
+      "html_url"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "Lanzar tarea de Copilot",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}
