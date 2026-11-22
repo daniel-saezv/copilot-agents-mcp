@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "copilot-agents-mcp": "./src/cli.ts"
+    "copilot-agents-mcp": "./dist/cli.js"
   },
   "engines": {
     "node": ">=22.18"
