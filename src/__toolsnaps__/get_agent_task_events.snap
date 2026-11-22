@@ -1,25 +1,25 @@
 {
   "name": "get_agent_task_events",
-  "title": "Eventos de una tarea",
-  "description": "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Lee una página de eventos de una tarea (solo lectura).",
+  "title": "Get task events",
+  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Read one page of task events (read-only).",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Identificador de la tarea."
+        "description": "Task identifier."
       },
       "page": {
         "type": "integer",
         "exclusiveMinimum": 0,
         "maximum": 9007199254740991,
-        "description": "Página, desde 1."
+        "description": "Page, starting at 1."
       },
       "per_page": {
         "type": "integer",
         "exclusiveMinimum": 0,
         "maximum": 9007199254740991,
-        "description": "Eventos por página."
+        "description": "Events per page."
       }
     },
     "required": [
@@ -95,7 +95,7 @@
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Eventos de una tarea",
+    "title": "Get task events",
     "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,

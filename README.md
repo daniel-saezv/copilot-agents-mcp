@@ -4,263 +4,183 @@
 
 # copilot-agents-mcp
 
-Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado, leer los modelos de Copilot y, de forma experimental, redirigir una tarea.
+`copilot-agents-mcp` is a local Model Context Protocol (MCP) server for launching and managing GitHub Copilot cloud agent tasks.
+It runs on your machine over stdio or local HTTP. Version 0.0.1 requires Node.js 26 or later.
 
-No se despliega. Se ejecuta en tu máquina con stdio o, si lo pides, con HTTP en `127.0.0.1`.
-
-## Requisitos
-
-- Node.js 26 o posterior (en Windows también).
-- Una credencial de GitHub: la variable `GITHUB_PERSONAL_ACCESS_TOKEN` o una sesión de GitHub App iniciada con `login`. Hace falta para lanzar, leer una tarea y listar los modelos. No hace falta para listar las herramientas. El detalle está en la sección Autenticación.
-
-## Cómo preparar el entorno
-
-```bash
-bash scripts/setup
+```mermaid
+flowchart LR
+  C[MCP client] -->|stdio| M[copilot-agents-mcp]
+  M -->|GitHub App device flow or PAT| A[GitHub authentication]
+  M -->|GitHub Copilot cloud agent tasks API| G[GitHub]
+  M --> N[Local state and watcher]
+  N -->|system notification and optional POST| U[Notification receiver]
 ```
 
-## Ejecutarlo
+## Install
+
+The package is not published to npm. Run it directly from this repository:
 
 ```bash
 npx -y github:daniel-saezv/copilot-agents-mcp
 ```
 
-Eso abre el servidor por stdio. Para HTTP:
+The default server uses stdio. To use local HTTP, run:
 
 ```bash
 npx -y github:daniel-saezv/copilot-agents-mcp --http --port 3333
 ```
 
-El proceso escucha solo en `127.0.0.1`. La ruta es `/mcp`. También acepta `/mcp/readonly`, `/mcp/x/{toolset}` y las cabeceras `X-MCP-Toolsets`, `X-MCP-Tools`, `X-MCP-Exclude-Tools`, `X-MCP-Readonly` y `X-MCP-Features`.
+The HTTP endpoint is `http://127.0.0.1:3333/mcp`.
 
-El vigilante es otro proceso. `create_agent_task` lo arranca desacoplado. También puedes lanzarlo tú:
+## Authentication
+
+Use one of these credential modes:
+
+- **Personal access token.** Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP process environment.
+- **GitHub App.** Run `npx -y github:daniel-saezv/copilot-agents-mcp login`, complete the device flow, and leave `GITHUB_PERSONAL_ACCESS_TOKEN` unset.
+
+Check the active credential with:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp watch
+npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idle`. Guarda el estado en un archivo local y, al volver a arrancar, retoma las que no han terminado. Avisa una sola vez cuando un turno llega a un estado final. Tras `steer_agent_task`, vigila el turno nuevo y puede avisar otra vez.
+See [authentication](docs/authentication.md) and [permissions](docs/permissions.md).
 
-## Instalación
+## Configure your MCP client
 
-Hasta que el paquete esté en npm, sustituye `copilot-agents-mcp` por `github:daniel-saezv/copilot-agents-mcp` en los comandos y en `args`.
+Every example below has two variants:
 
-1. Comprueba Node.js 26 o posterior con `node -v`. Si es anterior, instala esa versión antes de seguir.
-2. Añade este bloque a la configuración MCP. Pon el token en `env`. Déjalo fuera de `args`.
+- PAT: keep the `env` block and do not run `login`.
+- GitHub App: run `login`, then remove the `env` block.
+
+The command is the same in each client. Replace `github_pat_...` with a token that has the required permissions.
+
+### Visual Studio Code
+
+Create `.vscode/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "copilot-agents": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "copilot-agents-mcp"],
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_…"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
       }
     }
   }
 }
 ```
 
-Comprueba que `command` es `npx` y que `args` lleva `-y` y el paquete. Quita `GITHUB_PERSONAL_ACCESS_TOKEN` si vas a usar la GitHub App con llavero.
+For GitHub App authentication, run `login` once and remove the `env` property.
 
-3. Añade en `env` solo las variables que necesites.
+### Claude Desktop
 
-- `GITHUB_PERSONAL_ACCESS_TOKEN`: token personal. Si tiene valor, es la credencial y el llavero no se usa.
-- `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`: client ID de otra GitHub App. Si falta, se usa el de `copilot-agents-mcp`.
-- `GH_TOKEN`: se ignora. No sirve de credencial.
-- `GITHUB_TOKEN`: se ignora. No sirve de credencial.
-- `GITHUB_TOOLSETS`: toolsets a publicar, separados por coma.
-- `GITHUB_TOOLS`: herramientas a publicar, separadas por coma.
-- `GITHUB_EXCLUDE_TOOLS`: herramientas que se quitan, separadas por coma.
-- `GITHUB_READ_ONLY`: con `1` o `true`, solo publica herramientas de lectura.
-- `COPILOT_AGENTS_NOTIFY_URL`: URL del POST de aviso. Si falta, no hay POST.
-- `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`: valor de la cabecera `Authorization` de ese POST. Si falta, el POST no la envía.
-- `COPILOT_AGENTS_STATE_PATH`: archivo de estado. Por defecto, `~/.copilot-agents-mcp/state.json`.
-- `COPILOT_AGENTS_POLL_INTERVAL_MS`: pausa entre lecturas del vigilante. Por defecto, 15000.
-- `COPILOT_AGENTS_LOG`: si tiene ruta, el vigilante añade ahí su error estándar.
-
-4. Si hay llavero, inicia sesión y mira el estado:
-
-```bash
-npx -y copilot-agents-mcp login
-npx -y copilot-agents-mcp auth status
-```
-
-Comprueba que `auth status` dice `GitHub App`, el nombre de la app, el client ID y las caducidades. Comprueba que no imprime el token. Si `login` avisa de que no hay llavero, el token muere con ese proceso y el servidor no lo conserva. Define `GITHUB_PERSONAL_ACCESS_TOKEN` y comprueba que `auth status` dice `PAT`.
-
-5. Arranca el cliente MCP. Comprueba que lista las herramientas. Para lanzar una tarea hace falta la credencial del paso 4.
-
-Para HTTP, arranca el proceso con `--http --port 3333` y la credencial en el entorno. Apunta el cliente a `http://127.0.0.1:3333/mcp`. El cliente no envía el token de GitHub.
-
-## Herramientas
-
-Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_automations` y `copilot_agent_merge` piden `--features=agent_automations` y `--features=agent_merge`. En esta versión no tienen herramientas.
-
-<!-- START AUTOMATED TOOLS -->
-| Herramienta | Toolset | Solo lectura | Descripción |
-| --- | --- | --- | --- |
-| `create_agent_task` | copilot_tasks | no | Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados. |
-| `get_agent_task` | copilot_tasks | sí | Lee una vez el estado de una tarea del agente de Copilot. |
-| `steer_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta. |
-| `abort_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Envía {type: "abort"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub. |
-| `get_agent_task_events` | copilot_tasks | sí | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Lee una página de eventos de una tarea (solo lectura). |
-| `list_copilot_models` | copilot_models | sí | Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe. |
-<!-- END AUTOMATED TOOLS -->
-
-`create_agent_task` recibe `repo` (`owner/name`), `prompt`, `model` y, si quieres, `base_ref`, `head_ref`, `custom_agent` y `create_pull_request`. El modelo se envía tal cual: no hay una lista en el código. La API responde 201 y puede rechazar el modelo después. Si ya se vio ese rechazo, la herramienta corta con `isError` y lista los modelos vistos aceptados. Si el rechazo llega más tarde, el mismo error queda en el estado y en el aviso.
-
-`get_agent_task` hace una sola lectura. `list_copilot_models` pide a GraphQL (`viewer.copilotEndpoints.api`) la base de la API de Copilot y, en cada llamada, lee `{api}/agents/swe/models`. No guarda caché ni mezcla tareas. La respuesta cita esa URL y `fetched_at`. Si GraphQL o el GET no responden 200, o el formato no cuadra, devuelve un error y no inventa modelos. Los precios salen tal cual, con `batch_size`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`. `policy` es opcional: si no viene, la salida pone `policy.state` a `null`; si viene, `state` es un string.
-
-## Experimental: redirección de tareas
-
-`steer_agent_task`, `abort_agent_task` y `get_agent_task_events` llaman a endpoints internos de GitHub. No están documentados y pueden cambiar sin aviso.
-
-`steer_agent_task` envía una instrucción a una tarea con pull request abierta. Lee la tarea y comprueba su pull request con `GET /repos/{owner}/{repo}/pulls/{number}`. Si la tarea no tiene pull request, responde `task_has_no_pull_request` y no envía la instrucción. Si la pull request no está abierta, responde `task_pull_request_not_open` y tampoco la envía. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. La guía oficial está en [gestionar y seguir agentes](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/manage-and-track-agents).
-
-`abort_agent_task` envía `{type: "abort"}` al endpoint de steer, como hace VS Code (`tasksClient.ts`), para detener la tarea. No se ha probado contra GitHub.
-
-`get_agent_task_events` lee una página de eventos de una tarea. Es solo lectura.
-
-`steer_agent_task` recibe `task_id` y `content`. `abort_agent_task` recibe `task_id`. `get_agent_task_events` recibe `task_id`, `page` y `per_page`.
-
-Tras un steer aceptado, el estado guarda la hora, el `session_count` de ese momento y si ese turno ya se avisó. El vigilante vuelve a vigilar esa tarea. Detecta el turno nuevo si aparece otra sesión o si la tarea vuelve a un estado que no es final. Avisa una vez cuando ese turno llega a un estado final y deja el registro en el archivo. `idle` cuenta como final. El cuerpo del aviso es el de la sección siguiente, con `session_id`. Un reinicio no repite un aviso ya enviado.
-
-## Aviso al terminar
-
-El aviso es una notificación del sistema (toast de Windows, `osascript` en macOS, `notify-send` en Linux) y, si configuras la URL, un POST JSON.
-
-Variables:
-
-- `COPILOT_AGENTS_NOTIFY_URL`: URL del POST. Si no está, no hay POST.
-- `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`: valor de la cabecera `Authorization`. Si no está, el POST no lleva esa cabecera.
-- `COPILOT_AGENTS_STATE_PATH`: archivo de estado. Por defecto, `~/.copilot-agents-mcp/state.json`.
-- `COPILOT_AGENTS_POLL_INTERVAL_MS`: pausa entre lecturas. Por defecto, 15000.
-- `COPILOT_AGENTS_LOG`: si está, el vigilante añade su error estándar a ese archivo.
-
-El POST lleva `Content-Type: application/json` y este cuerpo:
+Add this server to `claude_desktop_config.json`:
 
 ```json
 {
-  "task_id": "0ad0914d-889f-4221-bdae-42074c1ab62e",
-  "repo": "octocat/hello-world",
-  "state": "completed",
-  "requested_model": "grok-4.7",
-  "resolved_model": "sweagent-capi:grok-4.7",
-  "pull_request": {
-    "id": 42,
-    "number": 7,
-    "html_url": "https://github.com/octocat/hello-world/pull/7"
-  },
-  "branch": { "head_ref": "copilot/demo", "base_ref": "main" },
-  "artifacts": [
-    { "type": "pull", "id": 42 },
-    { "type": "branch", "head_ref": "copilot/demo", "base_ref": "main" }
-  ],
-  "error": null,
-  "usage": { "type": "ai_credits", "amount": 344355000, "amount_human": 0.344355 },
-  "created_at": "2026-11-22T00:00:00Z",
-  "updated_at": "2026-11-22T00:01:00Z",
-  "completed_at": "2026-11-22T00:05:00Z",
-  "session_id": "session-1"
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+      }
+    }
+  }
 }
 ```
 
-`resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `branch` sale de `artifacts`. `pull_request.id` es el id interno del artefacto, no el número de la pull request. `number` y `html_url` salen del artefacto si vienen. Si no, se piden con `GET /repos/{owner}/{repo}/pulls?head={owner}:{head_ref}&state=all` y se usa la entrada con esa id. `head_ref` es el del artefacto de rama o, si no hay, el de la sesión. Si no se pueden resolver, `number` y `html_url` van a `null` y el motivo se añade a `COPILOT_AGENTS_LOG`. El aviso se envía igual.
+For GitHub App authentication, run `login` once and remove the `env` property.
 
-`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número. `session_id` es el id de la sesión más reciente de la tarea. `get_agent_task` y el aviso devuelven el mismo valor. Es `null` si la tarea aún no trae sesión.
+### Claude Code
 
-Si `notify-send`, `osascript` o el toast de Windows no arranca, el vigilante escribe el motivo en `COPILOT_AGENTS_LOG` (por ejemplo `ENOENT notify-send`) y sigue con el POST.
-
-## Repetir un aviso
-
-El vigilante avisa una vez. `notified_at` guarda ese momento. Para repetir el aviso de una tarea ya terminada, sin lanzar otra:
-
-1. Espera a que el vigilante haya salido. Si la tarea ya se avisó, ese proceso ya no está.
-2. Copia el archivo de estado y pon `notified_at` en `null` para esa tarea. Deja `state` como está.
-3. Arranca `watch` con `COPILOT_AGENTS_STATE_PATH` apuntando a la copia.
-
-Hace falta el token. El vigilante no vuelve a leer la tarea de agente. Recalcula `amount_human` desde `usage.amount` y, si faltan `number` o `html_url`, llama a la API de pull requests.
+For a PAT, register the local stdio server:
 
 ```bash
-mkdir -p "$HOME/reaviso"
-cp "${COPILOT_AGENTS_STATE_PATH:-$HOME/.copilot-agents-mcp/state.json}" "$HOME/reaviso/state.json"
-node --input-type=module -e 'import { readFileSync, writeFileSync } from "node:fs"; const path = `${process.env.HOME}/reaviso/state.json`; const state = JSON.parse(readFileSync(path, "utf8")); state.tasks[process.argv[1]].notified_at = null; writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);' -- ID-DE-LA-TAREA
-GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_… \
-COPILOT_AGENTS_STATE_PATH="$HOME/reaviso/state.json" \
-COPILOT_AGENTS_NOTIFY_URL=http://127.0.0.1:9/aviso \
-COPILOT_AGENTS_LOG="$HOME/reaviso/watch.log" \
-npx -y github:daniel-saezv/copilot-agents-mcp watch
+claude mcp add --transport stdio copilot-agents \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_... \
+  -- npx -y github:daniel-saezv/copilot-agents-mcp
 ```
 
-Sustituye `ID-DE-LA-TAREA` y la URL del POST. El proceso sale cuando ha enviado el aviso.
-
-## Autenticación
-
-Hay dos formas. Se usa la primera que exista.
-
-1. `GITHUB_PERSONAL_ACCESS_TOKEN`, si está definida y no está vacía. Con esa variable, el servidor se comporta como antes y no lee el llavero.
-2. El token de la GitHub App guardado en el llavero.
-3. Nada más. Si no hay ninguna, las herramientas responden que no hay sesión y dicen que ejecutes `npx copilot-agents-mcp login` o definas `GITHUB_PERSONAL_ACCESS_TOKEN`.
-
-`GH_TOKEN` y `GITHUB_TOKEN` ya no se leen. Antes servían de alternativa y podían sustituir un token sin aviso. Si una de las dos está definida y no hay `GITHUB_PERSONAL_ACCESS_TOKEN`, el proceso escribe en stderr que se ignoran y que uses esa variable o `login`.
-
-### Token personal
-
-Pon el PAT en el entorno del proceso. No lo pongas en los argumentos ni en un archivo. El permiso que necesita es «Agent tasks: read and write» en los repositorios donde lances tareas. `steer_agent_task` además necesita escritura en el contenido del repositorio.
-
-### GitHub App
-
-La app por defecto es `copilot-agents-mcp`, con client ID `Iv23liNbsc3GH7vmP8OT`. Tiene device flow y tokens que caducan. Para usar otra, define `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`. El client ID no es un secreto. Este programa no incluye client secret: GitHub no lo exige para renovar un token de usuario obtenido con el device flow.
-
-Permisos de la app:
-
-- **Agent tasks: read and write.** Crear una tarea, leerla y leer sus eventos. Listar modelos usa el mismo token.
-- **Contents: read and write.** El steer de GitHub lo exige. Sin escritura, `steer_agent_task` y `abort_agent_task` responden 403 `repository_write_access_required`. Ese token puede escribir en los repositorios donde la app esté instalada y tú puedas escribir. Protege la rama por defecto con reglas de rama o un ruleset.
-- **Pull requests: read.** Leer la pull request de la tarea, comprobar que sigue abierta y rellenar el número y la URL.
-- **Metadata: read.** Obligatorio. GitHub lo exige en todas las apps.
-
-`steer_agent_task` usa un endpoint interno no documentado de GitHub (`/cmc_internal/api/agents/.../steer`). Puede cambiar sin aviso. `abort_agent_task` llama al mismo endpoint.
-
-Si falta un permiso, el error dice cuál. Cuando GitHub envía `X-Accepted-GitHub-Permissions`, el texto sale de esa cabecera. Un 403 `repository_write_access_required` indica Contents: write. Un 403 «Resource not accessible by integration» nombra el permiso de esa llamada: Agent tasks, Pull requests o Contents.
-
-Instala la app con **Only select repositories** y marca solo los repositorios que vayas a usar:
-
-```text
-https://github.com/apps/copilot-agents-mcp/installations/new
-```
-
-En una organización la instala un propietario. Si la organización usa SAML SSO, autoriza la app en la sesión SSO antes de tocar sus repositorios. Con otra app, cambia el slug de la URL y el client ID. El device flow tiene que estar activado en la app.
-
-Inicia sesión en una terminal:
+For GitHub App authentication, run the server `login` command first. Then register it without `-e`:
 
 ```bash
 npx -y github:daniel-saezv/copilot-agents-mcp login
+claude mcp add --transport stdio copilot-agents \
+  -- npx -y github:daniel-saezv/copilot-agents-mcp
 ```
 
-Verás una URL y un código. El código caduca a los 15 minutos. Ábrelo tú. No introduzcas nunca un código que no hayas pedido en esa terminal.
+### Cursor
 
-El access token caduca a las 8 horas. El refresh token caduca a los 6 meses. El programa pide uno nuevo 5 minutos antes de que caduque el access token, y también si GitHub responde 401. Cada renovación invalida el access token y el refresh token anteriores. Si el llavero falla al guardar la sesión nueva, el refresh token que sigue en el llavero ya no vale. La sesión nueva permanece en memoria y el programa reintenta guardarla. Si el proceso se cierra antes, ejecuta `login` otra vez. Si GitHub responde `bad_refresh_token`, ejecuta `login` otra vez.
+Create `.cursor/mcp.json`:
 
-El token se guarda en el llavero, con el servicio `copilot-agents-mcp:github.com` y la cuenta del usuario del sistema. En macOS es el Keychain. En Windows es el Administrador de credenciales. En Linux es Secret Service (gnome-keyring, KWallet o KeePassXC). En Linux no se usa el llavero del kernel: si Secret Service no está, el programa no cambia de backend en silencio. Sin llavero, `login` no sirve para el servidor: el token queda en la memoria de ese proceso y muere al salir. En la práctica solo funciona el PAT.
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+      }
+    }
+  }
+}
+```
+
+For GitHub App authentication, run `login` once and remove the `env` property.
+
+### Grok Bot
+
+Configure Grok Bot as a local MCP server over stdio with:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+      }
+    }
+  }
+}
+```
+
+For GitHub App authentication, run `login` once and remove the `env` property.
+
+## Tools
+
+<!-- START AUTOMATED TOOLS -->
+| Tool | Toolset | Read-only | Description |
+| --- | --- | --- | --- |
+| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. |
+| `get_agent_task` | copilot_tasks | yes | Read a GitHub Copilot agent task once. |
+| `steer_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request. |
+| `abort_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub. |
+| `get_agent_task_events` | copilot_tasks | yes | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Read one page of task events (read-only). |
+| `list_copilot_models` | copilot_models | yes | Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present. |
+<!-- END AUTOMATED TOOLS -->
+
+See [the tool reference](docs/tools.md) for all input and output fields.
+
+## Watch tasks
+
+`create_agent_task` starts a detached watcher. You can also start it directly:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp logout
-npx -y github:daniel-saezv/copilot-agents-mcp auth status
+npx -y github:daniel-saezv/copilot-agents-mcp watch
 ```
 
-`logout` borra la entrada del llavero e indica cómo revocar el acceso: Settings → Applications → Authorized GitHub Apps. Para quitar la app de los repositorios, desinstálala. `auth status` dice el mecanismo activo: PAT, por la variable `GITHUB_PERSONAL_ACCESS_TOKEN`, o la GitHub App del llavero. En la app muestra el nombre, el client ID efectivo, si sale del valor por defecto o de `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, y la caducidad del access token y del refresh token. No imprime el token. Si no puede obtener el nombre, muestra «desconocido» y sigue. Si no hay instalaciones, `login` y `auth status` dicen que la app no está instalada en ningún repositorio y enlazan la instalación; un 404 con la app nombra el repositorio y usa el mismo enlace.
+The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](docs/notifications.md).
 
-### Variables
-
-- `GITHUB_PERSONAL_ACCESS_TOKEN`: si está, es la credencial. Tiene prioridad sobre el llavero.
-- `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`: client ID de otra GitHub App. Si no está, se usa el de `copilot-agents-mcp`.
-- `GH_TOKEN` y `GITHUB_TOKEN`: se ignoran. Ver el cambio de comportamiento arriba.
-- `GITHUB_TOOLSETS`, `GITHUB_TOOLS`, `GITHUB_EXCLUDE_TOOLS` y `GITHUB_READ_ONLY`: iguales que en el MCP oficial de GitHub.
-
-El token no se escribe en archivos, logs ni fixtures.
-
-## Desarrollo
+## Test and build
 
 ```bash
 bash scripts/setup
@@ -268,14 +188,11 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
+node scripts/pack-smoke.mjs
 ```
 
-`npm run build` genera `dist/`. `prepare` lo hace al instalar desde GitHub, porque Node no ejecuta TypeScript dentro de `node_modules`.
+Agent development instructions remain in [AGENTS.md](AGENTS.md).
 
-Las reglas para agentes están en `AGENTS.md`.
+## License
 
-## Licencia
-
-[MIT](LICENSE).
-
-La referencia comunitaria [fvegiard/copilot-cloud-agent-mcp](https://github.com/fvegiard/copilot-cloud-agent-mcp) es MIT y no se copia código suyo. Los fixtures de la API de tareas vienen de [github/rest-api-description](https://github.com/github/rest-api-description) (MIT).
+[MIT](LICENSE)

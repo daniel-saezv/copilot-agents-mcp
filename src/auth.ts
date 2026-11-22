@@ -11,8 +11,8 @@ const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const MARGIN_MINUTES = ACCESS_TOKEN_REFRESH_MARGIN_MS / 60_000;
-const RELOGIN_MESSAGE = "La sesión de GitHub ha caducado o ya no vale. Ejecuta `npx copilot-agents-mcp login`.";
-const REFRESH_NOT_SAVED = "El refresh token guardado en el llavero ya no es válido. La sesión nueva sigue en memoria y se reintentará guardarla. Si este proceso termina antes de guardarla, ejecuta `npx copilot-agents-mcp login`.";
+const RELOGIN_MESSAGE = "The GitHub session expired or is no longer valid. Run `npx copilot-agents-mcp login`.";
+const REFRESH_NOT_SAVED = "The refresh token stored in the keyring is no longer valid. The new session remains in memory, and saving it will be retried. If this process exits before the save succeeds, run `npx copilot-agents-mcp login`.";
 const WRITE_ATTEMPTS = 3;
 const WRITE_RETRY_DELAY_MS = 50;
 const OAUTH_TIMEOUT_MS = 30_000;
@@ -58,9 +58,9 @@ class BadRefreshToken extends Error {
 export function systemAccount(): string {
   try {
     const name = userInfo().username.trim();
-    return name || "usuario";
+    return name || "user";
   } catch {
-    return "usuario";
+    return "user";
   }
 }
 
@@ -88,8 +88,8 @@ export function ignoredTokenWarning(env: NodeJS.ProcessEnv): string | null {
     return typeof value === "string" && value.trim() !== "";
   });
   if (names.length === 0) return null;
-  const verb = names.length === 1 ? "Se ignora" : "Se ignoran";
-  return `${verb} ${names.join(" y ")}. Define GITHUB_PERSONAL_ACCESS_TOKEN o ejecuta \`npx copilot-agents-mcp login\`.`;
+  const verb = names.length === 1 ? "is ignored" : "are ignored";
+  return `${names.join(" and ")} ${verb}. Set GITHUB_PERSONAL_ACCESS_TOKEN or run \`npx copilot-agents-mcp login\`.`;
 }
 
 export function authLockPath(statePath: string): string {
@@ -176,7 +176,7 @@ export function createAppSession(options: {
       }
       const parsed = parseStored(raw);
       if (!parsed) {
-        warnStore("La sesión del llavero no se puede leer. Ejecuta `npx copilot-agents-mcp login`.");
+        warnStore("The keyring session cannot be read. Run `npx copilot-agents-mcp login`.");
         memory = null;
         return null;
       }
@@ -184,7 +184,7 @@ export function createAppSession(options: {
       return parsed;
     } catch (error) {
       if (!(error instanceof KeyringError)) throw error;
-      warnStore(`No hay llavero disponible (${error.message}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
+      warnStore(`No keyring is available (${error.message}). The token remains only in this process's memory and is not written to disk.`);
       return memory;
     }
   }
@@ -197,7 +197,7 @@ export function createAppSession(options: {
     } catch (error) {
       if (!(error instanceof KeyringError)) throw error;
       storeUnread = true;
-      warnStore(`No se pudo borrar la sesión del llavero (${error.message}). No se ha escrito el token en disco.`);
+      warnStore(`Could not delete the keyring session (${error.message}). The token has not been written to disk.`);
     }
   }
 
@@ -207,7 +207,7 @@ export function createAppSession(options: {
       try {
         return await withDirectoryLock(options.lockPath, () => refreshLocked(rejected), {
           timeoutMs: 60_000,
-          busyMessage: "No se pudo renovar la sesión: el bloqueo de renovación está en uso.",
+          busyMessage: "Could not refresh the session: the refresh lock is in use.",
         });
       } finally {
         inflight = null;
@@ -279,15 +279,15 @@ export async function loginWithDeviceFlow(options: {
 }): Promise<{ where: "keyring" | "memory"; credential: StoredCredential }> {
   const device = await requestDeviceCode(options.clientId, options.fetchImpl);
   const minutes = Math.max(1, Math.round(device.expiresIn / 60));
-  options.stdout(`Abre ${device.verificationUri}`);
-  options.stdout(`Introduce el código ${device.userCode}.`);
-  options.stdout(`El código caduca en ${minutes} minutos. No introduzcas un código que no hayas pedido tú.`);
+  options.stdout(`Open ${device.verificationUri}`);
+  options.stdout(`Enter code ${device.userCode}.`);
+  options.stdout(`The code expires in ${minutes} minutes. Do not enter a code that you did not request.`);
   const grant = await pollDevice(device, options);
   const credential = toStored(grant, options.now());
   const encoded = serialize(credential);
   if (!options.persistent) {
     options.store.write(encoded);
-    options.stderr("No hay llavero. El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.");
+    options.stderr("No keyring is available. The token remains only in this process's memory, is not written to disk, and is lost when the process exits.");
     await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
@@ -295,11 +295,11 @@ export async function loginWithDeviceFlow(options: {
     options.store.write(encoded);
   } catch (error) {
     if (!(error instanceof KeyringError)) throw error;
-    options.stderr(redactTokenShapes(`No hay llavero disponible (${error.message}). El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.`));
+    options.stderr(redactTokenShapes(`No keyring is available (${error.message}). The token remains only in this process's memory, is not written to disk, and is lost when the process exits.`));
     await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
-  options.stdout("Sesión guardada en el llavero del sistema.");
+  options.stdout("Session saved in the system keyring.");
   await warnIfAppNotInstalled(credential.access_token, options);
   return { where: "keyring", credential };
 }
@@ -323,14 +323,14 @@ export function logoutLocal(store: SecretStore): "removed" | "absent" | "unavail
 
 export function logoutMessage(result: "removed" | "absent" | "unavailable"): string {
   const head = result === "removed"
-    ? "Se ha borrado la sesión del llavero."
+    ? "The keyring session was deleted."
     : result === "absent"
-      ? "No había una sesión en el llavero."
-      : "No se pudo usar el llavero. No se ha escrito el token en disco.";
+      ? "No keyring session was found."
+      : "The keyring could not be used. The token has not been written to disk.";
   return [
     head,
-    "Para revocar el acceso: GitHub → Settings → Applications → Authorized GitHub Apps.",
-    "Para quitar la app de un repositorio o de una organización, desinstálala.",
+    "To revoke access: GitHub → Settings → Applications → Authorized GitHub Apps.",
+    "To remove the app from a repository or organization, uninstall it.",
   ].join("\n");
 }
 
@@ -343,31 +343,31 @@ export function statusReport(input: {
   appNotInstalled?: boolean;
 }): string {
   if (personalAccessToken(input.env)) {
-    const lines = ["Credencial activa: PAT (variable GITHUB_PERSONAL_ACCESS_TOKEN)."];
-    if (input.stored) lines.push("Hay una sesión de GitHub App guardada, pero no se usa mientras esa variable esté definida.");
+    const lines = ["Active credential: PAT (GITHUB_PERSONAL_ACCESS_TOKEN environment variable)."];
+    if (input.stored) lines.push("A GitHub App session is stored, but it is not used while that variable is set.");
     return lines.join("\n");
   }
   if (!input.stored) return NO_SESSION_MESSAGE;
   const where = input.keyring === "memory"
-    ? "solo en la memoria de este proceso"
-    : `en el llavero del sistema (cuenta «${input.account}»)`;
+    ? "only in this process's memory"
+    : `in the system keyring (account "${input.account}")`;
   const clientId = githubAppClientId(input.env);
   const source = clientIdFromEnv(input.env)
-    ? "variable COPILOT_AGENTS_GITHUB_APP_CLIENT_ID"
-    : "valor por defecto";
-  const appName = input.appName?.trim() || "desconocido";
+    ? "COPILOT_AGENTS_GITHUB_APP_CLIENT_ID environment variable"
+    : "default value";
+  const appName = input.appName?.trim() || "unknown";
   const lines = [
-    `Credencial activa: GitHub App, ${where}.`,
+    `Active credential: GitHub App, ${where}.`,
     input.appNotInstalled ? appNotInstalledMessage() : `App: ${appName}.`,
     `Client ID: ${clientId} (${source}).`,
-    `El access token caduca el ${new Date(input.stored.expires_at).toISOString()}. Se renueva solo ${MARGIN_MINUTES} minutos antes, y también si GitHub responde 401.`,
+    `The access token expires at ${new Date(input.stored.expires_at).toISOString()}. It refreshes ${MARGIN_MINUTES} minutes before expiry and also when GitHub returns 401.`,
   ];
   if (input.stored.refresh_expires_at !== null) {
-    lines.push(`El refresh token caduca el ${new Date(input.stored.refresh_expires_at).toISOString()}.`);
+    lines.push(`The refresh token expires at ${new Date(input.stored.refresh_expires_at).toISOString()}.`);
   } else {
-    lines.push("El refresh token no trae fecha de caducidad.");
+    lines.push("The refresh token has no expiry time.");
   }
-  if (input.keyring === "memory") lines.push("No hay llavero: el token no está en disco y se pierde al salir.");
+  if (input.keyring === "memory") lines.push("No keyring is available. The token is not on disk and is lost when the process exits.");
   return lines.join("\n");
 }
 
@@ -450,9 +450,9 @@ async function requestDeviceCode(clientId: string, fetchImpl: typeof fetch): Pro
     client_id: clientId,
     scope: "offline_access",
   }, fetchImpl, []);
-  if (typeof body.error === "string") throw new AuthError(safeOAuthMessage("GitHub rechazó el device flow", body, []));
+  if (typeof body.error === "string") throw new AuthError(safeOAuthMessage("GitHub rejected the device flow", body, []));
   if (typeof body.device_code !== "string" || typeof body.user_code !== "string") {
-    throw new AuthError("GitHub no devolvió el código de verificación.");
+    throw new AuthError("GitHub did not return a verification code.");
   }
   const expiresIn = typeof body.expires_in === "number" && body.expires_in > 0 ? body.expires_in : 900;
   const interval = typeof body.interval === "number" && body.interval >= 1 ? body.interval : 5;
@@ -488,17 +488,17 @@ async function pollDevice(device: DeviceCode, options: {
     }
     throw new AuthError(deviceFailure(body, device.deviceCode));
   }
-  throw new AuthError("El código ha caducado. Vuelve a ejecutar `npx copilot-agents-mcp login`.");
+  throw new AuthError("The code expired. Run `npx copilot-agents-mcp login` again.");
 }
 
 function deviceFailure(body: Record<string, unknown>, deviceCode: string): string {
   const code = typeof body.error === "string" ? body.error : "";
-  if (code === "access_denied") return "Has cancelado la autorización.";
+  if (code === "access_denied") return "You denied the authorization.";
   if (code === "expired_token" || code === "token_expired") {
-    return "El código ha caducado. Vuelve a ejecutar `npx copilot-agents-mcp login`.";
+    return "The code expired. Run `npx copilot-agents-mcp login` again.";
   }
-  if (code === "device_flow_disabled") return "El device flow no está activado en la GitHub App.";
-  return safeOAuthMessage("GitHub rechazó el device flow", body, [deviceCode]);
+  if (code === "device_flow_disabled") return "The GitHub App does not have device flow enabled.";
+  return safeOAuthMessage("GitHub rejected the device flow", body, [deviceCode]);
 }
 
 async function requestRefresh(clientId: string, refreshToken: string, fetchImpl: typeof fetch): Promise<TokenGrant> {
@@ -508,7 +508,7 @@ async function requestRefresh(clientId: string, refreshToken: string, fetchImpl:
     refresh_token: refreshToken,
   }, fetchImpl, [refreshToken]);
   if (body.error === "bad_refresh_token") throw new BadRefreshToken();
-  if (typeof body.error === "string") throw new AuthError(safeOAuthMessage("GitHub rechazó la renovación", body, [refreshToken]));
+  if (typeof body.error === "string") throw new AuthError(safeOAuthMessage("GitHub rejected the refresh", body, [refreshToken]));
   return readGrant(body);
 }
 
@@ -532,9 +532,9 @@ async function postOAuth(
       signal: AbortSignal.timeout(OAUTH_TIMEOUT_MS),
     });
   } catch (error) {
-    if (isTimeout(error)) throw new AuthError(`GitHub no respondió a tiempo (${OAUTH_TIMEOUT_MS / 1000} s).`);
-    const message = error instanceof Error ? error.message : "error de red";
-    throw new AuthError(redactSecrets(`No se pudo llamar a GitHub: ${message}`, secrets));
+    if (isTimeout(error)) throw new AuthError(`GitHub did not respond in time (${OAUTH_TIMEOUT_MS / 1000} s).`);
+    const message = error instanceof Error ? error.message : "network error";
+    throw new AuthError(redactSecrets(`Could not call GitHub: ${message}`, secrets));
   }
   const text = await response.text();
   let parsed: unknown = null;
@@ -546,20 +546,20 @@ async function postOAuth(
     }
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new AuthError(`GitHub respondió HTTP ${response.status} y el cuerpo no es JSON.`);
+    throw new AuthError(`GitHub returned HTTP ${response.status} and a non-JSON body.`);
   }
   const record = parsed as Record<string, unknown>;
   if (typeof record.error === "string" || response.ok) return record;
-  throw new AuthError(`GitHub respondió HTTP ${response.status}.`);
+  throw new AuthError(`GitHub returned HTTP ${response.status}.`);
 }
 
 function readGrant(body: Record<string, unknown>): TokenGrant {
-  if (typeof body.access_token !== "string" || !body.access_token) throw new AuthError("GitHub no devolvió un access token.");
+  if (typeof body.access_token !== "string" || !body.access_token) throw new AuthError("GitHub did not return an access token.");
   if (typeof body.refresh_token !== "string" || !body.refresh_token) {
-    throw new AuthError("GitHub no devolvió un refresh token. La app tiene que emitir tokens de usuario que caducan.");
+    throw new AuthError("GitHub did not return a refresh token. The app must issue expiring user tokens.");
   }
   if (typeof body.expires_in !== "number" || !Number.isFinite(body.expires_in) || body.expires_in <= 0) {
-    throw new AuthError("GitHub no devolvió la caducidad del access token.");
+    throw new AuthError("GitHub did not return the access token expiry.");
   }
   const refreshExpiresIn = typeof body.refresh_token_expires_in === "number" && Number.isFinite(body.refresh_token_expires_in)
     ? body.refresh_token_expires_in

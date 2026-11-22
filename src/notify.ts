@@ -75,7 +75,7 @@ export async function notifySystem(notice: TaskNotice, spawnImpl: typeof spawn =
         resolve();
         return;
       }
-      void appendWatcherLog(`No se pudo mostrar la notificación del sistema: ${notifyFailure(plan.command, error)}`, baseEnv).finally(resolve);
+      void appendWatcherLog(`Could not show the system notification: ${notifyFailure(plan.command, error)}`, baseEnv).finally(resolve);
     };
     let child: ReturnType<typeof spawn>;
     try {
@@ -117,7 +117,7 @@ export async function postNotice(url: string, notice: TaskNotice, authorization:
     body: JSON.stringify(notice),
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw new Error(`El aviso POST respondió HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`Notification POST returned HTTP ${response.status}.`);
 }
 
 export async function deliverNotice(

@@ -9,28 +9,28 @@ export function systemSecretStore(): SecretStore {
   try {
     entry = new Entry(KEYRING_SERVICE, systemAccount(), KEYRING_ENTRY_OPTIONS);
   } catch (error) {
-    throw new KeyringError(error instanceof Error ? error.message : "no se pudo abrir el llavero");
+    throw new KeyringError(error instanceof Error ? error.message : "could not open the keyring");
   }
   return {
     read() {
       try {
         return entry.getPassword();
       } catch (error) {
-        throw new KeyringError(error instanceof Error ? error.message : "no se pudo leer el llavero");
+        throw new KeyringError(error instanceof Error ? error.message : "could not read the keyring");
       }
     },
     write(value) {
       try {
         entry.setPassword(value);
       } catch (error) {
-        throw new KeyringError(error instanceof Error ? error.message : "no se pudo escribir en el llavero");
+        throw new KeyringError(error instanceof Error ? error.message : "could not write to the keyring");
       }
     },
     delete() {
       try {
         entry.deletePassword();
       } catch (error) {
-        throw new KeyringError(error instanceof Error ? error.message : "no se pudo borrar el llavero");
+        throw new KeyringError(error instanceof Error ? error.message : "could not delete from the keyring");
       }
     },
   };

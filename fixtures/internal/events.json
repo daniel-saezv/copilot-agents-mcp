@@ -12,7 +12,7 @@
       "timestamp": "2026-11-22T00:00:01Z",
       "parentId": "evt-1",
       "type": "user.message",
-      "data": { "content": "sigue con los tests" }
+      "data": { "content": "continue with the tests" }
     },
     {
       "id": "evt-3",

@@ -37,7 +37,7 @@ jobs:
       - name: Paquete
         run: node scripts/pack-smoke.mjs
 
-      - name: Auditoría
+      - name: Audit
         run: npm audit --audit-level=low
 
       - name: Licencias

@@ -46,7 +46,7 @@ function expressionAllowed(expression) {
 
 const blocked = [];
 for (const [name, license] of [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-  if (!license || !expressionAllowed(license)) blocked.push(`${name} ${license || "(sin licencia)"}`);
+  if (!license || !expressionAllowed(license)) blocked.push(`${name} ${license || "(no license)"}`);
 }
 
 if (blocked.length > 0) {
@@ -54,4 +54,4 @@ if (blocked.length > 0) {
   process.exit(1);
 }
 
-console.log(`Licencias de producción permitidas: ${seen.size}`);
+console.log(`Allowed production licenses: ${seen.size}`);

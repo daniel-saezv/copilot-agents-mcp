@@ -6,10 +6,10 @@ cd "$(dirname "$0")/.."
 # --- stack (setup-proyecto) ---
 install_stack() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "scripts/setup: hace falta Node.js 26 o posterior y npm." >&2
+    echo "scripts/setup: Node.js 26 or later and npm are required." >&2
     exit 1
   fi
-  node -e 'const [major] = process.versions.node.split(".").map(Number); if (major < 26) { console.error("scripts/setup: hace falta Node.js 26 o posterior. Hay " + process.versions.node); process.exit(1); }'
+  node -e 'const [major] = process.versions.node.split(".").map(Number); if (major < 26) { console.error("scripts/setup: Node.js 26 or later is required. Found " + process.versions.node); process.exit(1); }'
   npm ci
 }
 # --- fin stack ---

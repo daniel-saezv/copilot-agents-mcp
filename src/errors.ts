@@ -6,14 +6,14 @@ export function githubAppInstallUrl(): string {
 }
 
 export function appNotInstalledMessage(): string {
-  return `La app no está instalada en ningún repositorio. Instálala en ${githubAppInstallUrl()}.`;
+  return `The app is not installed in any repository. Install it at ${githubAppInstallUrl()}.`;
 }
 
 export function withMissingAppInstall(message: string, status: number, path: string, appCredential: boolean): string {
   if (!appCredential || status !== 404) return message;
   const repository = repositoryFromPath(path);
   if (!repository) return message;
-  return `Instala la app en ${repository.owner}/${repository.repo}: ${githubAppInstallUrl()}. ${message}`;
+  return `Install the app for ${repository.owner}/${repository.repo}: ${githubAppInstallUrl()}. ${message}`;
 }
 
 function repositoryFromPath(path: string): { owner: string; repo: string } | null {
@@ -69,7 +69,7 @@ export class KeyringError extends Error {
   }
 }
 
-export const NO_SESSION_MESSAGE = "No hay sesión de GitHub. Define GITHUB_PERSONAL_ACCESS_TOKEN o ejecuta `npx copilot-agents-mcp login`.";
+export const NO_SESSION_MESSAGE = "No GitHub session is available. Set GITHUB_PERSONAL_ACCESS_TOKEN or run `npx copilot-agents-mcp login`.";
 
 export type GithubPermission = "Agent tasks" | "Pull requests" | "Contents: write";
 
@@ -98,12 +98,12 @@ export function failureMessage(error: unknown): string {
     return error.message;
   }
   if (error instanceof Error && error.message) return error.message;
-  return "Error inesperado.";
+  return "Unexpected error.";
 }
 
 export function modelUnavailableMessage(model: string, accepted: readonly string[]): string {
-  const list = accepted.length > 0 ? [...accepted].sort().join(", ") : "ninguno";
-  return `El modelo «${model}» no está disponible. Modelos vistos aceptados: ${list}.`;
+  const list = accepted.length > 0 ? [...accepted].sort().join(", ") : "none";
+  return `The model "${model}" is not available. Accepted models observed: ${list}.`;
 }
 
 const MODEL_UNAVAILABLE = /model (?:is not|isn.?t) available/i;
@@ -174,16 +174,16 @@ export function missingPermission(
 ): string | null {
   if (status !== 403) return null;
   const accepted = acceptedPermissions(headers.get("x-accepted-github-permissions"));
-  if (accepted.length === 1) return `Falta el permiso ${accepted[0]}.`;
-  if (accepted.length > 1) return `Faltan los permisos ${joinSpanish(accepted)}.`;
+  if (accepted.length === 1) return `Missing ${accepted[0]} permission.`;
+  if (accepted.length > 1) return `Missing permissions: ${joinEnglish(accepted)}.`;
   const blob = typeof body === "string" ? body : JSON.stringify(body ?? "");
   if (
     blob.includes("repository_write_access_required")
     || /user does not have write access to every repository/i.test(blob)
   ) {
-    return "Falta el permiso Contents: write.";
+    return "Missing Contents: write permission.";
   }
-  if (/resource not accessible by integration/i.test(blob)) return `Falta el permiso ${needed}.`;
+  if (/resource not accessible by integration/i.test(blob)) return `Missing ${needed} permission.`;
   return null;
 }
 
@@ -210,8 +210,8 @@ function permissionLabel(slug: string): string {
   return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(" ");
 }
 
-function joinSpanish(items: string[]): string {
+function joinEnglish(items: string[]): string {
   if (items.length <= 1) return items[0] ?? "";
   const last = items[items.length - 1] ?? "";
-  return `${items.slice(0, -1).join(", ")} y ${last}`;
+  return `${items.slice(0, -1).join(", ")} and ${last}`;
 }

@@ -140,9 +140,9 @@ export function assertSchema(validate: Validate, value: unknown, label: string):
   if (validate(value)) return;
   const details = (validate.errors ?? [])
     .slice(0, 5)
-    .map((error) => `${error.instancePath || "/"} ${error.message ?? "inválido"}`)
+    .map((error) => `${error.instancePath || "/"} ${error.message ?? "invalid"}`)
     .join("; ");
-  throw new GitHubError(`La respuesta de GitHub no cumple el esquema de ${label}: ${details}`);
+  throw new GitHubError(`The GitHub response does not match the ${label} schema: ${details}`);
 }
 
 export function createGitHubClient(options: {
@@ -172,7 +172,7 @@ export function createGitHubClient(options: {
         method: "POST",
         body,
         validate: createResponse,
-        label: "crear la tarea",
+        label: "create task",
         permission: "Agent tasks",
       });
     },
@@ -188,7 +188,7 @@ export function createGitHubClient(options: {
         path,
         method: "GET",
         validate: getResponse,
-        label: "leer la tarea",
+        label: "read task",
         permission: "Agent tasks",
       });
     },
@@ -251,7 +251,7 @@ export function createGitHubClient(options: {
     },
     async getTaskEvents(taskId, page, perPage) {
       if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) {
-        throw new GitHubError("page y per_page tienen que ser enteros mayores que cero.");
+        throw new GitHubError("page and per_page must be positive integers.");
       }
       const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
       const parsed = await callGitHub({
@@ -316,8 +316,8 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
       redirect: "error",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "error de red";
-    throw new GitHubError(redact(`No se pudo llamar a la API de GitHub: ${message}`, token));
+    const message = error instanceof Error ? error.message : "network error";
+    throw new GitHubError(redact(`Could not call the GitHub API: ${message}`, token));
   }
   const text = await response.text();
   let parsed: unknown = null;
@@ -343,30 +343,30 @@ function acceptGitHub(options: GitHubCall, sent: { response: Response; parsed: u
     throw new GitHubError(redact(annotated, token));
   }
   if (options.acceptEmpty && response.status === 202) return undefined;
-  if (parsed === null) throw new GitHubError(`La respuesta de GitHub no es JSON (HTTP ${response.status}).`);
+  if (parsed === null) throw new GitHubError(`The GitHub response is not JSON (HTTP ${response.status}).`);
   return parsed;
 }
 
 function readPullState(parsed: unknown, number: number): { number: number; state: string } {
-  if (!parsed || typeof parsed !== "object") throw new GitHubError(`La pull request ${number} no es un objeto.`);
+  if (!parsed || typeof parsed !== "object") throw new GitHubError(`Pull request ${number} is not an object.`);
   const record = parsed as Record<string, unknown>;
   if (record.number !== number || typeof record.state !== "string" || !record.state) {
-    throw new GitHubError(`La pull request ${number} no trae state.`);
+    throw new GitHubError(`Pull request ${number} has no state.`);
   }
   return { number, state: record.state };
 }
 
 function parseTaskEvents(parsed: unknown): TaskEventsPage {
-  if (!parsed || typeof parsed !== "object") throw new GitHubError("La respuesta de eventos no es un objeto.");
+  if (!parsed || typeof parsed !== "object") throw new GitHubError("The events response is not an object.");
   const record = parsed as Record<string, unknown>;
   if (!Array.isArray(record.events) || typeof record.total !== "number") {
-    throw new GitHubError("La respuesta de eventos no trae events y total.");
+    throw new GitHubError("The events response has no events and total.");
   }
   const events: TaskEvent[] = [];
   for (const item of record.events) {
-    if (!item || typeof item !== "object") throw new GitHubError("Un evento no es un objeto.");
+    if (!item || typeof item !== "object") throw new GitHubError("An event is not an object.");
     const event = item as Record<string, unknown>;
-    if (typeof event.type !== "string" || !event.type) throw new GitHubError("Un evento no trae type.");
+    if (typeof event.type !== "string" || !event.type) throw new GitHubError("An event has no type.");
     const parsedEvent: TaskEvent = { type: event.type };
     if (typeof event.id === "string") parsedEvent.id = event.id;
     if (typeof event.timestamp === "string") parsedEvent.timestamp = event.timestamp;
@@ -378,13 +378,13 @@ function parseTaskEvents(parsed: unknown): TaskEventsPage {
 }
 
 function matchPull(parsed: unknown, id: number): { number: number; html_url: string } | null {
-  if (!Array.isArray(parsed)) throw new GitHubError("La respuesta de pull requests no es una lista.");
+  if (!Array.isArray(parsed)) throw new GitHubError("The pull requests response is not a list.");
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
     if (record.id !== id) continue;
     if (typeof record.number !== "number" || typeof record.html_url !== "string" || !record.html_url) {
-      throw new GitHubError(`La pull request ${id} no trae number y html_url.`);
+      throw new GitHubError(`Pull request ${id} has no number and html_url.`);
     }
     return { number: record.number, html_url: record.html_url };
   }

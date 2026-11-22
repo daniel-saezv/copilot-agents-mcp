@@ -47,7 +47,7 @@ export type SweModelsResult = z.infer<typeof sweModelsResultSchema>;
 
 export function validateSweModels(payload: unknown): SweModel[] {
   if (!isRecord(payload) || !Object.prototype.hasOwnProperty.call(payload, "data") || !Array.isArray(payload.data)) {
-    throw new ModelsError("falta data");
+    throw new ModelsError("missing data");
   }
   return payload.data.map((item, index) => readModel(item, index));
 }
@@ -78,7 +78,7 @@ export async function readSweModels(options: {
     models = validateSweModels(body);
   } catch (error) {
     if (error instanceof ModelsError) {
-      throw new ModelsError(`GET ${url} respondió HTTP 200 y el formato no cuadra: ${error.message}`);
+      throw new ModelsError(`GET ${url} returned HTTP 200 with an invalid format: ${error.message}`);
     }
     throw error;
   }
@@ -101,7 +101,7 @@ async function readApiBase(fetchImpl: typeof fetch, holder: { token: string }, t
   });
   const api = readApi(body);
   if (api === null) {
-    throw new ModelsError(`POST ${GRAPHQL_URL} respondió HTTP 200 y el formato no cuadra: falta data.viewer.copilotEndpoints.api`);
+    throw new ModelsError(`POST ${GRAPHQL_URL} returned HTTP 200 with an invalid format: missing data.viewer.copilotEndpoints.api`);
   }
   return api;
 }
@@ -136,8 +136,8 @@ async function readJson(
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "error de red";
-    throw new ModelsError(redact(`No se pudo llamar a ${method} ${url}: ${message}`, token));
+    const message = error instanceof Error ? error.message : "network error";
+    throw new ModelsError(redact(`Could not call ${method} ${url}: ${message}`, token));
   }
   if (response.status === 401 && tokens && !retried) {
     await response.text();
@@ -155,21 +155,21 @@ async function readJson(
       }
     }
     const missing = missingPermission(response.status, response.headers, parsed ?? text, "Agent tasks");
-    const base = `${method} ${url} respondió HTTP ${response.status}.`;
+    const base = `${method} ${url} returned HTTP ${response.status}.`;
     throw new ModelsError(redact(missing ? `${missing} ${base}` : base, token));
   }
   const text = await response.text();
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new ModelsError(`${method} ${url} respondió HTTP 200 y el cuerpo no es JSON.`);
+    throw new ModelsError(`${method} ${url} returned HTTP 200 with a non-JSON body.`);
   }
 }
 
 function readModel(item: unknown, index: number): SweModel {
   const where = `data[${index}]`;
-  if (!isRecord(item)) throw new ModelsError(`${where} no es un objeto`);
-  if (!isRecord(item.billing)) throw new ModelsError(`falta ${where}.billing`);
+  if (!isRecord(item)) throw new ModelsError(`${where} is not an object`);
+  if (!isRecord(item.billing)) throw new ModelsError(`missing ${where}.billing`);
   const hasMultiplier = Object.prototype.hasOwnProperty.call(item.billing, "multiplier");
   const hasPrices = Object.prototype.hasOwnProperty.call(item.billing, "token_prices");
   const model: SweModel = {
@@ -196,12 +196,12 @@ function readPolicy(item: Record<string, unknown>, path: string): { state: strin
   if (!Object.prototype.hasOwnProperty.call(item, "policy") || item.policy === undefined || item.policy === null) {
     return { state: null };
   }
-  if (!isRecord(item.policy)) throw new ModelsError(`${path} no es un objeto`);
+  if (!isRecord(item.policy)) throw new ModelsError(`${path} is not an object`);
   return { state: readString(item.policy, "state", `${path}.state`) };
 }
 
 function readPrices(value: unknown, path: string): SweModel["billing"]["token_prices"] {
-  if (!isRecord(value)) throw new ModelsError(`falta ${path}`);
+  if (!isRecord(value)) throw new ModelsError(`missing ${path}`);
   return {
     input_price: readNumber(value, "input_price", `${path}.input_price`),
     output_price: readNumber(value, "output_price", `${path}.output_price`),
@@ -211,7 +211,7 @@ function readPrices(value: unknown, path: string): SweModel["billing"]["token_pr
 }
 
 function readPromo(value: unknown, path: string): NonNullable<SweModel["billing"]["promo"]> {
-  if (!isRecord(value)) throw new ModelsError(`falta ${path}`);
+  if (!isRecord(value)) throw new ModelsError(`missing ${path}`);
   return {
     discount_percent: readNumber(value, "discount_percent", `${path}.discount_percent`),
     ends_at: readString(value, "ends_at", `${path}.ends_at`),
@@ -220,20 +220,20 @@ function readPromo(value: unknown, path: string): NonNullable<SweModel["billing"
 }
 
 function readString(record: Record<string, unknown>, key: string, path: string): string {
-  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`falta ${path}`);
-  if (typeof record[key] !== "string") throw new ModelsError(`${path} no es string`);
+  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`missing ${path}`);
+  if (typeof record[key] !== "string") throw new ModelsError(`${path} is not a string`);
   return record[key];
 }
 
 function readBoolean(record: Record<string, unknown>, key: string, path: string): boolean {
-  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`falta ${path}`);
-  if (typeof record[key] !== "boolean") throw new ModelsError(`${path} no es boolean`);
+  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`missing ${path}`);
+  if (typeof record[key] !== "boolean") throw new ModelsError(`${path} is not a boolean`);
   return record[key];
 }
 
 function readNumber(record: Record<string, unknown>, key: string, path: string): number {
-  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`falta ${path}`);
-  if (typeof record[key] !== "number" || !Number.isFinite(record[key])) throw new ModelsError(`${path} no es number`);
+  if (!Object.prototype.hasOwnProperty.call(record, key)) throw new ModelsError(`missing ${path}`);
+  if (typeof record[key] !== "number" || !Number.isFinite(record[key])) throw new ModelsError(`${path} is not a number`);
   return record[key];
 }
 

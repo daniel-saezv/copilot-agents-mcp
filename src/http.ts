@@ -20,7 +20,7 @@ export async function startHttpServer(options: {
     });
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("No se pudo abrir el puerto HTTP.");
+  if (!address || typeof address === "string") throw new Error("Could not open the HTTP port.");
   return {
     url: `http://${address.address}:${address.port}/mcp`,
     host: address.address,
@@ -31,14 +31,14 @@ export async function startHttpServer(options: {
 async function handle(req: IncomingMessage, res: ServerResponse, base: Selection, deps: ServerDeps): Promise<void> {
   if (req.method !== "POST" && req.method !== "GET" && req.method !== "DELETE") {
     res.writeHead(405, { "content-type": "text/plain; charset=utf-8" });
-    res.end("Método no permitido.");
+    res.end("Method not allowed.");
     return;
   }
   let selection: Selection;
   try {
     selection = selectionFromHttp(req.url ?? "/", headersOf(req), base);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Petición no válida.";
+    const message = error instanceof Error ? error.message : "Invalid request.";
     res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
     res.end(message);
     return;
@@ -47,7 +47,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, base: Selection
   try {
     mcp = buildServer(selection, deps);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Petición no válida.";
+    const message = error instanceof Error ? error.message : "Invalid request.";
     res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
     res.end(message);
     return;
@@ -63,7 +63,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, base: Selection
   } catch {
     if (!res.headersSent) {
       res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-      res.end("Error del servidor MCP.");
+      res.end("MCP server error.");
     }
   }
 }

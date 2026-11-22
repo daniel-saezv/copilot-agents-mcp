@@ -1,7 +1,7 @@
 {
   "name": "list_copilot_models",
-  "title": "Modelos de Copilot",
-  "description": "Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe.",
+  "title": "List Copilot models",
+  "description": "Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present.",
   "inputSchema": {
     "type": "object",
     "properties": {},
@@ -133,7 +133,7 @@
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Modelos de Copilot",
+    "title": "List Copilot models",
     "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,

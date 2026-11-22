@@ -22,7 +22,7 @@ async function tempState(): Promise<string> {
   return join(dir, "state.json");
 }
 
-function task(id: string, state: string, requested = "modelo-inexistente-123"): StateFile {
+function task(id: string, state: string, requested = "missing-model-123"): StateFile {
   const file = emptyState();
   file.models.accepted = ["mai-code-2"];
   file.tasks[id] = initialTask({
@@ -49,25 +49,25 @@ function client(
 ): GitHubClient {
   return {
     async createTask() {
-      throw new Error("no se llama");
+      throw new Error("not called");
     },
     async getTask() {
       const next = responses.shift();
-      if (!next) throw new Error("sin respuesta");
+      if (!next) throw new Error("no response");
       return next;
     },
     findPullRequest,
     async getPullRequest() {
-      throw new Error("no se llama");
+      throw new Error("not called");
     },
     async steerTask() {
-      throw new Error("no se llama");
+      throw new Error("not called");
     },
     async abortTask() {
-      throw new Error("no se llama");
+      throw new Error("not called");
     },
     async getTaskEvents() {
-      throw new Error("no se llama");
+      throw new Error("not called");
     },
   };
 }
@@ -76,8 +76,8 @@ function remote(id: string, state: string, extra: Partial<AgentTask> = {}): Agen
   return { id, state, created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:01:00Z", ...extra };
 }
 
-describe("vigilante", () => {
-  it("trata idle como estado final y avisa una sola vez", async () => {
+describe("watcher", () => {
+  it("treats idle as final and notifies once", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress"));
     const notices: string[] = [];
@@ -120,7 +120,7 @@ describe("vigilante", () => {
     expect((await readState(statePath)).tasks["task-1"]?.notified_at).toBeTruthy();
   });
 
-  it("avisa una sola vez el turno nuevo de un steer", async () => {
+  it("notifies once for a new steer turn", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress"));
     const notices: Array<{ state: string; session_id: string | null }> = [];
@@ -138,7 +138,7 @@ describe("vigilante", () => {
     expect(notices).toEqual([{ state: "idle", session_id: "session-1" }]);
     await withStateLock(statePath, (state) => {
       const saved = state.tasks["task-1"];
-      if (!saved) throw new Error("sin tarea");
+      if (!saved) throw new Error("missing task");
       armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
     });
     await runWatcher({
@@ -182,12 +182,12 @@ describe("vigilante", () => {
     });
   });
 
-  it("avisa una sola vez si el steer abre otra sesión ya final", async () => {
+  it("notifies once when a steer opens another session that is already final", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "idle"));
     await withStateLock(statePath, (state) => {
       const saved = state.tasks["task-1"];
-      if (!saved) throw new Error("sin tarea");
+      if (!saved) throw new Error("missing task");
       saved.notified_at = "2026-11-22T00:05:00.000Z";
       saved.session_id = "session-1";
       armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
@@ -234,9 +234,9 @@ describe("vigilante", () => {
     expect(notices).toEqual(["session-2"]);
   });
 
-  it("guarda el rechazo del modelo en el estado y en el aviso", async () => {
+  it("stores a model rejection in state and in the notification", async () => {
     const statePath = await tempState();
-    await save(statePath, task("task-1", "queued", "modelo-inexistente-123"));
+    await save(statePath, task("task-1", "queued", "missing-model-123"));
     const notices: Array<string | null> = [];
     await runWatcher({
       client: client([remote("task-1", "failed", {
@@ -255,14 +255,14 @@ describe("vigilante", () => {
       sleep: async () => {},
     });
     const saved = await readState(statePath);
-    expect(saved.models.rejected).toContain("modelo-inexistente-123");
+    expect(saved.models.rejected).toContain("missing-model-123");
     expect(saved.models.accepted).toEqual(["mai-code-2"]);
-    expect(saved.tasks["task-1"]?.error).toContain("Modelos vistos aceptados: mai-code-2");
-    expect(notices[0]).toContain("El modelo «modelo-inexistente-123» no está disponible");
-    expect(notices[0]).toContain("Detalle: The selected model isn't available");
+    expect(saved.tasks["task-1"]?.error).toContain("Accepted models observed: mai-code-2");
+    expect(notices[0]).toContain('The model "missing-model-123" is not available');
+    expect(notices[0]).toContain("Detail: The selected model isn't available");
   });
 
-  it("reanuda una tarea pendiente y hace un POST al receptor local", async () => {
+  it("resumes a pending task and posts to the local receiver", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress", "grok-4.7"));
     const received: Array<{ authorization: string | undefined; body: unknown }> = [];
@@ -280,7 +280,7 @@ describe("vigilante", () => {
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("sin puerto");
+    if (!address || typeof address === "string") throw new Error("no port");
     const url = `http://127.0.0.1:${address.port}/hook`;
     try {
       const deliver = async (notice: Parameters<typeof postNotice>[1]) => {
@@ -343,8 +343,8 @@ describe("vigilante", () => {
   });
 });
 
-describe("notificación del sistema", () => {
-  it("prepara el aviso de Windows, macOS y Linux sin el token", () => {
+describe("system notification", () => {
+  it("prepares Windows, macOS, and Linux notifications without the token", () => {
     const env = { PATH: "/usr/bin", GITHUB_PERSONAL_ACCESS_TOKEN: "test-token", SystemRoot: "C:\\Windows" };
     const windows = notificationPlan("win32", "Copilot completed", "octocat/hello-world", env);
     const mac = notificationPlan("darwin", "Copilot completed", "octocat/hello-world", env);
@@ -360,14 +360,14 @@ describe("notificación del sistema", () => {
     }
   });
 
-  it("anota ENOENT de notify-send y envía el POST", async () => {
+  it("logs ENOENT from notify-send and sends the POST", async () => {
     const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
     dirs.push(dir);
     const logPath = join(dir, "watch.log");
     let posted = false;
     await deliverNotice(sampleNotice(), {
       COPILOT_AGENTS_LOG: logPath,
-      COPILOT_AGENTS_NOTIFY_URL: "http://aviso.example/hook",
+      COPILOT_AGENTS_NOTIFY_URL: "http://notification.example/hook",
       PATH: "/usr/bin",
     }, async () => {
       posted = true;
@@ -378,8 +378,8 @@ describe("notificación del sistema", () => {
   });
 });
 
-describe("créditos y pull request", () => {
-  it("divide los nano créditos entre 1e9", () => {
+describe("credits and pull request", () => {
+  it("divides nano-credits by 1e9", () => {
     expect(presentUsage({ type: "ai_credits", amount: 344_355_000 })).toEqual({
       type: "ai_credits",
       amount: 344_355_000,
@@ -392,7 +392,7 @@ describe("créditos y pull request", () => {
     });
   });
 
-  it("reavisa una tarea final y completa number y html_url", async () => {
+  it("renotifies a final task and fills number and html_url", async () => {
     const statePath = await tempState();
     await writeFile(statePath, `${JSON.stringify(finishedState(), null, 2)}\n`);
     const seen: string[] = [];
@@ -432,7 +432,7 @@ describe("créditos y pull request", () => {
     expect(saved.tasks["task-1"]?.pull_request).toEqual(notices[0]?.pull_request);
   });
 
-  it("avisa con number y html_url a null si la API de pull requests falla", async () => {
+  it("notifies with null number and html_url when the pull request API fails", async () => {
     const statePath = await tempState();
     const logPath = join(statePath, "../watch.log");
     const previous = process.env.COPILOT_AGENTS_LOG;
@@ -460,7 +460,7 @@ describe("créditos y pull request", () => {
     expect(notices[0]?.pull_request).toEqual({ id: 42, number: null, html_url: null });
     expect((await readState(statePath)).tasks["task-1"]?.notified_at).toBeTruthy();
     const log = await readFile(logPath, "utf8");
-    expect(log).toContain("No se pudo resolver la pull request 42 de task-1");
+    expect(log).toContain("Could not resolve pull request 42 for task-1");
     expect(log).toContain("boom");
     expect(log).not.toContain("test-token");
   });
