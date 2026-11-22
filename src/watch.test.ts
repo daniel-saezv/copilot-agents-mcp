@@ -174,7 +174,12 @@ describe("vigilante", () => {
       sleep: async () => {},
     });
     expect(notices).toHaveLength(2);
-    expect((await readState(statePath)).tasks["task-1"]?.steer ?? null).toBeNull();
+    expect((await readState(statePath)).tasks["task-1"]?.steer).toMatchObject({
+      at: "2026-11-22T00:10:00.000Z",
+      session_count: 1,
+      turn_seen: true,
+      notified: true,
+    });
   });
 
   it("avisa una sola vez si el steer abre otra sesión ya final", async () => {

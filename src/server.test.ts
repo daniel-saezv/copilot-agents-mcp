@@ -14,7 +14,8 @@ import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
 import type { SweModelsResult } from "./swe-models.ts";
-import { readState, withStateLock } from "./state.ts";
+import { defaultStatePath, initialTask, readState, withStateLock } from "./state.ts";
+import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 
 const dirs: string[] = [];
 const UPDATE = process.env.UPDATE_TOOLSNAPS === "true";
@@ -433,9 +434,118 @@ describe("redirección experimental", () => {
     expect(content).toBe("sigue con los tests");
     expect(launched).toBe(1);
     const saved = (await readState(statePath)).tasks["task-1"];
-    expect(saved?.steer).toMatchObject({ session_count: 1, turn_seen: false });
+    expect(saved?.steer).toMatchObject({ session_count: 1, turn_seen: false, notified: false });
     expect(saved?.steer?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(saved?.repo).toBe("octocat/hello-world");
+  });
+
+  it("persiste el steer aceptado y lo conserva cuando el vigilante avisa", async () => {
+    const statePath = await tempPath();
+    const steered = await callTool(statePath, steerClient({
+      task: taskWithPull(7),
+      pull: { number: 7, state: "open" },
+    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    expect(steered.isError).toBeUndefined();
+    const raw = JSON.parse(await readFile(statePath, "utf8")) as { tasks: Record<string, { steer?: { at: string; session_count: number; notified: boolean } }> };
+    const before = raw.tasks["task-1"]?.steer;
+    expect(before).toMatchObject({ session_count: 1, notified: false });
+    expect(before?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    const notices: string[] = [];
+    let reads = 0;
+    await runWatcher({
+      client: {
+        ...unusedClient(),
+        async getTask() {
+          reads += 1;
+          return {
+            id: "task-1",
+            state: "idle",
+            session_count: 2,
+            sessions: [
+              { id: "session-antigua", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+              { id: "session-reciente", state: "idle", created_at: "2026-11-22T00:40:00Z" },
+            ],
+          };
+        },
+      },
+      statePath,
+      deliver: async (notice) => {
+        notices.push(notice.session_id ?? "");
+      },
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-reciente"]);
+    const after = (await readState(statePath)).tasks["task-1"]?.steer;
+    expect(after).toEqual({
+      at: before?.at,
+      session_count: 1,
+      turn_seen: true,
+      notified: true,
+    });
+    await runWatcher({
+      client: unusedClient(),
+      statePath,
+      deliver: async (notice) => {
+        notices.push(notice.session_id ?? "");
+      },
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-reciente"]);
+    expect((await readState(statePath)).tasks["task-1"]?.steer).toEqual(after);
+    expect(reads).toBe(1);
+  });
+
+  it("devuelve la sesión más reciente", async () => {
+    const statePath = await tempPath();
+    const result = await callTool(statePath, {
+      ...unusedClient(),
+      async getTask() {
+        return {
+          id: "task-1",
+          state: "idle",
+          sessions: [
+            { id: "session-reciente", state: "idle", created_at: "2026-11-22T00:40:00Z" },
+            { id: "session-antigua", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+          ],
+        };
+      },
+    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo" });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result)).session_id).toBe("session-reciente");
+    expect((await readState(statePath)).tasks["task-1"]?.session_id).toBe("session-reciente");
+  });
+
+  it("crea el directorio por defecto del estado", async () => {
+    const home = await mkdtemp(join(tmpdir(), "copilot-home-"));
+    dirs.push(home);
+    const statePath = defaultStatePath({}, home);
+    expect(statePath).toBe(join(home, ".copilot-agents-mcp", "state.json"));
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "acme/demo",
+        requestedModel: "modelo-sintetico",
+        state: "queued",
+        createdAt: null,
+        updatedAt: null,
+      });
+    });
+    expect((await readState(statePath)).tasks["task-1"]?.repo).toBe("acme/demo");
+    const watcherHome = await mkdtemp(join(tmpdir(), "copilot-home-"));
+    dirs.push(watcherHome);
+    const watcherState = defaultStatePath({}, watcherHome);
+    const lock = watcherLockPath(watcherState);
+    expect(await acquireWatcher(lock)).toBe(true);
+    try {
+      await withStateLock(watcherState, (state) => {
+        state.models.accepted.push("modelo-sintetico");
+      });
+    } finally {
+      await releaseWatcher(lock);
+    }
+    expect((await readState(watcherState)).models.accepted).toEqual(["modelo-sintetico"]);
   });
 
   it("aborta la tarea y lee la página de eventos", async () => {

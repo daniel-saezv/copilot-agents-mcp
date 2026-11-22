@@ -69,6 +69,7 @@ const statusOutput = z.object({
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
   completed_at: z.string().nullable(),
+  session_id: z.string().nullable().describe("Id de la sesión más reciente de la tarea."),
 }).strict();
 
 const getInput = z.object({

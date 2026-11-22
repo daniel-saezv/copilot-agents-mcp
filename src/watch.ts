@@ -74,10 +74,13 @@ async function notifyFinal(options: {
     const claimed = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
       if (!task || !readyToNotify(task)) return null;
-      const previous = { notified_at: task.notified_at, steer: task.steer ?? null };
+      const previous = {
+        notified_at: task.notified_at,
+        steer: task.steer ? { ...task.steer } : null,
+      };
       task.pull_request = tracked.pull_request;
       task.usage = tracked.usage;
-      if (task.steer?.turn_seen) task.steer = null;
+      if (task.steer?.turn_seen) task.steer = { ...task.steer, notified: true };
       task.notified_at = new Date().toISOString();
       return { notice: toDeliveryNotice(task), previous };
     });
@@ -103,7 +106,7 @@ function shouldPoll(task: TrackedTask): boolean {
 
 function readyToNotify(task: TrackedTask): boolean {
   if (!isFinalState(task.state)) return false;
-  if (task.steer?.turn_seen) return true;
+  if (task.steer && task.steer.notified !== true) return task.steer.turn_seen;
   return !task.notified_at;
 }
 

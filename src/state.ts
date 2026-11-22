@@ -27,6 +27,7 @@ export type SteerWatch = {
   at: string;
   session_count: number;
   turn_seen: boolean;
+  notified: boolean;
 };
 
 export type TrackedTask = {
@@ -69,6 +70,7 @@ export type TaskStatus = {
   created_at: string | null;
   updated_at: string | null;
   completed_at: string | null;
+  session_id: string | null;
 };
 
 export type TaskNotice = TaskStatus & { session_id: string | null };
@@ -96,7 +98,7 @@ export function taskSessionCount(task: AgentTask, fallback = 0): number {
 }
 
 export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
-  task.steer = { at, session_count: sessionCount, turn_seen: false };
+  task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
 }
 
 export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
@@ -106,7 +108,7 @@ export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
 }
 
 export function awaitingSteer(task: TrackedTask): boolean {
-  return Boolean(task.steer);
+  return Boolean(task.steer && task.steer.notified !== true);
 }
 
 export function toNotice(task: TrackedTask): TaskStatus {
@@ -124,6 +126,7 @@ export function toNotice(task: TrackedTask): TaskStatus {
     created_at: task.created_at,
     updated_at: task.updated_at,
     completed_at: task.completed_at,
+    session_id: task.session_id ?? null,
   };
 }
 
@@ -351,6 +354,7 @@ async function writeState(statePath: string, state: StateFile): Promise<void> {
 }
 
 async function acquire(lock: string): Promise<void> {
+  await mkdir(dirname(lock), { recursive: true });
   const started = Date.now();
   for (;;) {
     try {

@@ -91,7 +91,7 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 
 `steer_agent_task` recibe `task_id` y `content`. `abort_agent_task` recibe `task_id`. `get_agent_task_events` recibe `task_id`, `page` y `per_page`.
 
-Tras un steer aceptado, el vigilante guarda `session_count` y la marca del steer, y vuelve a vigilar esa tarea. Detecta el turno nuevo si aparece otra sesión o si la tarea vuelve a un estado que no es final. Avisa una vez cuando ese turno llega a un estado final. `idle` cuenta como final. El cuerpo del aviso es el de la sección siguiente, con `session_id`. Un reinicio no repite un aviso ya enviado.
+Tras un steer aceptado, el estado guarda la hora, el `session_count` de ese momento y si ese turno ya se avisó. El vigilante vuelve a vigilar esa tarea. Detecta el turno nuevo si aparece otra sesión o si la tarea vuelve a un estado que no es final. Avisa una vez cuando ese turno llega a un estado final y deja el registro en el archivo. `idle` cuenta como final. El cuerpo del aviso es el de la sección siguiente, con `session_id`. Un reinicio no repite un aviso ya enviado.
 
 ## Aviso al terminar
 
@@ -135,7 +135,7 @@ El POST lleva `Content-Type: application/json` y este cuerpo:
 
 `resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `branch` sale de `artifacts`. `pull_request.id` es el id interno del artefacto, no el número de la pull request. `number` y `html_url` salen del artefacto si vienen. Si no, se piden con `GET /repos/{owner}/{repo}/pulls?head={owner}:{head_ref}&state=all` y se usa la entrada con esa id. `head_ref` es el del artefacto de rama o, si no hay, el de la sesión. Si no se pueden resolver, `number` y `html_url` van a `null` y el motivo se añade a `COPILOT_AGENTS_LOG`. El aviso se envía igual.
 
-`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número. `session_id` es la sesión de ese turno, o `null` si la tarea aún no trae sesión.
+`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número. `session_id` es el id de la sesión más reciente de la tarea. `get_agent_task` y el aviso devuelven el mismo valor. Es `null` si la tarea aún no trae sesión.
 
 Si `notify-send`, `osascript` o el toast de Windows no arranca, el vigilante escribe el motivo en `COPILOT_AGENTS_LOG` (por ejemplo `ENOENT notify-send`) y sigue con el POST.
 
