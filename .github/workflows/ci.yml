@@ -34,6 +34,9 @@ jobs:
       - name: Tests
         run: npm test
 
+      - name: Paquete
+        run: node scripts/pack-smoke.mjs
+
       - name: Auditoría
         run: npm audit --audit-level=low
 
