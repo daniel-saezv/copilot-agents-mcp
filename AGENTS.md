@@ -52,7 +52,7 @@ Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, leer el est
 
 ### Stack
 
-Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8 y `ajv-formats` 3. Tests con Vitest 5.1.1. Lint con ESLint 9 y `typescript-eslint`. Tipos con `tsc --noEmit`.
+Node.js 26.13.1 (el paquete pide `>=26`) y npm 11.20.0. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8.20.0 y `ajv-formats` 3.0.1. Tests con Vitest 5.1.1. Lint con ESLint 10.15.0 y `typescript-eslint` 8.73.0. Tipos con TypeScript 6.0.3 (`tsc --noEmit`). `@types/node` 26.6.6.
 
 ### Estructura
 
@@ -79,7 +79,7 @@ node dist/cli.js --help
 node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` dejaba 45 tests en 5 archivos. Con la sesión de GitHub App, `npm test` deja 65 tests en 7 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 94 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
+`bash scripts/setup` se ejecutó dos veces seguidas en Node.js 26.13.1 y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` dejaba 45 tests en 5 archivos. Con la sesión de GitHub App el conteo subió; en Node.js 26.13.1, `npm test` deja 75 tests en 7 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 94 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0, `node dist/cli.js --help` escribió la ayuda y `node src/cli.ts --version` imprimió `0.0.1`. `node scripts/pack-smoke.mjs` imprimió `--version 0.0.1` y las 6 herramientas de `tools/list`.
 
 ### Buenas prácticas de este stack
 
@@ -89,9 +89,9 @@ Los imports relativos llevan extensión `.ts`. El esquema de cada herramienta ll
 
 Workflows en cada pull request y en cada push a `main`:
 
-- `.github/workflows/ci.yml`: `npm ci`, tipos, lint, tests, `npm audit --audit-level=low`, licencias y CodeQL (`javascript-typescript`). Las actions están fijadas por SHA.
-- `.github/workflows/skills.yml`: comprueba el lock de skills. Node 22.20.
-- `.github/workflows/copilot-setup-steps.yml`: instala Node 22 y ejecuta `bash scripts/setup` si cambia ese script o el workflow.
+- `.github/workflows/ci.yml`: Node 26. `npm ci`, tipos, lint, tests, `npm audit --audit-level=low`, licencias y CodeQL (`javascript-typescript`). Las actions están fijadas por SHA.
+- `.github/workflows/skills.yml`: comprueba el lock de skills. Node 26.
+- `.github/workflows/copilot-setup-steps.yml`: instala Node 26 y ejecuta `bash scripts/setup` si cambia ese script o el workflow.
 
 La API de protección de rama respondió 403, así que no consta aquí si algún check es obligatorio. Los workflows de arriba se ejecutan en cada PR. Conviene exigir los jobs `test` y `codeql` de `ci.yml` antes del merge si aún no lo están. El proyecto no se despliega y no se publica en npm. La distribución es `npx` desde este repositorio de GitHub.
 

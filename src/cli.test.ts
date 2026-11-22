@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ignoredTokenWarning, readActiveToken } from "./auth.ts";
-import { parseArgs } from "./cli.ts";
+import { parseArgs, supportsNode } from "./cli.ts";
 
 describe("cli", () => {
   it("arranca en stdio y solo abre HTTP con el flag", () => {
@@ -14,6 +14,13 @@ describe("cli", () => {
     expect(parseArgs(["--version"], {})).toEqual({ command: "version" });
     expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
     expect(() => parseArgs(["login", "--http"], {})).toThrow(/no admite/);
+  });
+
+  it("exige Node.js 26", () => {
+    expect(supportsNode("26.0.0")).toBe(true);
+    expect(supportsNode("26.13.1")).toBe(true);
+    expect(supportsNode("22.23.4")).toBe(false);
+    expect(supportsNode("24.11.1")).toBe(false);
   });
 
   it("prioriza el PAT y no usa GH_TOKEN ni GITHUB_TOKEN", () => {
