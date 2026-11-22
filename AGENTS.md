@@ -90,7 +90,7 @@ Workflows en cada pull request y en cada push a `main`:
 
 - `.github/workflows/ci.yml`: `npm ci`, tipos, lint, tests, `npm audit --audit-level=low`, licencias y CodeQL (`javascript-typescript`). Las actions están fijadas por SHA.
 - `.github/workflows/skills.yml`: comprueba el lock de skills. Node 22.20.
-- `.github/workflows/copilot-setup-steps.yml`: ejecuta `bash scripts/setup` si cambia ese script o el workflow.
+- `.github/workflows/copilot-setup-steps.yml`: instala Node 22 y ejecuta `bash scripts/setup` si cambia ese script o el workflow.
 
 La API de protección de rama respondió 403, así que no consta aquí si algún check es obligatorio. Los workflows de arriba se ejecutan en cada PR. Conviene exigir los jobs `test` y `codeql` de `ci.yml` antes del merge si aún no lo están. El proyecto no se despliega y no se publica en npm. La distribución es `npx` desde este repositorio de GitHub.
 
