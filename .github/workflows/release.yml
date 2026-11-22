@@ -49,13 +49,7 @@ jobs:
         run: npm publish --provenance --access public
 
       - name: Publish with NPM_TOKEN fallback
-        if: steps.trusted-publish.outcome == 'failure' && secrets.NPM_TOKEN != ''
+        if: steps.trusted-publish.outcome == 'failure'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Require npm authentication
-        if: steps.trusted-publish.outcome == 'failure' && secrets.NPM_TOKEN == ''
-        run: |
-          echo "npm trusted publishing failed and NPM_TOKEN is not configured"
-          exit 1
