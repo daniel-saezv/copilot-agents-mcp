@@ -1,0 +1,107 @@
+{
+  "name": "get_agent_task_events",
+  "title": "Eventos de una tarea",
+  "description": "[Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Lee una página de eventos de una tarea.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string",
+        "description": "Identificador de la tarea."
+      },
+      "page": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Página, desde 1."
+      },
+      "per_page": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Eventos por página."
+      }
+    },
+    "required": [
+      "task_id",
+      "page",
+      "per_page"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      },
+      "page": {
+        "type": "number"
+      },
+      "per_page": {
+        "type": "number"
+      },
+      "total": {
+        "type": "number"
+      },
+      "events": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "parentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string"
+            },
+            "data": {}
+          },
+          "required": [
+            "id",
+            "timestamp",
+            "parentId",
+            "type",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "task_id",
+      "page",
+      "per_page",
+      "total",
+      "events"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "Eventos de una tarea",
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}

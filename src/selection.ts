@@ -22,6 +22,9 @@ export type ToolDefinition = {
 export const TOOLS: readonly ToolDefinition[] = [
   { name: "create_agent_task", toolset: "copilot_tasks", method: "POST" },
   { name: "get_agent_task", toolset: "copilot_tasks", method: "GET" },
+  { name: "steer_agent_task", toolset: "copilot_tasks", method: "POST" },
+  { name: "abort_agent_task", toolset: "copilot_tasks", method: "POST" },
+  { name: "get_agent_task_events", toolset: "copilot_tasks", method: "GET" },
   { name: "list_copilot_models", toolset: "copilot_models", method: "GET" },
 ];
 

@@ -27,8 +27,22 @@ export type AgentTask = {
   updated_at?: string;
   html_url?: string;
   url?: string;
+  session_count?: number;
   sessions?: AgentSession[];
   artifacts?: AgentArtifact[];
+};
+
+export type TaskEvent = {
+  id?: string;
+  timestamp?: string;
+  parentId?: string | null;
+  type: string;
+  data?: unknown;
+};
+
+export type TaskEventsPage = {
+  events: TaskEvent[];
+  total: number;
 };
 
 export type CreateTaskInput = {
@@ -46,7 +60,13 @@ export interface GitHubClient {
   createTask(input: CreateTaskInput): Promise<AgentTask>;
   getTask(input: { taskId: string; owner?: string; repo?: string }): Promise<AgentTask>;
   findPullRequest(input: { owner: string; repo: string; id: number; headRef: string }): Promise<{ number: number; html_url: string } | null>;
+  getPullRequest(input: { owner: string; repo: string; number: number }): Promise<{ number: number; state: string }>;
+  steerTask(taskId: string, content: string): Promise<void>;
+  abortTask(taskId: string): Promise<void>;
+  getTaskEvents(taskId: string, page: number, perPage: number): Promise<TaskEventsPage>;
 }
+
+const INTERNAL_AGENTS_BASE = "https://api.github.com/cmc_internal/api/agents";
 
 type Validate = ((data: unknown) => boolean) & { errors?: Array<{ instancePath?: string; message?: string }> | null };
 
@@ -128,9 +148,11 @@ export function createGitHubClient(options: {
   token: string;
   fetch?: typeof fetch;
   baseUrl?: string;
+  internalBaseUrl?: string;
 }): GitHubClient {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
+  const internalBaseUrl = (options.internalBaseUrl ?? INTERNAL_AGENTS_BASE).replace(/\/$/, "");
   return {
     createTask(input) {
       const body: Record<string, unknown> = { prompt: input.prompt, model: input.model };
@@ -178,6 +200,55 @@ export function createGitHubClient(options: {
       });
       return matchPull(parsed, input.id);
     },
+    async getPullRequest(input) {
+      const parsed = await callGitHub({
+        token: options.token,
+        fetchImpl,
+        baseUrl,
+        path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls/${encodeURIComponent(String(input.number))}`,
+        method: "GET",
+      });
+      return readPullState(parsed, input.number);
+    },
+    async steerTask(taskId, content) {
+      await callGitHub({
+        token: options.token,
+        fetchImpl,
+        baseUrl: internalBaseUrl,
+        path: `/tasks/${encodeURIComponent(taskId)}/steer`,
+        method: "POST",
+        body: { content, type: "user_message" },
+        profile: "internal",
+        acceptEmpty: true,
+      });
+    },
+    async abortTask(taskId) {
+      await callGitHub({
+        token: options.token,
+        fetchImpl,
+        baseUrl: internalBaseUrl,
+        path: `/tasks/${encodeURIComponent(taskId)}/steer`,
+        method: "POST",
+        body: { type: "abort" },
+        profile: "internal",
+        acceptEmpty: true,
+      });
+    },
+    async getTaskEvents(taskId, page, perPage) {
+      if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) {
+        throw new GitHubError("page y per_page tienen que ser enteros mayores que cero.");
+      }
+      const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
+      const parsed = await callGitHub({
+        token: options.token,
+        fetchImpl,
+        baseUrl: internalBaseUrl,
+        path: `/tasks/${encodeURIComponent(taskId)}/events?${query.toString()}`,
+        method: "GET",
+        profile: "internal",
+      });
+      return parseTaskEvents(parsed);
+    },
   };
 }
 
@@ -203,13 +274,16 @@ async function callGitHub(options: {
   path: string;
   method: "GET" | "POST";
   body?: Record<string, unknown>;
+  profile?: "public" | "internal";
+  acceptEmpty?: boolean;
 }): Promise<unknown> {
+  const profile = options.profile ?? "public";
   const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
+    accept: profile === "internal" ? "application/json" : "application/vnd.github+json",
     authorization: `Bearer ${options.token}`,
     "user-agent": "copilot-agents-mcp",
-    "x-github-api-version": API_VERSION,
   };
+  if (profile === "public") headers["x-github-api-version"] = API_VERSION;
   if (options.body) headers["content-type"] = "application/json";
   let response: Response;
   try {
@@ -238,8 +312,39 @@ async function callGitHub(options: {
       : formatApiError(response.status, response.headers, parsed);
     throw new GitHubError(redact(message, options.token));
   }
+  if (options.acceptEmpty && response.status === 202) return undefined;
   if (parsed === null) throw new GitHubError(`La respuesta de GitHub no es JSON (HTTP ${response.status}).`);
   return parsed;
+}
+
+function readPullState(parsed: unknown, number: number): { number: number; state: string } {
+  if (!parsed || typeof parsed !== "object") throw new GitHubError(`La pull request ${number} no es un objeto.`);
+  const record = parsed as Record<string, unknown>;
+  if (record.number !== number || typeof record.state !== "string" || !record.state) {
+    throw new GitHubError(`La pull request ${number} no trae state.`);
+  }
+  return { number, state: record.state };
+}
+
+function parseTaskEvents(parsed: unknown): TaskEventsPage {
+  if (!parsed || typeof parsed !== "object") throw new GitHubError("La respuesta de eventos no es un objeto.");
+  const record = parsed as Record<string, unknown>;
+  if (!Array.isArray(record.events) || typeof record.total !== "number") {
+    throw new GitHubError("La respuesta de eventos no trae events y total.");
+  }
+  const events: TaskEvent[] = [];
+  for (const item of record.events) {
+    if (!item || typeof item !== "object") throw new GitHubError("Un evento no es un objeto.");
+    const event = item as Record<string, unknown>;
+    if (typeof event.type !== "string" || !event.type) throw new GitHubError("Un evento no trae type.");
+    const parsedEvent: TaskEvent = { type: event.type };
+    if (typeof event.id === "string") parsedEvent.id = event.id;
+    if (typeof event.timestamp === "string") parsedEvent.timestamp = event.timestamp;
+    if (typeof event.parentId === "string" || event.parentId === null) parsedEvent.parentId = event.parentId;
+    if ("data" in event) parsedEvent.data = event.data;
+    events.push(parsedEvent);
+  }
+  return { events, total: record.total };
 }
 
 function matchPull(parsed: unknown, id: number): { number: number; html_url: string } | null {

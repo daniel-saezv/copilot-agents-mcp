@@ -1,5 +1,8 @@
 export const API_VERSION = "2026-03-10";
 
+export const TASK_HAS_NO_PULL_REQUEST = "task_has_no_pull_request";
+export const TASK_PULL_REQUEST_NOT_OPEN = "task_pull_request_not_open";
+
 export class ToolFailure extends Error {
   constructor(message: string) {
     super(message);
