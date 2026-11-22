@@ -5,10 +5,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
-import { isFinalState, observe, readState, toNotice, withStateLock, type TaskNotice } from "./state.ts";
+import { appendWatcherLog } from "./notify.ts";
+import { fillPullRequest, isFinalState, observe, presentUsage, readState, toNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
-  client: Pick<GitHubClient, "getTask">;
+  client: Pick<GitHubClient, "getTask" | "findPullRequest">;
   statePath: string;
   deliver: (notice: TaskNotice) => Promise<void>;
   intervalMs: number;
@@ -52,6 +53,7 @@ async function refreshPending(options: {
 }
 
 async function notifyFinal(options: {
+  client: Pick<GitHubClient, "findPullRequest">;
   statePath: string;
   deliver: (notice: TaskNotice) => Promise<void>;
 }): Promise<void> {
@@ -61,9 +63,19 @@ async function notifyFinal(options: {
       .map((task) => task.task_id);
   });
   for (const taskId of ready) {
+    const tracked = await withStateLock(options.statePath, (state) => {
+      const task = state.tasks[taskId];
+      if (!task || !isFinalState(task.state) || task.notified_at) return null;
+      refreshUsage(task);
+      return task;
+    });
+    if (!tracked) continue;
+    await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line));
     const notice = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
       if (!task || !isFinalState(task.state) || task.notified_at) return null;
+      task.pull_request = tracked.pull_request;
+      task.usage = tracked.usage;
       task.notified_at = new Date().toISOString();
       return toNotice(task);
     });
@@ -140,6 +152,12 @@ export function startDetachedWatcher(env: NodeJS.ProcessEnv = process.env): void
   });
   if (typeof stderr === "number") closeSync(stderr);
   child.unref();
+}
+
+function refreshUsage(task: TrackedTask): void {
+  if (!task.usage) return;
+  const next = presentUsage(task.usage);
+  if (next) task.usage = next;
 }
 
 function delay(ms: number): Promise<void> {

@@ -5,7 +5,8 @@ import { failureMessage, modelUnavailableMessage, toolError, toolJson, ToolFailu
 import type { GitHubClient } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
-import { initialTask, normalizeModel, observe, toNotice, withStateLock } from "./state.ts";
+import { appendWatcherLog } from "./notify.ts";
+import { fillPullRequest, headRefOf, initialTask, normalizeModel, observe, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -45,7 +46,13 @@ const artifactSchema = z.discriminatedUnion("type", [
 const usageSchema = z.object({
   type: z.enum(["ai_credits", "premium_requests"]),
   amount: z.number().describe("Valor crudo de la API. Con ai_credits está en nano unidades."),
-  amount_human: z.number().describe("ai_credits dividido entre 1e9 y redondeado a un decimal. premium_requests se deja igual."),
+  amount_human: z.number().describe("ai_credits dividido entre 1e9. premium_requests se deja igual."),
+}).strict();
+
+const pullRequestSchema = z.object({
+  id: z.number().describe("Id interno de la API. No es el número de la pull request."),
+  number: z.number().nullable(),
+  html_url: z.string().nullable(),
 }).strict();
 
 const statusOutput = z.object({
@@ -54,7 +61,7 @@ const statusOutput = z.object({
   state: z.string(),
   requested_model: z.string().nullable(),
   resolved_model: z.string().nullable().describe("sessions[].model, tal como lo devuelve la API."),
-  pull_request: z.object({ id: z.number() }).strict().nullable(),
+  pull_request: pullRequestSchema.nullable(),
   branch: z.object({ head_ref: z.string(), base_ref: z.string() }).strict().nullable(),
   artifacts: z.array(artifactSchema),
   error: z.string().nullable(),
@@ -178,7 +185,8 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
   if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
-  const remote = await deps.clientForToken(token).getTask({
+  const client = deps.clientForToken(token);
+  const remote = await client.getTask({
     taskId,
     ...(parsed ? { owner: parsed.owner, repo: parsed.repo } : {}),
   });
@@ -187,6 +195,16 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
       repo: repo || state.tasks[taskId]?.repo || "",
       requestedModel: state.tasks[taskId]?.requested_model ?? known?.requested_model ?? null,
     });
+  });
+  await fillPullRequest(
+    tracked,
+    (input) => client.findPullRequest(input),
+    (line) => appendWatcherLog(line),
+    headRefOf(remote, tracked),
+  );
+  await withStateLock(deps.statePath, (state) => {
+    const saved = state.tasks[tracked.task_id];
+    if (saved) saved.pull_request = tracked.pull_request;
   });
   return toNotice(tracked);
 }

@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentTask } from "./github.ts";
-import { isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
+import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 
 export const MODEL_PREFIX = "sweagent-capi:";
 export const FINAL_STATES = new Set(["completed", "failed", "timed_out", "cancelled", "idle"]);
@@ -17,13 +17,19 @@ export type TrackedArtifact =
   | { type: "pull"; id: number }
   | { type: "branch"; head_ref: string; base_ref: string };
 
+export type PullRequestRef = {
+  id: number;
+  number: number | null;
+  html_url: string | null;
+};
+
 export type TrackedTask = {
   task_id: string;
   repo: string;
   requested_model: string | null;
   state: string;
   resolved_model: string | null;
-  pull_request: { id: number } | null;
+  pull_request: PullRequestRef | null;
   branch: { head_ref: string; base_ref: string } | null;
   artifacts: TrackedArtifact[];
   error: string | null;
@@ -47,7 +53,7 @@ export type TaskNotice = {
   state: string;
   requested_model: string | null;
   resolved_model: string | null;
-  pull_request: { id: number } | null;
+  pull_request: PullRequestRef | null;
   branch: { head_ref: string; base_ref: string } | null;
   artifacts: TrackedArtifact[];
   error: string | null;
@@ -96,7 +102,7 @@ export function presentUsage(usage: { type?: string; amount?: number } | undefin
     return null;
   }
   if (usage.type === "ai_credits") {
-    return { type: usage.type, amount: usage.amount, amount_human: Math.round((usage.amount / 1_000_000_000) * 10) / 10 };
+    return { type: usage.type, amount: usage.amount, amount_human: usage.amount / 1_000_000_000 };
   }
   return { type: usage.type, amount: usage.amount, amount_human: usage.amount };
 }
@@ -130,7 +136,6 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
   const latestModel = [...sessions].reverse().find((session) => typeof session.model === "string" && session.model.trim());
   const latestUsage = [...sessions].reverse().find((session) => session.usage);
   const artifacts = mapArtifacts(task.artifacts);
-  const pull = artifacts.find((artifact) => artifact.type === "pull");
   const branch = artifacts.find((artifact) => artifact.type === "branch");
   const completed = [...sessions].reverse().find((session) => session.completed_at);
   const existing = state.tasks[task.id];
@@ -140,7 +145,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
     requested_model: context.requestedModel ?? existing?.requested_model ?? null,
     state: task.state,
     resolved_model: latestModel?.model ?? null,
-    pull_request: pull?.type === "pull" ? { id: pull.id } : null,
+    pull_request: readPull(task, existing),
     branch: branch?.type === "branch" ? { head_ref: branch.head_ref, base_ref: branch.base_ref } : null,
     artifacts,
     error,
@@ -152,6 +157,64 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
   };
   state.tasks[task.id] = tracked;
   return tracked;
+}
+
+export function headRefOf(task: AgentTask, tracked: Pick<TrackedTask, "branch">): string | undefined {
+  if (tracked.branch?.head_ref) return tracked.branch.head_ref;
+  const sessions = [...(task.sessions ?? [])].reverse();
+  for (const session of sessions) {
+    if (session.head_ref) return session.head_ref;
+  }
+  return undefined;
+}
+
+export async function fillPullRequest(
+  task: TrackedTask,
+  lookup: (input: { owner: string; repo: string; id: number; headRef: string }) => Promise<{ number: number; html_url: string } | null>,
+  log: (line: string) => void | Promise<void>,
+  headRef = task.branch?.head_ref,
+): Promise<void> {
+  const pull = task.pull_request;
+  if (!pull) return;
+  if (pull.number == null) pull.number = null;
+  if (pull.html_url == null) pull.html_url = null;
+  if (pull.number !== null && pull.html_url !== null) return;
+  const slash = task.repo.indexOf("/");
+  if (slash <= 0 || !headRef) {
+    await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: faltan el repositorio o head_ref.`);
+    return;
+  }
+  try {
+    const found = await lookup({
+      owner: task.repo.slice(0, slash),
+      repo: task.repo.slice(slash + 1),
+      id: pull.id,
+      headRef,
+    });
+    if (!found) {
+      await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: la lista no incluye esa id.`);
+      return;
+    }
+    pull.number = found.number;
+    pull.html_url = found.html_url;
+  } catch (error) {
+    await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: ${failureMessage(error)}`);
+  }
+}
+
+function readPull(task: AgentTask, existing: TrackedTask | undefined): PullRequestRef | null {
+  for (const artifact of task.artifacts ?? []) {
+    if (artifact.type !== "pull" || typeof artifact.data?.id !== "number") continue;
+    const number = typeof artifact.data.number === "number" ? artifact.data.number : null;
+    const htmlUrl = typeof artifact.data.html_url === "string" && artifact.data.html_url ? artifact.data.html_url : null;
+    const previous = existing?.pull_request?.id === artifact.data.id ? existing.pull_request : undefined;
+    return {
+      id: artifact.data.id,
+      number: number ?? previous?.number ?? null,
+      html_url: htmlUrl ?? previous?.html_url ?? null,
+    };
+  }
+  return null;
 }
 
 function mapArtifacts(artifacts: AgentTask["artifacts"]): TrackedArtifact[] {

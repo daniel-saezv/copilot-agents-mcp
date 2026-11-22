@@ -11,12 +11,13 @@ export type AgentSession = {
   model?: string;
   error?: { message?: string };
   usage?: { type: "ai_credits" | "premium_requests"; amount: number };
+  head_ref?: string;
 };
 
 export type AgentArtifact = {
   provider?: string;
   type?: string;
-  data?: { id?: number; head_ref?: string; base_ref?: string };
+  data?: { id?: number; number?: number; html_url?: string; head_ref?: string; base_ref?: string };
 };
 
 export type AgentTask = {
@@ -44,6 +45,7 @@ export type CreateTaskInput = {
 export interface GitHubClient {
   createTask(input: CreateTaskInput): Promise<AgentTask>;
   getTask(input: { taskId: string; owner?: string; repo?: string }): Promise<AgentTask>;
+  findPullRequest(input: { owner: string; repo: string; id: number; headRef: string }): Promise<{ number: number; html_url: string } | null>;
 }
 
 type Validate = ((data: unknown) => boolean) & { errors?: Array<{ instancePath?: string; message?: string }> | null };
@@ -161,6 +163,21 @@ export function createGitHubClient(options: {
         label: "leer la tarea",
       });
     },
+    async findPullRequest(input) {
+      const query = new URLSearchParams({
+        state: "all",
+        head: `${input.owner}:${input.headRef}`,
+        per_page: "100",
+      });
+      const parsed = await callGitHub({
+        token: options.token,
+        fetchImpl,
+        baseUrl,
+        path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls?${query.toString()}`,
+        method: "GET",
+      });
+      return matchPull(parsed, input.id);
+    },
   };
 }
 
@@ -174,6 +191,19 @@ async function request(options: {
   validate: Validate;
   label: string;
 }): Promise<AgentTask> {
+  const parsed = await callGitHub(options);
+  assertSchema(options.validate, parsed, options.label);
+  return parsed as AgentTask;
+}
+
+async function callGitHub(options: {
+  token: string;
+  fetchImpl: typeof fetch;
+  baseUrl: string;
+  path: string;
+  method: "GET" | "POST";
+  body?: Record<string, unknown>;
+}): Promise<unknown> {
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
     authorization: `Bearer ${options.token}`,
@@ -209,6 +239,19 @@ async function request(options: {
     throw new GitHubError(redact(message, options.token));
   }
   if (parsed === null) throw new GitHubError(`La respuesta de GitHub no es JSON (HTTP ${response.status}).`);
-  assertSchema(options.validate, parsed, options.label);
-  return parsed as AgentTask;
+  return parsed;
+}
+
+function matchPull(parsed: unknown, id: number): { number: number; html_url: string } | null {
+  if (!Array.isArray(parsed)) throw new GitHubError("La respuesta de pull requests no es una lista.");
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.id !== id) continue;
+    if (typeof record.number !== "number" || typeof record.html_url !== "string" || !record.html_url) {
+      throw new GitHubError(`La pull request ${id} no trae number y html_url.`);
+    }
+    return { number: record.number, html_url: record.html_url };
+  }
+  return null;
 }

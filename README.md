@@ -97,21 +97,52 @@ El POST lleva `Content-Type: application/json` y este cuerpo:
   "state": "completed",
   "requested_model": "grok-4.7",
   "resolved_model": "sweagent-capi:grok-4.7",
-  "pull_request": { "id": 42 },
+  "pull_request": {
+    "id": 42,
+    "number": 7,
+    "html_url": "https://github.com/octocat/hello-world/pull/7"
+  },
   "branch": { "head_ref": "copilot/demo", "base_ref": "main" },
   "artifacts": [
     { "type": "pull", "id": 42 },
     { "type": "branch", "head_ref": "copilot/demo", "base_ref": "main" }
   ],
   "error": null,
-  "usage": { "type": "ai_credits", "amount": 1500000000, "amount_human": 1.5 },
+  "usage": { "type": "ai_credits", "amount": 344355000, "amount_human": 0.344355 },
   "created_at": "2026-11-22T00:00:00Z",
   "updated_at": "2026-11-22T00:01:00Z",
   "completed_at": "2026-11-22T00:05:00Z"
 }
 ```
 
-`resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `pull_request` y `branch` salen de `artifacts`. `error` es `null` o el texto del fallo; si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades: `amount_human` es ese valor dividido entre 1 000 000 000 y redondeado a un decimal. Con `premium_requests`, `amount_human` es el mismo número.
+`resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `branch` sale de `artifacts`. `pull_request.id` es el id interno del artefacto, no el número de la pull request. `number` y `html_url` salen del artefacto si vienen. Si no, se piden con `GET /repos/{owner}/{repo}/pulls?head={owner}:{head_ref}&state=all` y se usa la entrada con esa id. `head_ref` es el del artefacto de rama o, si no hay, el de la sesión. Si no se pueden resolver, `number` y `html_url` van a `null` y el motivo se añade a `COPILOT_AGENTS_LOG`. El aviso se envía igual.
+
+`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número.
+
+Si `notify-send`, `osascript` o el toast de Windows no arranca, el vigilante escribe el motivo en `COPILOT_AGENTS_LOG` (por ejemplo `ENOENT notify-send`) y sigue con el POST.
+
+## Repetir un aviso
+
+El vigilante avisa una vez. `notified_at` guarda ese momento. Para repetir el aviso de una tarea ya terminada, sin lanzar otra:
+
+1. Espera a que el vigilante haya salido. Si la tarea ya se avisó, ese proceso ya no está.
+2. Copia el archivo de estado y pon `notified_at` en `null` para esa tarea. Deja `state` como está.
+3. Arranca `watch` con `COPILOT_AGENTS_STATE_PATH` apuntando a la copia.
+
+Hace falta el token. El vigilante no vuelve a leer la tarea de agente. Recalcula `amount_human` desde `usage.amount` y, si faltan `number` o `html_url`, llama a la API de pull requests.
+
+```bash
+mkdir -p "$HOME/reaviso"
+cp "${COPILOT_AGENTS_STATE_PATH:-$HOME/.copilot-agents-mcp/state.json}" "$HOME/reaviso/state.json"
+node --input-type=module -e 'import { readFileSync, writeFileSync } from "node:fs"; const path = `${process.env.HOME}/reaviso/state.json`; const state = JSON.parse(readFileSync(path, "utf8")); state.tasks[process.argv[1]].notified_at = null; writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);' -- ID-DE-LA-TAREA
+GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_… \
+COPILOT_AGENTS_STATE_PATH="$HOME/reaviso/state.json" \
+COPILOT_AGENTS_NOTIFY_URL=http://127.0.0.1:9/aviso \
+COPILOT_AGENTS_LOG="$HOME/reaviso/watch.log" \
+npx -y github:daniel-saezv/copilot-agents-mcp watch
+```
+
+Sustituye `ID-DE-LA-TAREA` y la URL del POST. El proceso sale cuando ha enviado el aviso.
 
 ## Variables del token
 

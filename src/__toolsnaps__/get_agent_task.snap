@@ -51,11 +51,26 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "number"
+                "type": "number",
+                "description": "Id interno de la API. No es el número de la pull request."
+              },
+              "number": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "html_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
-              "id"
+              "id",
+              "number",
+              "html_url"
             ],
             "additionalProperties": false
           },
@@ -156,7 +171,7 @@
               },
               "amount_human": {
                 "type": "number",
-                "description": "ai_credits dividido entre 1e9 y redondeado a un decimal. premium_requests se deja igual."
+                "description": "ai_credits dividido entre 1e9. premium_requests se deja igual."
               }
             },
             "required": [

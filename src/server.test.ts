@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { ModelsError } from "./errors.ts";
-import type { AgentTask, GitHubClient } from "./github.ts";
+import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
@@ -104,6 +105,9 @@ describe("herramientas", () => {
       async getTask() {
         throw new Error("no");
       },
+      async findPullRequest() {
+        throw new Error("no");
+      },
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
@@ -124,6 +128,9 @@ describe("herramientas", () => {
         return { id: "task-1", state: "queued", created_at: "2026-11-22T00:00:00Z", html_url: "https://github.com/octocat/hello-world/copilot/tasks/task-1" };
       },
       async getTask() {
+        throw new Error("no");
+      },
+      async findPullRequest() {
         throw new Error("no");
       },
     }, "create_agent_task", {
@@ -178,9 +185,105 @@ describe("herramientas", () => {
           }],
         };
       },
+      async findPullRequest() {
+        throw new Error("no");
+      },
     }, "get_agent_task", { task_id: "task-1" });
     expect(textOf(result)).toContain("El modelo «claude-sonnet-4.6» no está disponible");
     expect(textOf(result)).toContain("mai-code-2");
+  });
+
+  it("añade number y html_url y sigue si la API de pull requests falla", async () => {
+    const statePath = await tempPath();
+    const example = structuredClone(JSON.parse(readFileSync(new URL("../fixtures/openapi/get-task.response.json", import.meta.url), "utf8")).example) as AgentTask;
+    const session = example.sessions?.[0];
+    if (!session) throw new Error("el ejemplo no trae sesión");
+    session.usage = { type: "ai_credits", amount: 344_355_000 };
+    await withStateLock(statePath, (state) => {
+      state.tasks[example.id] = {
+        task_id: example.id,
+        repo: "octocat/hello-world",
+        requested_model: "claude-sonnet-4.6",
+        state: "queued",
+        resolved_model: null,
+        pull_request: null,
+        branch: null,
+        artifacts: [],
+        error: null,
+        usage: null,
+        created_at: null,
+        updated_at: null,
+        completed_at: null,
+        notified_at: null,
+      };
+    });
+    const failing = createGitHubClient({
+      token: "test-token",
+      fetch: taskFetch(example, () => new Response(JSON.stringify({ message: "no" }), { status: 502 })),
+    });
+    const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id });
+    expect(broken.isError).toBeUndefined();
+    expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42, number: null, html_url: null });
+    const urls: string[] = [];
+    const client = createGitHubClient({
+      token: "test-token",
+      fetch: taskFetch(example, (url) => {
+        urls.push(url);
+        return new Response(JSON.stringify([
+          { id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" },
+        ]), { status: 200 });
+      }),
+    });
+    const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    expect(ok.isError).toBeUndefined();
+    const body = JSON.parse(textOf(ok)) as { pull_request: unknown; usage: unknown; branch: unknown; resolved_model: string };
+    expect(body.pull_request).toEqual({ id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" });
+    expect(body.usage).toEqual({ type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 });
+    expect(body.resolved_model).toBe("claude-sonnet-4.6");
+    expect(urls.some((url) => url.includes("head=octocat%3Acopilot%2Ffix-1"))).toBe(true);
+  });
+
+  it("no busca la pull request si la tarea ya trae number y html_url", async () => {
+    const statePath = await tempPath();
+    const example = structuredClone(JSON.parse(readFileSync(new URL("../fixtures/openapi/get-task.response.json", import.meta.url), "utf8")).example) as AgentTask;
+    const pull = example.artifacts?.find((artifact) => artifact.type === "pull");
+    if (!pull?.data) throw new Error("el ejemplo no trae pull");
+    pull.data.number = 7;
+    pull.data.html_url = "https://github.com/octocat/hello-world/pull/7";
+    await withStateLock(statePath, (state) => {
+      state.tasks[example.id] = {
+        task_id: example.id,
+        repo: "octocat/hello-world",
+        requested_model: "claude-sonnet-4.6",
+        state: "queued",
+        resolved_model: null,
+        pull_request: null,
+        branch: null,
+        artifacts: [],
+        error: null,
+        usage: null,
+        created_at: null,
+        updated_at: null,
+        completed_at: null,
+        notified_at: null,
+      };
+    });
+    let pulls = 0;
+    const client = createGitHubClient({
+      token: "test-token",
+      fetch: taskFetch(example, () => {
+        pulls += 1;
+        return new Response("[]", { status: 200 });
+      }),
+    });
+    const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    expect(result.isError).toBeUndefined();
+    expect(pulls).toBe(0);
+    expect(JSON.parse(textOf(result)).pull_request).toEqual({
+      id: 42,
+      number: 7,
+      html_url: "https://github.com/octocat/hello-world/pull/7",
+    });
   });
 
   it("devuelve los modelos leídos y un error si el formato no cuadra", async () => {
@@ -295,7 +398,18 @@ function unusedClient(): GitHubClient {
     async getTask() {
       throw new Error("no");
     },
+    async findPullRequest() {
+      throw new Error("no");
+    },
   };
+}
+
+function taskFetch(example: AgentTask, pulls: (url: string) => Response): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/pulls?")) return pulls(url);
+    return new Response(JSON.stringify(example), { status: 200 });
+  }) as typeof fetch;
 }
 
 async function listOverHttp(url: string, headers: Record<string, string>) {

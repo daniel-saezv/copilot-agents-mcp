@@ -100,6 +100,43 @@ describe("contrato del OpenAPI", () => {
   });
 });
 
+describe("pull request", () => {
+  it("elige la id de la lista filtrada por head", async () => {
+    let seen = "";
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch((url, init) => {
+        seen = url;
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-token");
+        return new Response(JSON.stringify([
+          { id: 41, number: 1, html_url: "https://github.com/octocat/hello-world/pull/1" },
+          { id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" },
+        ]), { status: 200 });
+      }),
+    });
+    await expect(client.findPullRequest({
+      owner: "octocat",
+      repo: "hello-world",
+      id: 42,
+      headRef: "copilot/demo",
+    })).resolves.toEqual({ number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" });
+    expect(seen).toBe("https://api.github.com/repos/octocat/hello-world/pulls?state=all&head=octocat%3Acopilot%2Fdemo&per_page=100");
+  });
+
+  it("devuelve null si esa id no está en la lista", async () => {
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch(() => new Response(JSON.stringify([{ id: 9, number: 1, html_url: "https://github.com/octocat/hello-world/pull/1" }]), { status: 200 })),
+    });
+    await expect(client.findPullRequest({
+      owner: "octocat",
+      repo: "hello-world",
+      id: 42,
+      headRef: "copilot/demo",
+    })).resolves.toBeNull();
+  });
+});
+
 describe("formatApiError", () => {
   it("calcula la espera con x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);

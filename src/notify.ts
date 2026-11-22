@@ -1,4 +1,6 @@
 import { spawn, type SpawnOptions } from "node:child_process";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { TaskNotice } from "./state.ts";
 
 export const NOTIFY_URL_ENV = "COPILOT_AGENTS_NOTIFY_URL";
@@ -65,16 +67,45 @@ export async function notifySystem(notice: TaskNotice, spawnImpl: typeof spawn =
   const plan = notificationPlan(platform, title, body, baseEnv);
   if (!plan) return;
   await new Promise<void>((resolve) => {
+    let pending = true;
+    const done = (error?: unknown) => {
+      if (!pending) return;
+      pending = false;
+      if (error === undefined) {
+        resolve();
+        return;
+      }
+      void appendWatcherLog(`No se pudo mostrar la notificación del sistema: ${notifyFailure(plan.command, error)}`, baseEnv).finally(resolve);
+    };
     let child: ReturnType<typeof spawn>;
     try {
       child = spawnImpl(plan.command, plan.args, { windowsHide: true, env: plan.env, stdio: "ignore" } satisfies SpawnOptions);
-    } catch {
-      resolve();
+    } catch (error) {
+      done(error);
       return;
     }
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
+    child.on("error", (error) => done(error));
+    child.on("exit", () => done());
   });
+}
+
+export async function appendWatcherLog(line: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const logPath = env.COPILOT_AGENTS_LOG?.trim();
+  if (!logPath) {
+    console.error(line);
+    return;
+  }
+  try {
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, `${line}\n`, "utf8");
+  } catch {
+    console.error(line);
+  }
+}
+
+function notifyFailure(command: string, error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "error";
+  return `${code} ${command}`;
 }
 
 export async function postNotice(url: string, notice: TaskNotice, authorization: string | undefined, fetchImpl: typeof fetch = fetch): Promise<void> {
@@ -89,8 +120,14 @@ export async function postNotice(url: string, notice: TaskNotice, authorization:
   if (!response.ok) throw new Error(`El aviso POST respondió HTTP ${response.status}.`);
 }
 
-export async function deliverNotice(notice: TaskNotice, env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<void> {
-  await notifySystem(notice, spawn, process.platform, env);
+export async function deliverNotice(
+  notice: TaskNotice,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+  spawnImpl: typeof spawn = spawn,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  await notifySystem(notice, spawnImpl, platform, env);
   const url = env[NOTIFY_URL_ENV]?.trim();
   if (!url) return;
   await postNotice(url, notice, env[NOTIFY_AUTHORIZATION_ENV]?.trim() || undefined, fetchImpl);

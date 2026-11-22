@@ -249,6 +249,9 @@ async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise
       async getTask() {
         throw new Error("no");
       },
+      async findPullRequest() {
+        return null;
+      },
     }),
     readToken: () => "secreto-de-prueba",
     launchWatcher: () => {},
