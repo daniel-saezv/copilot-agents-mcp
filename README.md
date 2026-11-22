@@ -227,7 +227,9 @@ The watcher polls pending tasks, stores local state, and sends completion notifi
 
 ## Release
 
-Push a tag named `vMAJOR.MINOR.PATCH` to build, test, and publish the matching package version to npm with provenance. Configure npm Trusted Publishing for this repository and workflow. For a first publish, set the `NPM_TOKEN` repository secret as a fallback.
+Push a tag `vMAJOR.MINOR.PATCH`. The release workflow checks that the tag (without the leading `v`) matches `version` in `package.json`, then runs typecheck, lint, tests, build, and a package smoke test on Node 26 before publishing to npm with `--provenance --access public`.
+
+The first publish (0.0.1) needs the `NPM_TOKEN` repository secret: [Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) requires the package to already exist on npm. The workflow tries OIDC first and falls back to `NPM_TOKEN` when that fails. After 0.0.1 is on npm, add this repo and workflow as a trusted publisher on [npmjs.com](https://www.npmjs.com/), then remove the `NPM_TOKEN` secret so later releases use OIDC only.
 
 ## Test and build
 
