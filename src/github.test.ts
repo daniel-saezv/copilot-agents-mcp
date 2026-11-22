@@ -137,6 +137,110 @@ describe("pull request", () => {
   });
 });
 
+describe("API interna de tareas", () => {
+  const internalBase = "https://internal.test/agents";
+
+  it("envía steer y abort sin la versión de la API y acepta un 202 vacío", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const client = createGitHubClient({
+      token,
+      internalBaseUrl: internalBase,
+      fetch: mockFetch((url, init) => {
+        calls.push({ url, init });
+        return new Response(null, { status: 202 });
+      }),
+    });
+    await expect(client.steerTask("task-1", "sigue con los tests")).resolves.toBeUndefined();
+    await expect(client.abortTask("task-1")).resolves.toBeUndefined();
+    expect(calls.map((call) => call.url)).toEqual([
+      `${internalBase}/tasks/task-1/steer`,
+      `${internalBase}/tasks/task-1/steer`,
+    ]);
+    const steer = calls[0];
+    const abort = calls[1];
+    if (!steer || !abort) throw new Error("faltan llamadas");
+    expect(steer.init?.method).toBe("POST");
+    expect(abort.init?.method).toBe("POST");
+    for (const call of [steer, abort]) {
+      const headers = new Headers(call.init?.headers);
+      expect(headers.get("accept")).toBe("application/json");
+      expect(headers.get("authorization")).toBe("Bearer test-token");
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.get("x-github-api-version")).toBeNull();
+    }
+    expect(JSON.parse(String(steer.init?.body))).toEqual({ content: "sigue con los tests", type: "user_message" });
+    expect(JSON.parse(String(abort.init?.body))).toEqual({ type: "abort" });
+    const fallback = createGitHubClient({
+      token,
+      fetch: mockFetch((url) => {
+        expect(url).toBe("https://api.github.com/cmc_internal/api/agents/tasks/task-1/steer");
+        return new Response(null, { status: 202 });
+      }),
+    });
+    await expect(fallback.abortTask("task-1")).resolves.toBeUndefined();
+  });
+
+  it("mapea un 404 de steer", async () => {
+    const body = JSON.parse(readFileSync(new URL("../fixtures/internal/not-found.json", import.meta.url), "utf8")) as unknown;
+    const client = createGitHubClient({
+      token,
+      internalBaseUrl: internalBase,
+      fetch: mockFetch(() => new Response(JSON.stringify(body), { status: 404 })),
+    });
+    await expect(client.steerTask("task-ausente", "sigue")).rejects.toThrow("not found");
+    await expect(client.abortTask("task-ausente")).rejects.toThrow("not found");
+  });
+
+  it("pide una página de eventos y conserva el timestamp vacío", async () => {
+    const body = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
+      events: Array<{ type: string; timestamp?: string }>;
+      total: number;
+    };
+    let seen: { url: string; init: RequestInit | undefined } | undefined;
+    const client = createGitHubClient({
+      token,
+      internalBaseUrl: internalBase,
+      fetch: mockFetch((url, init) => {
+        seen = { url, init };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    });
+    const page = await client.getTaskEvents("task-1", 2, 2);
+    expect(seen?.url).toBe(`${internalBase}/tasks/task-1/events?per_page=2&page=2`);
+    expect(seen?.init?.method).toBe("GET");
+    const headers = new Headers(seen?.init?.headers);
+    expect(headers.get("accept")).toBe("application/json");
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+    expect(headers.get("content-type")).toBeNull();
+    expect(headers.get("x-github-api-version")).toBeNull();
+    expect(page.total).toBe(4);
+    expect(page.events.map((event) => event.type)).toEqual([
+      "session.requested",
+      "user.message",
+      "tool.execution_start",
+      "assistant.usage",
+    ]);
+    expect(page.events[0]?.timestamp).toBe("0001-01-01T00:00:00Z");
+  });
+
+  it("lee una pull request por número con la versión pública", async () => {
+    let seen = "";
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch((url, init) => {
+        seen = url;
+        expect(new Headers(init?.headers).get("x-github-api-version")).toBe(API_VERSION);
+        return new Response(JSON.stringify({ number: 7, state: "open" }), { status: 200 });
+      }),
+    });
+    await expect(client.getPullRequest({ owner: "octocat", repo: "hello-world", number: 7 })).resolves.toEqual({
+      number: 7,
+      state: "open",
+    });
+    expect(seen).toBe("https://api.github.com/repos/octocat/hello-world/pulls/7");
+  });
+});
+
 describe("formatApiError", () => {
   it("calcula la espera con x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);

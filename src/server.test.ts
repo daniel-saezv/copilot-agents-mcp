@@ -8,13 +8,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { ModelsError } from "./errors.ts";
+import { ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
 import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
 import type { SweModelsResult } from "./swe-models.ts";
-import { readState, withStateLock } from "./state.ts";
+import { defaultStatePath, initialTask, readState, withStateLock } from "./state.ts";
+import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 
 const dirs: string[] = [];
 const UPDATE = process.env.UPDATE_TOOLSNAPS === "true";
@@ -71,6 +72,9 @@ describe("herramientas", () => {
     expect(TOOLS).toEqual([
       { name: "create_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "get_agent_task", toolset: "copilot_tasks", method: "GET" },
+      { name: "steer_agent_task", toolset: "copilot_tasks", method: "POST" },
+      { name: "abort_agent_task", toolset: "copilot_tasks", method: "POST" },
+      { name: "get_agent_task_events", toolset: "copilot_tasks", method: "GET" },
       { name: "list_copilot_models", toolset: "copilot_models", method: "GET" },
     ]);
     const dir = fileURLToPath(new URL("./__toolsnaps__/", import.meta.url));
@@ -108,6 +112,18 @@ describe("herramientas", () => {
       async findPullRequest() {
         throw new Error("no");
       },
+      async getPullRequest() {
+        throw new Error("no");
+      },
+      async steerTask() {
+        throw new Error("no");
+      },
+      async abortTask() {
+        throw new Error("no");
+      },
+      async getTaskEvents() {
+        throw new Error("no");
+      },
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
@@ -131,6 +147,18 @@ describe("herramientas", () => {
         throw new Error("no");
       },
       async findPullRequest() {
+        throw new Error("no");
+      },
+      async getPullRequest() {
+        throw new Error("no");
+      },
+      async steerTask() {
+        throw new Error("no");
+      },
+      async abortTask() {
+        throw new Error("no");
+      },
+      async getTaskEvents() {
         throw new Error("no");
       },
     }, "create_agent_task", {
@@ -186,6 +214,18 @@ describe("herramientas", () => {
         };
       },
       async findPullRequest() {
+        throw new Error("no");
+      },
+      async getPullRequest() {
+        throw new Error("no");
+      },
+      async steerTask() {
+        throw new Error("no");
+      },
+      async abortTask() {
+        throw new Error("no");
+      },
+      async getTaskEvents() {
         throw new Error("no");
       },
     }, "get_agent_task", { task_id: "task-1" });
@@ -314,9 +354,229 @@ describe("herramientas", () => {
   });
 
   it("en solo lectura no publica la herramienta de escritura", () => {
-    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "list_copilot_models"]);
+    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
     expect(selectToolNames({ exclude: [], readOnly: false, features: [], toolsets: ["copilot_models"] })).toEqual(["list_copilot_models"]);
-    expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual(["create_agent_task", "list_copilot_models"]);
+    expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual([
+      "create_agent_task",
+      "steer_agent_task",
+      "abort_agent_task",
+      "get_agent_task_events",
+      "list_copilot_models",
+    ]);
+  });
+});
+
+describe("redirección experimental", () => {
+  it("no llama a steer si la tarea no tiene pull request", async () => {
+    const statePath = await tempPath();
+    let steers = 0;
+    let pulls = 0;
+    const result = await callTool(statePath, steerClient({
+      task: { id: "task-1", state: "idle", html_url: "https://github.com/octocat/hello-world/copilot/tasks/task-1" },
+      onSteer() {
+        steers += 1;
+      },
+      onPull() {
+        pulls += 1;
+      },
+    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(TASK_HAS_NO_PULL_REQUEST);
+    expect(textOf(result)).not.toContain("pull_request_closed");
+    expect(steers).toBe(0);
+    expect(pulls).toBe(0);
+  });
+
+  it("no llama a steer si la pull request no está abierta", async () => {
+    const statePath = await tempPath();
+    let steers = 0;
+    let pulls = 0;
+    const result = await callTool(statePath, steerClient({
+      task: taskWithPull(7),
+      pull: { number: 7, state: "closed" },
+      onPull() {
+        pulls += 1;
+      },
+      onSteer() {
+        steers += 1;
+      },
+    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(TASK_PULL_REQUEST_NOT_OPEN);
+    expect(textOf(result)).not.toContain("pull_request_closed");
+    expect(steers).toBe(0);
+    expect(pulls).toBe(1);
+  });
+
+  it("resuelve el número, guarda el steer y arranca el vigilante", async () => {
+    const statePath = await tempPath();
+    let steers = 0;
+    let launched = 0;
+    let lookups = 0;
+    let content = "";
+    const result = await callTool(statePath, steerClient({
+      task: taskWithPull(null),
+      pull: { number: 7, state: "open" },
+      onLookup() {
+        lookups += 1;
+      },
+      onSteer(value) {
+        steers += 1;
+        content = value;
+      },
+    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" }, () => {
+      launched += 1;
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toEqual({ task_id: "task-1", accepted: true, session_count: 1 });
+    expect(steers).toBe(1);
+    expect(lookups).toBe(1);
+    expect(content).toBe("sigue con los tests");
+    expect(launched).toBe(1);
+    const saved = (await readState(statePath)).tasks["task-1"];
+    expect(saved?.steer).toMatchObject({ session_count: 1, turn_seen: false, notified: false });
+    expect(saved?.steer?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(saved?.repo).toBe("octocat/hello-world");
+  });
+
+  it("persiste el steer aceptado y lo conserva cuando el vigilante avisa", async () => {
+    const statePath = await tempPath();
+    const steered = await callTool(statePath, steerClient({
+      task: taskWithPull(7),
+      pull: { number: 7, state: "open" },
+    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    expect(steered.isError).toBeUndefined();
+    const raw = JSON.parse(await readFile(statePath, "utf8")) as { tasks: Record<string, { steer?: { at: string; session_count: number; notified: boolean } }> };
+    const before = raw.tasks["task-1"]?.steer;
+    expect(before).toMatchObject({ session_count: 1, notified: false });
+    expect(before?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    const notices: string[] = [];
+    let reads = 0;
+    await runWatcher({
+      client: {
+        ...unusedClient(),
+        async getTask() {
+          reads += 1;
+          return {
+            id: "task-1",
+            state: "idle",
+            session_count: 2,
+            sessions: [
+              { id: "session-antigua", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+              { id: "session-reciente", state: "idle", created_at: "2026-11-22T00:40:00Z" },
+            ],
+          };
+        },
+      },
+      statePath,
+      deliver: async (notice) => {
+        notices.push(notice.session_id ?? "");
+      },
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-reciente"]);
+    const after = (await readState(statePath)).tasks["task-1"]?.steer;
+    expect(after).toEqual({
+      at: before?.at,
+      session_count: 1,
+      turn_seen: true,
+      notified: true,
+    });
+    await runWatcher({
+      client: unusedClient(),
+      statePath,
+      deliver: async (notice) => {
+        notices.push(notice.session_id ?? "");
+      },
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-reciente"]);
+    expect((await readState(statePath)).tasks["task-1"]?.steer).toEqual(after);
+    expect(reads).toBe(1);
+  });
+
+  it("devuelve la sesión más reciente", async () => {
+    const statePath = await tempPath();
+    const result = await callTool(statePath, {
+      ...unusedClient(),
+      async getTask() {
+        return {
+          id: "task-1",
+          state: "idle",
+          sessions: [
+            { id: "session-reciente", state: "idle", created_at: "2026-11-22T00:40:00Z" },
+            { id: "session-antigua", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+          ],
+        };
+      },
+    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo" });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result)).session_id).toBe("session-reciente");
+    expect((await readState(statePath)).tasks["task-1"]?.session_id).toBe("session-reciente");
+  });
+
+  it("crea el directorio por defecto del estado", async () => {
+    const home = await mkdtemp(join(tmpdir(), "copilot-home-"));
+    dirs.push(home);
+    const statePath = defaultStatePath({}, home);
+    expect(statePath).toBe(join(home, ".copilot-agents-mcp", "state.json"));
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "acme/demo",
+        requestedModel: "modelo-sintetico",
+        state: "queued",
+        createdAt: null,
+        updatedAt: null,
+      });
+    });
+    expect((await readState(statePath)).tasks["task-1"]?.repo).toBe("acme/demo");
+    const watcherHome = await mkdtemp(join(tmpdir(), "copilot-home-"));
+    dirs.push(watcherHome);
+    const watcherState = defaultStatePath({}, watcherHome);
+    const lock = watcherLockPath(watcherState);
+    expect(await acquireWatcher(lock)).toBe(true);
+    try {
+      await withStateLock(watcherState, (state) => {
+        state.models.accepted.push("modelo-sintetico");
+      });
+    } finally {
+      await releaseWatcher(lock);
+    }
+    expect((await readState(watcherState)).models.accepted).toEqual(["modelo-sintetico"]);
+  });
+
+  it("aborta la tarea y lee la página de eventos", async () => {
+    const statePath = await tempPath();
+    const events = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
+      events: Array<{ type: string; timestamp?: string }>;
+      total: number;
+    };
+    let aborted = 0;
+    let seen: { page: number; perPage: number } | undefined;
+    const github: GitHubClient = {
+      ...unusedClient(),
+      async abortTask() {
+        aborted += 1;
+      },
+      async getTaskEvents(_taskId, page, perPage) {
+        seen = { page, perPage };
+        return events;
+      },
+    };
+    const abortedResult = await callTool(statePath, github, "abort_agent_task", { task_id: "task-1" });
+    expect(abortedResult.isError).toBeUndefined();
+    expect(JSON.parse(textOf(abortedResult))).toEqual({ task_id: "task-1", accepted: true });
+    expect(aborted).toBe(1);
+    const listed = await callTool(statePath, github, "get_agent_task_events", { task_id: "task-1", page: 2, per_page: 2 });
+    expect(listed.isError).toBeUndefined();
+    const body = JSON.parse(textOf(listed)) as { total: number; events: Array<{ type: string; timestamp: string | null }> };
+    expect(seen).toEqual({ page: 2, perPage: 2 });
+    expect(body.total).toBe(events.total);
+    expect(body.events.map((event) => event.type)).toEqual(events.events.map((event) => event.type));
+    expect(body.events.some((event) => event.timestamp === "0001-01-01T00:00:00Z")).toBe(true);
   });
 });
 
@@ -331,7 +591,7 @@ describe("HTTP local", () => {
     expect(http.host).toBe("127.0.0.1");
     try {
       const readonly = await listOverHttp(http.url, { "X-MCP-Readonly": "true" });
-      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "list_copilot_models"]);
+      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
       const models = await listOverHttp(`${http.url}/x/copilot_models`, { "X-MCP-Toolsets": "copilot_models" });
       expect(models.map((tool) => tool.name)).toEqual(["list_copilot_models"]);
       const denied = await fetch(http.url, {
@@ -390,6 +650,45 @@ function textOf(result: unknown): string {
   return first && typeof first === "object" && "text" in first && typeof first.text === "string" ? first.text : "";
 }
 
+function taskWithPull(number: number | null): AgentTask {
+  return {
+    id: "task-1",
+    state: "idle",
+    session_count: 1,
+    html_url: "https://github.com/octocat/hello-world/copilot/tasks/task-1",
+    sessions: [{ id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z", head_ref: "copilot/demo" }],
+    artifacts: [{ type: "pull", data: number === null ? { id: 42 } : { id: 42, number } }],
+  };
+}
+
+function steerClient(options: {
+  task: AgentTask;
+  pull?: { number: number; state: string };
+  onSteer?: (content: string) => void;
+  onPull?: () => void;
+  onLookup?: () => void;
+}): GitHubClient {
+  return {
+    ...unusedClient(),
+    async getTask() {
+      return options.task;
+    },
+    async findPullRequest() {
+      options.onLookup?.();
+      if (!options.pull) return null;
+      return { number: options.pull.number, html_url: "https://github.com/octocat/hello-world/pull/7" };
+    },
+    async getPullRequest() {
+      options.onPull?.();
+      if (!options.pull) throw new Error("sin pull");
+      return options.pull;
+    },
+    async steerTask(_taskId, content) {
+      options.onSteer?.(content);
+    },
+  };
+}
+
 function unusedClient(): GitHubClient {
   return {
     async createTask() {
@@ -399,6 +698,18 @@ function unusedClient(): GitHubClient {
       throw new Error("no");
     },
     async findPullRequest() {
+      throw new Error("no");
+    },
+    async getPullRequest() {
+      throw new Error("no");
+    },
+    async steerTask() {
+      throw new Error("no");
+    },
+    async abortTask() {
+      throw new Error("no");
+    },
+    async getTaskEvents() {
       throw new Error("no");
     },
   };

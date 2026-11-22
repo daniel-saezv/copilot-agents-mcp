@@ -58,9 +58,9 @@ Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ej
 
 - `src/cli.ts` arranca stdio, HTTP o el subcomando `watch`.
 - `src/server.ts` registra las herramientas. `src/http.ts` escucha en `127.0.0.1`. `src/selection.ts` aplica toolsets y cabeceras `X-MCP-*`.
-- `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial.
+- `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial. `steerTask`, `abortTask` y `getTaskEvents` usan `https://api.github.com/cmc_internal/api/agents`, con `Accept: application/json` y sin esa cabecera.
 - `src/swe-models.ts` valida y lee `GET /agents/swe/models`. La base sale de GraphQL y no está escrita en el código. `policy` es opcional: si falta, la salida pone `policy.state` a `null`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`.
-- `src/state.ts`, `src/watch.ts` y `src/notify.ts` guardan el estado local y avisan una vez.
+- `src/state.ts`, `src/watch.ts` y `src/notify.ts` guardan el estado local y avisan una vez por turno. Tras un steer aceptado guardan `session_count` y la marca, rearman el vigilante y el aviso incluye `session_id`.
 - `fixtures/` trae los ejemplos del OpenAPI. `src/__toolsnaps__/` fija `tools/list`.
 
 ### Comandos comprobados
@@ -78,7 +78,7 @@ node dist/cli.js --help
 node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 93 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
+`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` deja 45 tests en 5 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 93 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
 
 ### Buenas prácticas de este stack
 

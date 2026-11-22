@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { AgentTask } from "./github.ts";
+import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 
 export const MODEL_PREFIX = "sweagent-capi:";
@@ -23,6 +23,13 @@ export type PullRequestRef = {
   html_url: string | null;
 };
 
+export type SteerWatch = {
+  at: string;
+  session_count: number;
+  turn_seen: boolean;
+  notified: boolean;
+};
+
 export type TrackedTask = {
   task_id: string;
   repo: string;
@@ -38,6 +45,8 @@ export type TrackedTask = {
   updated_at: string | null;
   completed_at: string | null;
   notified_at: string | null;
+  session_id?: string | null;
+  steer?: SteerWatch | null;
 };
 
 export type Catalog = { accepted: string[]; rejected: string[] };
@@ -47,7 +56,7 @@ export type StateFile = {
   models: Catalog;
 };
 
-export type TaskNotice = {
+export type TaskStatus = {
   task_id: string;
   repo: string;
   state: string;
@@ -61,7 +70,10 @@ export type TaskNotice = {
   created_at: string | null;
   updated_at: string | null;
   completed_at: string | null;
+  session_id: string | null;
 };
+
+export type TaskNotice = TaskStatus & { session_id: string | null };
 
 export function emptyState(): StateFile {
   return { tasks: {}, models: { accepted: [], rejected: [] } };
@@ -79,7 +91,27 @@ export function isFinalState(state: string): boolean {
   return FINAL_STATES.has(state);
 }
 
-export function toNotice(task: TrackedTask): TaskNotice {
+export function taskSessionCount(task: AgentTask, fallback = 0): number {
+  if (typeof task.session_count === "number" && Number.isFinite(task.session_count)) return task.session_count;
+  if (task.sessions) return task.sessions.length;
+  return fallback;
+}
+
+export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
+  task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
+}
+
+export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
+  if (steer.turn_seen) return;
+  const count = taskSessionCount(task, steer.session_count);
+  if (count > steer.session_count || !isFinalState(task.state)) steer.turn_seen = true;
+}
+
+export function awaitingSteer(task: TrackedTask): boolean {
+  return Boolean(task.steer && task.steer.notified !== true);
+}
+
+export function toNotice(task: TrackedTask): TaskStatus {
   return {
     task_id: task.task_id,
     repo: task.repo,
@@ -94,7 +126,12 @@ export function toNotice(task: TrackedTask): TaskNotice {
     created_at: task.created_at,
     updated_at: task.updated_at,
     completed_at: task.completed_at,
+    session_id: task.session_id ?? null,
   };
+}
+
+export function toDeliveryNotice(task: TrackedTask): TaskNotice {
+  return { ...toNotice(task), session_id: task.session_id ?? null };
 }
 
 export function presentUsage(usage: { type?: string; amount?: number } | undefined): Usage | null {
@@ -139,6 +176,8 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
   const branch = artifacts.find((artifact) => artifact.type === "branch");
   const completed = [...sessions].reverse().find((session) => session.completed_at);
   const existing = state.tasks[task.id];
+  const steer = existing?.steer ? { ...existing.steer } : null;
+  if (steer) noteSteerTurn(steer, task);
   const tracked: TrackedTask = {
     task_id: task.id,
     repo: context.repo || existing?.repo || "",
@@ -154,6 +193,8 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
     updated_at: task.updated_at ?? null,
     completed_at: completed?.completed_at ?? null,
     notified_at: existing?.notified_at ?? null,
+    session_id: latestSessionId(sessions) ?? existing?.session_id ?? null,
+    steer,
   };
   state.tasks[task.id] = tracked;
   return tracked;
@@ -200,6 +241,14 @@ export async function fillPullRequest(
   } catch (error) {
     await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: ${failureMessage(error)}`);
   }
+}
+
+function latestSessionId(sessions: AgentSession[]): string | null {
+  for (let index = sessions.length - 1; index >= 0; index -= 1) {
+    const id = sessions[index]?.id;
+    if (id) return id;
+  }
+  return null;
 }
 
 function readPull(task: AgentTask, existing: TrackedTask | undefined): PullRequestRef | null {
@@ -305,6 +354,7 @@ async function writeState(statePath: string, state: StateFile): Promise<void> {
 }
 
 async function acquire(lock: string): Promise<void> {
+  await mkdir(dirname(lock), { recursive: true });
   const started = Date.now();
   for (;;) {
     try {

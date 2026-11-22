@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { failureMessage, modelUnavailableMessage, toolError, toolJson, ToolFailure } from "./errors.ts";
-import type { GitHubClient } from "./github.ts";
+import { failureMessage, modelUnavailableMessage, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN, toolError, toolJson, ToolFailure } from "./errors.ts";
+import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { appendWatcherLog } from "./notify.ts";
-import { fillPullRequest, headRefOf, initialTask, normalizeModel, observe, toNotice, withStateLock } from "./state.ts";
+import { armSteer, fillPullRequest, headRefOf, initialTask, normalizeModel, observe, taskSessionCount, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -69,11 +69,56 @@ const statusOutput = z.object({
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
   completed_at: z.string().nullable(),
+  session_id: z.string().nullable().describe("Id de la sesión más reciente de la tarea."),
 }).strict();
 
 const getInput = z.object({
   task_id: z.string().describe("Identificador de la tarea."),
   repo: z.string().optional().describe("Repositorio owner/name. Si se omite, se usa el guardado al lanzar o el endpoint de usuario."),
+}).strict();
+
+const experimentalNotice = "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso.";
+
+const steerInput = z.object({
+  task_id: z.string().describe("Identificador de la tarea."),
+  content: z.string().describe("Instrucción que se envía a la tarea."),
+}).strict();
+
+const steerOutput = z.object({
+  task_id: z.string(),
+  accepted: z.boolean(),
+  session_count: z.number(),
+}).strict();
+
+const abortInput = z.object({
+  task_id: z.string().describe("Identificador de la tarea."),
+}).strict();
+
+const abortOutput = z.object({
+  task_id: z.string(),
+  accepted: z.boolean(),
+}).strict();
+
+const eventsInput = z.object({
+  task_id: z.string().describe("Identificador de la tarea."),
+  page: z.number().int().positive().describe("Página, desde 1."),
+  per_page: z.number().int().positive().describe("Eventos por página."),
+}).strict();
+
+const eventOutput = z.object({
+  id: z.string().nullable(),
+  timestamp: z.string().nullable(),
+  parentId: z.string().nullable(),
+  type: z.string(),
+  data: z.unknown(),
+}).strict();
+
+const eventsOutput = z.object({
+  task_id: z.string(),
+  page: z.number(),
+  per_page: z.number(),
+  total: z.number(),
+  events: z.array(eventOutput),
 }).strict();
 
 export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
@@ -99,6 +144,33 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       outputSchema: statusOutput,
       annotations: annotations("GET", "Estado de una tarea"),
     }, async (args) => run(() => readTask(args, deps)));
+  }
+  if (enabled.has("steer_agent_task")) {
+    server.registerTool("steer_agent_task", {
+      title: "Redirigir una tarea",
+      description: `${experimentalNotice} Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta.`,
+      inputSchema: steerInput,
+      outputSchema: steerOutput,
+      annotations: annotations("POST", "Redirigir una tarea"),
+    }, async (args) => run(() => steerTask(args, deps)));
+  }
+  if (enabled.has("abort_agent_task")) {
+    server.registerTool("abort_agent_task", {
+      title: "Abortar una tarea",
+      description: `${experimentalNotice} Envía {type: "abort"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub.`,
+      inputSchema: abortInput,
+      outputSchema: abortOutput,
+      annotations: annotations("POST", "Abortar una tarea"),
+    }, async (args) => run(() => abortTask(args, deps)));
+  }
+  if (enabled.has("get_agent_task_events")) {
+    server.registerTool("get_agent_task_events", {
+      title: "Eventos de una tarea",
+      description: `${experimentalNotice} Lee una página de eventos de una tarea (solo lectura).`,
+      inputSchema: eventsInput,
+      outputSchema: eventsOutput,
+      annotations: annotations("GET", "Eventos de una tarea"),
+    }, async (args) => run(() => readEvents(args, deps)));
   }
   if (enabled.has("list_copilot_models")) {
     server.registerTool("list_copilot_models", {
@@ -207,6 +279,118 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
     if (saved) saved.pull_request = tracked.pull_request;
   });
   return toNotice(tracked);
+}
+
+async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
+  const taskId = required(args.task_id, "task_id");
+  const content = required(args.content, "content");
+  const token = deps.readToken();
+  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  const client = deps.clientForToken(token);
+  const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
+  const remote = await client.getTask({
+    taskId,
+    ...(known?.repo ? parseRepo(known.repo) : {}),
+  });
+  const repo = known?.repo || repoFromTaskUrl(remote.html_url);
+  if (!repo) throw new ToolFailure(`No se conoce el repositorio de la tarea ${taskId}.`);
+  const parsed = parseRepo(repo);
+  const pull = pullArtifact(remote);
+  if (!pull) throw new ToolFailure(`${TASK_HAS_NO_PULL_REQUEST}: la tarea ${taskId} no tiene pull request.`);
+  const number = await resolvePullNumber(client, remote, known, parsed, pull);
+  const opened = await client.getPullRequest({ owner: parsed.owner, repo: parsed.repo, number });
+  if (opened.state !== "open") {
+    throw new ToolFailure(`${TASK_PULL_REQUEST_NOT_OPEN}: la pull request ${number} de ${repo} no está abierta.`);
+  }
+  await client.steerTask(taskId, content);
+  const sessionCount = taskSessionCount(remote);
+  const steeredAt = new Date().toISOString();
+  await withStateLock(deps.statePath, (state) => {
+    const task = state.tasks[taskId] ?? initialTask({
+      id: remote.id,
+      repo,
+      requestedModel: known?.requested_model ?? "",
+      state: remote.state,
+      createdAt: remote.created_at ?? null,
+      updatedAt: remote.updated_at ?? null,
+    });
+    if (!task.repo) task.repo = repo;
+    armSteer(task, sessionCount, steeredAt);
+    state.tasks[taskId] = task;
+  });
+  try {
+    deps.launchWatcher();
+  } catch (error) {
+    console.error(`No se pudo arrancar el vigilante: ${error instanceof Error ? error.message : "error"}.`);
+  }
+  return { task_id: taskId, accepted: true, session_count: sessionCount };
+}
+
+async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
+  const taskId = required(args.task_id, "task_id");
+  const token = deps.readToken();
+  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  await deps.clientForToken(token).abortTask(taskId);
+  return { task_id: taskId, accepted: true };
+}
+
+async function readEvents(args: z.infer<typeof eventsInput>, deps: ServerDeps) {
+  const taskId = required(args.task_id, "task_id");
+  const token = deps.readToken();
+  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  const page = await deps.clientForToken(token).getTaskEvents(taskId, args.page, args.per_page);
+  return {
+    task_id: taskId,
+    page: args.page,
+    per_page: args.per_page,
+    total: page.total,
+    events: page.events.map(presentEvent),
+  };
+}
+
+function presentEvent(event: TaskEvent): z.infer<typeof eventOutput> {
+  return {
+    id: event.id ?? null,
+    timestamp: event.timestamp ?? null,
+    parentId: event.parentId ?? null,
+    type: event.type,
+    data: event.data ?? null,
+  };
+}
+
+function pullArtifact(task: AgentTask): { id: number; number: number | null } | null {
+  for (const artifact of task.artifacts ?? []) {
+    if (artifact.type !== "pull" || typeof artifact.data?.id !== "number") continue;
+    return { id: artifact.data.id, number: typeof artifact.data.number === "number" ? artifact.data.number : null };
+  }
+  return null;
+}
+
+async function resolvePullNumber(
+  client: GitHubClient,
+  task: AgentTask,
+  known: { pull_request: { id: number; number: number | null } | null; branch: { head_ref: string; base_ref: string } | null } | null,
+  repo: { owner: string; repo: string },
+  pull: { id: number; number: number | null },
+): Promise<number> {
+  if (pull.number !== null) return pull.number;
+  if (known?.pull_request?.id === pull.id && known.pull_request.number !== null) return known.pull_request.number;
+  const headRef = headRefOf(task, { branch: known?.branch ?? null });
+  if (!headRef) throw new ToolFailure(`No se puede comprobar la pull request ${pull.id} de la tarea ${task.id}: falta head_ref.`);
+  const found = await client.findPullRequest({ owner: repo.owner, repo: repo.repo, id: pull.id, headRef });
+  if (!found) throw new ToolFailure(`No se puede comprobar la pull request ${pull.id} de la tarea ${task.id}: la lista no incluye esa id.`);
+  return found.number;
+}
+
+function repoFromTaskUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    if (parts.length >= 2 && parts[0] && parts[1]) return `${parts[0]}/${parts[1]}`;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function required(value: string, name: string): string {

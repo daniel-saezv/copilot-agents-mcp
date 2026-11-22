@@ -1,0 +1,33 @@
+{
+  "events": [
+    {
+      "id": "evt-1",
+      "timestamp": "0001-01-01T00:00:00Z",
+      "parentId": null,
+      "type": "session.requested",
+      "data": {}
+    },
+    {
+      "id": "evt-2",
+      "timestamp": "2026-11-22T00:00:01Z",
+      "parentId": "evt-1",
+      "type": "user.message",
+      "data": { "content": "sigue con los tests" }
+    },
+    {
+      "id": "evt-3",
+      "timestamp": "2026-11-22T00:00:02Z",
+      "parentId": "evt-2",
+      "type": "tool.execution_start",
+      "data": { "toolName": "read_file" }
+    },
+    {
+      "id": "evt-4",
+      "timestamp": "2026-11-22T00:00:03Z",
+      "parentId": "evt-2",
+      "type": "assistant.usage",
+      "data": { "type": "ai_credits", "amount": 10 }
+    }
+  ],
+  "total": 4
+}

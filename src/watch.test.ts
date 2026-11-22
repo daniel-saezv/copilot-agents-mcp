@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTask, GitHubClient } from "./github.ts";
 import { createGitHubClient } from "./github.ts";
 import { deliverNotice, notificationPlan, postNotice } from "./notify.ts";
-import { emptyState, initialTask, presentUsage, readState, withStateLock, type StateFile, type TaskNotice } from "./state.ts";
+import { armSteer, emptyState, initialTask, presentUsage, readState, withStateLock, type StateFile, type TaskNotice } from "./state.ts";
 import { runWatcher } from "./watch.ts";
 
 const dirs: string[] = [];
@@ -57,6 +57,18 @@ function client(
       return next;
     },
     findPullRequest,
+    async getPullRequest() {
+      throw new Error("no se llama");
+    },
+    async steerTask() {
+      throw new Error("no se llama");
+    },
+    async abortTask() {
+      throw new Error("no se llama");
+    },
+    async getTaskEvents() {
+      throw new Error("no se llama");
+    },
   };
 }
 
@@ -106,6 +118,120 @@ describe("vigilante", () => {
     });
     expect(notices).toEqual(["idle"]);
     expect((await readState(statePath)).tasks["task-1"]?.notified_at).toBeTruthy();
+  });
+
+  it("avisa una sola vez el turno nuevo de un steer", async () => {
+    const statePath = await tempState();
+    await save(statePath, task("task-1", "in_progress"));
+    const notices: Array<{ state: string; session_id: string | null }> = [];
+    const deliver = async (notice: TaskNotice) => {
+      notices.push({ state: notice.state, session_id: notice.session_id });
+    };
+    const session = { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" };
+    await runWatcher({
+      client: client([remote("task-1", "idle", { session_count: 1, sessions: [session] })]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual([{ state: "idle", session_id: "session-1" }]);
+    await withStateLock(statePath, (state) => {
+      const saved = state.tasks["task-1"];
+      if (!saved) throw new Error("sin tarea");
+      armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
+    });
+    await runWatcher({
+      client: client([remote("task-1", "idle", { session_count: 1, sessions: [session] })]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 1,
+      sleep: async () => {},
+    });
+    expect(notices).toHaveLength(1);
+    await runWatcher({
+      client: client([
+        remote("task-1", "in_progress", { session_count: 1, sessions: [{ ...session, state: "in_progress" }] }),
+        remote("task-1", "idle", { session_count: 1, sessions: [{ ...session, completed_at: "2026-11-22T00:20:00Z" }] }),
+      ]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 3,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual([
+      { state: "idle", session_id: "session-1" },
+      { state: "idle", session_id: "session-1" },
+    ]);
+    await runWatcher({
+      client: client([]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 1,
+      sleep: async () => {},
+    });
+    expect(notices).toHaveLength(2);
+    expect((await readState(statePath)).tasks["task-1"]?.steer).toMatchObject({
+      at: "2026-11-22T00:10:00.000Z",
+      session_count: 1,
+      turn_seen: true,
+      notified: true,
+    });
+  });
+
+  it("avisa una sola vez si el steer abre otra sesión ya final", async () => {
+    const statePath = await tempState();
+    await save(statePath, task("task-1", "idle"));
+    await withStateLock(statePath, (state) => {
+      const saved = state.tasks["task-1"];
+      if (!saved) throw new Error("sin tarea");
+      saved.notified_at = "2026-11-22T00:05:00.000Z";
+      saved.session_id = "session-1";
+      armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
+    });
+    const notices: Array<string | null> = [];
+    const deliver = async (notice: TaskNotice) => {
+      notices.push(notice.session_id);
+    };
+    await runWatcher({
+      client: client([remote("task-1", "idle", {
+        session_count: 1,
+        sessions: [{ id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" }],
+      })]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 1,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual([]);
+    await runWatcher({
+      client: client([remote("task-1", "idle", {
+        session_count: 2,
+        sessions: [
+          { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+          { id: "session-2", state: "idle", created_at: "2026-11-22T00:30:00Z" },
+        ],
+      })]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 1,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-2"]);
+    await runWatcher({
+      client: client([]),
+      statePath,
+      deliver,
+      intervalMs: 0,
+      maxCycles: 1,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-2"]);
   });
 
   it("guarda el rechazo del modelo en el estado y en el aviso", async () => {
@@ -382,6 +508,7 @@ function sampleNotice(): TaskNotice {
     created_at: null,
     updated_at: null,
     completed_at: null,
+    session_id: null,
   };
 }
 

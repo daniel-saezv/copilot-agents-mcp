@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
 import { appendWatcherLog } from "./notify.ts";
-import { fillPullRequest, isFinalState, observe, presentUsage, readState, toNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
+import { awaitingSteer, fillPullRequest, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
   client: Pick<GitHubClient, "getTask" | "findPullRequest">;
@@ -34,7 +34,7 @@ async function refreshPending(options: {
 }): Promise<void> {
   const pending = await withStateLock(options.statePath, (state) => {
     return Object.values(state.tasks)
-      .filter((task) => !isFinalState(task.state))
+      .filter((task) => shouldPoll(task))
       .map((task) => ({ taskId: task.task_id, repo: task.repo, requestedModel: task.requested_model }));
   });
   for (const task of pending) {
@@ -59,42 +59,60 @@ async function notifyFinal(options: {
 }): Promise<void> {
   const ready = await withStateLock(options.statePath, (state) => {
     return Object.values(state.tasks)
-      .filter((task) => isFinalState(task.state) && !task.notified_at)
+      .filter((task) => readyToNotify(task))
       .map((task) => task.task_id);
   });
   for (const taskId of ready) {
     const tracked = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
-      if (!task || !isFinalState(task.state) || task.notified_at) return null;
+      if (!task || !readyToNotify(task)) return null;
       refreshUsage(task);
       return task;
     });
     if (!tracked) continue;
     await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line));
-    const notice = await withStateLock(options.statePath, (state) => {
+    const claimed = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
-      if (!task || !isFinalState(task.state) || task.notified_at) return null;
+      if (!task || !readyToNotify(task)) return null;
+      const previous = {
+        notified_at: task.notified_at,
+        steer: task.steer ? { ...task.steer } : null,
+      };
       task.pull_request = tracked.pull_request;
       task.usage = tracked.usage;
+      if (task.steer?.turn_seen) task.steer = { ...task.steer, notified: true };
       task.notified_at = new Date().toISOString();
-      return toNotice(task);
+      return { notice: toDeliveryNotice(task), previous };
     });
-    if (!notice) continue;
+    if (!claimed) continue;
     try {
-      await options.deliver(notice);
+      await options.deliver(claimed.notice);
     } catch (error) {
       await withStateLock(options.statePath, (state) => {
         const task = state.tasks[taskId];
-        if (task) task.notified_at = null;
+        if (!task) return;
+        task.notified_at = claimed.previous.notified_at;
+        task.steer = claimed.previous.steer;
       });
       console.error(`No se pudo avisar de la tarea ${taskId}: ${failureMessage(error)}`);
     }
   }
 }
 
+function shouldPoll(task: TrackedTask): boolean {
+  if (!isFinalState(task.state)) return true;
+  return Boolean(task.steer && !task.steer.turn_seen);
+}
+
+function readyToNotify(task: TrackedTask): boolean {
+  if (!isFinalState(task.state)) return false;
+  if (task.steer && task.steer.notified !== true) return task.steer.turn_seen;
+  return !task.notified_at;
+}
+
 async function hasPending(statePath: string): Promise<boolean> {
   const state = await readState(statePath);
-  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || !task.notified_at);
+  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || !task.notified_at || awaitingSteer(task));
 }
 
 export function watcherLockPath(statePath: string): string {

@@ -252,6 +252,18 @@ async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise
       async findPullRequest() {
         return null;
       },
+      async getPullRequest() {
+        throw new Error("no");
+      },
+      async steerTask() {
+        throw new Error("no");
+      },
+      async abortTask() {
+        throw new Error("no");
+      },
+      async getTaskEvents() {
+        throw new Error("no");
+      },
     }),
     readToken: () => "secreto-de-prueba",
     launchWatcher: () => {},

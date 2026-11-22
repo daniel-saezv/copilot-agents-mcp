@@ -1,6 +1,6 @@
 # copilot-agents-mcp
 
-Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado y leer los modelos de Copilot.
+Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado, leer los modelos de Copilot y, de forma experimental, redirigir una tarea.
 
 No se despliega. Se ejecuta en tu máquina con stdio o, si lo pides, con HTTP en `127.0.0.1`.
 
@@ -35,7 +35,7 @@ El vigilante es otro proceso. `create_agent_task` lo arranca desacoplado. Tambi�
 npx -y github:daniel-saezv/copilot-agents-mcp watch
 ```
 
-Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idle`. Guarda el estado en un archivo local y, al volver a arrancar, retoma las que no han terminado. Avisa una sola vez por tarea.
+Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idle`. Guarda el estado en un archivo local y, al volver a arrancar, retoma las que no han terminado. Avisa una sola vez cuando un turno llega a un estado final. Tras `steer_agent_task`, vigila el turno nuevo y puede avisar otra vez.
 
 ## Configurarlo en un cliente MCP
 
@@ -69,12 +69,29 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 | --- | --- | --- | --- |
 | `create_agent_task` | copilot_tasks | no | Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados. |
 | `get_agent_task` | copilot_tasks | sí | Lee una vez el estado de una tarea del agente de Copilot. |
+| `steer_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta. |
+| `abort_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Envía {type: "abort"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub. |
+| `get_agent_task_events` | copilot_tasks | sí | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Lee una página de eventos de una tarea (solo lectura). |
 | `list_copilot_models` | copilot_models | sí | Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe. |
 <!-- END AUTOMATED TOOLS -->
 
 `create_agent_task` recibe `repo` (`owner/name`), `prompt`, `model` y, si quieres, `base_ref`, `head_ref`, `custom_agent` y `create_pull_request`. El modelo se envía tal cual: no hay una lista en el código. La API responde 201 y puede rechazar el modelo después. Si ya se vio ese rechazo, la herramienta corta con `isError` y lista los modelos vistos aceptados. Si el rechazo llega más tarde, el mismo error queda en el estado y en el aviso.
 
 `get_agent_task` hace una sola lectura. `list_copilot_models` pide a GraphQL (`viewer.copilotEndpoints.api`) la base de la API de Copilot y, en cada llamada, lee `{api}/agents/swe/models`. No guarda caché ni mezcla tareas. La respuesta cita esa URL y `fetched_at`. Si GraphQL o el GET no responden 200, o el formato no cuadra, devuelve un error y no inventa modelos. Los precios salen tal cual, con `batch_size`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`. `policy` es opcional: si no viene, la salida pone `policy.state` a `null`; si viene, `state` es un string.
+
+## Experimental: redirección de tareas
+
+`steer_agent_task`, `abort_agent_task` y `get_agent_task_events` llaman a endpoints internos de GitHub. No están documentados y pueden cambiar sin aviso.
+
+`steer_agent_task` envía una instrucción a una tarea con pull request abierta. Lee la tarea y comprueba su pull request con `GET /repos/{owner}/{repo}/pulls/{number}`. Si la tarea no tiene pull request, responde `task_has_no_pull_request` y no envía la instrucción. Si la pull request no está abierta, responde `task_pull_request_not_open` y tampoco la envía. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. La guía oficial está en [gestionar y seguir agentes](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/manage-and-track-agents).
+
+`abort_agent_task` envía `{type: "abort"}` al endpoint de steer, como hace VS Code (`tasksClient.ts`), para detener la tarea. No se ha probado contra GitHub.
+
+`get_agent_task_events` lee una página de eventos de una tarea. Es solo lectura.
+
+`steer_agent_task` recibe `task_id` y `content`. `abort_agent_task` recibe `task_id`. `get_agent_task_events` recibe `task_id`, `page` y `per_page`.
+
+Tras un steer aceptado, el estado guarda la hora, el `session_count` de ese momento y si ese turno ya se avisó. El vigilante vuelve a vigilar esa tarea. Detecta el turno nuevo si aparece otra sesión o si la tarea vuelve a un estado que no es final. Avisa una vez cuando ese turno llega a un estado final y deja el registro en el archivo. `idle` cuenta como final. El cuerpo del aviso es el de la sección siguiente, con `session_id`. Un reinicio no repite un aviso ya enviado.
 
 ## Aviso al terminar
 
@@ -111,13 +128,14 @@ El POST lleva `Content-Type: application/json` y este cuerpo:
   "usage": { "type": "ai_credits", "amount": 344355000, "amount_human": 0.344355 },
   "created_at": "2026-11-22T00:00:00Z",
   "updated_at": "2026-11-22T00:01:00Z",
-  "completed_at": "2026-11-22T00:05:00Z"
+  "completed_at": "2026-11-22T00:05:00Z",
+  "session_id": "session-1"
 }
 ```
 
 `resolved_model` es `sessions[].model` tal como lo devuelve la API, o `null`. `branch` sale de `artifacts`. `pull_request.id` es el id interno del artefacto, no el número de la pull request. `number` y `html_url` salen del artefacto si vienen. Si no, se piden con `GET /repos/{owner}/{repo}/pulls?head={owner}:{head_ref}&state=all` y se usa la entrada con esa id. `head_ref` es el del artefacto de rama o, si no hay, el de la sesión. Si no se pueden resolver, `number` y `html_url` van a `null` y el motivo se añade a `COPILOT_AGENTS_LOG`. El aviso se envía igual.
 
-`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número.
+`error` es `null` o el texto del fallo. Si el modelo no está disponible, incluye los modelos vistos aceptados. `usage.amount` es el valor crudo. Con `ai_credits`, la API lo da en nano unidades y `amount_human` es `amount / 1e9`: `344355000` sale como `0.344355`. Con `premium_requests`, `amount_human` es el mismo número. `session_id` es el id de la sesión más reciente de la tarea. `get_agent_task` y el aviso devuelven el mismo valor. Es `null` si la tarea aún no trae sesión.
 
 Si `notify-send`, `osascript` o el toast de Windows no arranca, el vigilante escribe el motivo en `COPILOT_AGENTS_LOG` (por ejemplo `ENOENT notify-send`) y sigue con el POST.
 
