@@ -52,13 +52,14 @@ Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, leer el est
 
 ### Stack
 
-Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `ajv` 8 y `ajv-formats` 3. Tests con Vitest 5.1.1. Lint con ESLint 9 y `typescript-eslint`. Tipos con `tsc --noEmit`.
+Node.js 22.23.4 (el paquete pide `>=22.18`) y npm 10.9.9. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8 y `ajv-formats` 3. Tests con Vitest 5.1.1. Lint con ESLint 9 y `typescript-eslint`. Tipos con `tsc --noEmit`.
 
 ### Estructura
 
-- `src/cli.ts` arranca stdio, HTTP o el subcomando `watch`.
+- `src/cli.ts` arranca stdio, HTTP, `watch`, `login`, `logout` y `auth status`.
 - `src/server.ts` registra las herramientas. `src/http.ts` escucha en `127.0.0.1`. `src/selection.ts` aplica toolsets y cabeceras `X-MCP-*`.
-- `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial. `steerTask`, `abortTask` y `getTaskEvents` usan `https://api.github.com/cmc_internal/api/agents`, con `Accept: application/json` y sin esa cabecera.
+- `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial. `steerTask`, `abortTask` y `getTaskEvents` usan `https://api.github.com/cmc_internal/api/agents`, con `Accept: application/json` y sin esa cabecera. Un 401 con sesión de GitHub App renueva el token y reintenta una vez. Un 403 por permiso dice cuál falta.
+- `src/auth.ts` hace el device flow, guarda la sesión en el llavero y renueva el access token. `src/keyring.ts` abre `@napi-rs/keyring` con el servicio `copilot-agents-mcp:github.com` y, en Linux, el backend `secret-service`.
 - `src/swe-models.ts` valida y lee `GET /agents/swe/models`. La base sale de GraphQL y no está escrita en el código. `policy` es opcional: si falta, la salida pone `policy.state` a `null`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`.
 - `src/state.ts`, `src/watch.ts` y `src/notify.ts` guardan el estado local y avisan una vez por turno. Tras un steer aceptado guardan `session_count` y la marca, rearman el vigilante y el aviso incluye `session_id`.
 - `fixtures/` trae los ejemplos del OpenAPI. `src/__toolsnaps__/` fija `tools/list`.
@@ -78,11 +79,11 @@ node dist/cli.js --help
 node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` deja 45 tests en 5 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 93 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
+`bash scripts/setup` se ejecutó dos veces seguidas y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` dejaba 45 tests en 5 archivos. Con la sesión de GitHub App, `npm test` deja 65 tests en 7 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 94 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0 y `node dist/cli.js --help` escribió la ayuda. `node src/cli.ts` respondió a `tools/list` por stdio y `node src/cli.ts --http --port 3333` escuchó en `http://127.0.0.1:3333/mcp` y respondió lo mismo.
 
 ### Buenas prácticas de este stack
 
-Los imports relativos llevan extensión `.ts`. El esquema de cada herramienta lleva `additionalProperties: false`. Las respuestas de GitHub se validan en el cliente, antes de usarlas. El token solo entra por el entorno. `npm audit --audit-level=low` y el chequeo de licencias forman parte del CI. Zod 4.6.7 y Vitest 5.1.1 están en ese rango porque las versiones anteriores arrastraban avisos de `npm audit`.
+Los imports relativos llevan extensión `.ts`. El esquema de cada herramienta lleva `additionalProperties: false`. Las respuestas de GitHub se validan en el cliente, antes de usarlas. El PAT entra por `GITHUB_PERSONAL_ACCESS_TOKEN`. La sesión de la GitHub App se guarda en el llavero, no en archivos. No se leen `GH_TOKEN` ni `GITHUB_TOKEN`. `npm audit --audit-level=low` y el chequeo de licencias forman parte del CI. Zod 4.6.7 y Vitest 5.1.1 están en ese rango porque las versiones anteriores arrastraban avisos de `npm audit`.
 
 ### CI/CD
 
@@ -100,4 +101,4 @@ La API de protección de rama respondió 403, así que no consta aquí si algún
 
 Para probar: `npm test`, `npm run typecheck` y `npm run lint`. Para ver las herramientas, `node src/cli.ts` por stdio o `node src/cli.ts --http --port 3333` y el cliente en `http://127.0.0.1:3333/mcp`.
 
-Secretos que se pueden añadir en Cursor, sin valor aquí: `GITHUB_PERSONAL_ACCESS_TOKEN` (hace falta para lanzar una tarea, leerla o listar modelos; no hace falta para el CI ni para `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` y `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`.
+Secretos que se pueden añadir en Cursor, sin valor aquí: `GITHUB_PERSONAL_ACCESS_TOKEN` (hace falta para lanzar una tarea, leerla o listar modelos si no usas `login`; no hace falta para el CI ni para `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` y `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` es opcional y no es un secreto: si no está, se usa el client ID que va en el código.

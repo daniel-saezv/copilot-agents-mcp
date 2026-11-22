@@ -304,17 +304,30 @@ export function initialTask(input: {
   };
 }
 
-export async function withStateLock<T>(statePath: string, fn: (state: StateFile) => Promise<T> | T): Promise<T> {
-  const lock = `${statePath}.lock`;
-  await acquire(lock);
+export async function withDirectoryLock<T>(
+  lock: string,
+  fn: () => Promise<T>,
+  options?: { timeoutMs?: number; busyMessage?: string },
+): Promise<T> {
+  await acquire(
+    lock,
+    options?.timeoutMs ?? 10_000,
+    options?.busyMessage ?? "No se pudo guardar el estado local: el archivo está en uso.",
+  );
   try {
+    return await fn();
+  } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
+}
+
+export async function withStateLock<T>(statePath: string, fn: (state: StateFile) => Promise<T> | T): Promise<T> {
+  return withDirectoryLock(`${statePath}.lock`, async () => {
     const state = await readState(statePath);
     const result = await fn(state);
     await writeState(statePath, state);
     return result;
-  } finally {
-    await rm(lock, { recursive: true, force: true });
-  }
+  });
 }
 
 export async function readState(statePath: string): Promise<StateFile> {
@@ -353,7 +366,7 @@ async function writeState(statePath: string, state: StateFile): Promise<void> {
   }
 }
 
-async function acquire(lock: string): Promise<void> {
+async function acquire(lock: string, timeoutMs: number, busyMessage: string): Promise<void> {
   await mkdir(dirname(lock), { recursive: true });
   const started = Date.now();
   for (;;) {
@@ -367,7 +380,7 @@ async function acquire(lock: string): Promise<void> {
         await rm(lock, { recursive: true, force: true });
         continue;
       }
-      if (Date.now() - started > 10_000) throw new Error("No se pudo guardar el estado local: el archivo está en uso.");
+      if (Date.now() - started > timeoutMs) throw new Error(busyMessage);
       await delay(50);
     }
   }

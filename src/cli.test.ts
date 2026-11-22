@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs, readGitHubToken } from "./cli.ts";
+import { ignoredTokenWarning, readActiveToken } from "./auth.ts";
+import { parseArgs } from "./cli.ts";
 
 describe("cli", () => {
   it("arranca en stdio y solo abre HTTP con el flag", () => {
@@ -7,13 +8,31 @@ describe("cli", () => {
     expect(parseArgs(["--http"], {})).toMatchObject({ command: "serve", http: true, port: 3333 });
     expect(parseArgs(["--http", "--port", "4010"], {})).toMatchObject({ port: 4010 });
     expect(parseArgs(["watch"], {})).toEqual({ command: "watch" });
+    expect(parseArgs(["login"], {})).toEqual({ command: "login" });
+    expect(parseArgs(["logout"], {})).toEqual({ command: "logout" });
+    expect(parseArgs(["auth", "status"], {})).toEqual({ command: "status" });
+    expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
+    expect(() => parseArgs(["login", "--http"], {})).toThrow(/no admite/);
   });
 
-  it("lee el token de la variable del MCP oficial y luego los alias", () => {
-    expect(readGitHubToken({ GITHUB_PERSONAL_ACCESS_TOKEN: "uno", GH_TOKEN: "dos", GITHUB_TOKEN: "tres" })).toBe("uno");
-    expect(readGitHubToken({ GH_TOKEN: "dos", GITHUB_TOKEN: "tres" })).toBe("dos");
-    expect(readGitHubToken({ GITHUB_TOKEN: "tres" })).toBe("tres");
-    expect(readGitHubToken({})).toBeNull();
+  it("prioriza el PAT y no usa GH_TOKEN ni GITHUB_TOKEN", () => {
+    expect(readActiveToken({
+      GITHUB_PERSONAL_ACCESS_TOKEN: "from-pat",
+      GH_TOKEN: "from-gh",
+      GITHUB_TOKEN: "from-hub",
+    }, () => {
+      throw new Error("no leas el llavero");
+    })).toBe("from-pat");
+    expect(readActiveToken({ GH_TOKEN: "from-gh", GITHUB_TOKEN: "from-hub" }, () => "from-keyring")).toBe("from-keyring");
+    expect(readActiveToken({ GITHUB_TOKEN: "from-hub" }, () => null)).toBeNull();
+    expect(readActiveToken({ GITHUB_PERSONAL_ACCESS_TOKEN: "  " }, () => null)).toBeNull();
+    const warning = ignoredTokenWarning({ GH_TOKEN: "from-gh", GITHUB_TOKEN: "from-hub" });
+    expect(warning).toMatch(/GH_TOKEN/);
+    expect(warning).toMatch(/GITHUB_TOKEN/);
+    expect(warning).not.toContain("from-gh");
+    expect(warning).not.toContain("from-hub");
+    expect(ignoredTokenWarning({ GITHUB_PERSONAL_ACCESS_TOKEN: "from-pat", GH_TOKEN: "from-gh" })).toBeNull();
+    expect(ignoredTokenWarning({})).toBeNull();
   });
 
   it("toma toolsets de flags o del entorno", () => {

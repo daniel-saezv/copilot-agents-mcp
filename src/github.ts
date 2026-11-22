@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { Ajv, type AnySchema } from "ajv";
 import addFormatsDefault from "ajv-formats";
-import { GitHubError, API_VERSION, formatApiError, redact } from "./errors.ts";
+import type { AccessTokenSource } from "./auth.ts";
+import { GitHubError, API_VERSION, formatApiError, missingPermission, redact, type GithubPermission } from "./errors.ts";
 
 export type AgentSession = {
   id?: string;
@@ -149,10 +150,12 @@ export function createGitHubClient(options: {
   fetch?: typeof fetch;
   baseUrl?: string;
   internalBaseUrl?: string;
+  tokens?: AccessTokenSource;
 }): GitHubClient {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
   const internalBaseUrl = (options.internalBaseUrl ?? INTERNAL_AGENTS_BASE).replace(/\/$/, "");
+  const tokens = options.tokens;
   return {
     createTask(input) {
       const body: Record<string, unknown> = { prompt: input.prompt, model: input.model };
@@ -162,6 +165,7 @@ export function createGitHubClient(options: {
       if (input.create_pull_request !== undefined) body.create_pull_request = input.create_pull_request;
       return request({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl,
         path: `/agents/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/tasks`,
@@ -169,6 +173,7 @@ export function createGitHubClient(options: {
         body,
         validate: createResponse,
         label: "crear la tarea",
+        permission: "Agent tasks",
       });
     },
     getTask(input) {
@@ -177,12 +182,14 @@ export function createGitHubClient(options: {
         : `/agents/tasks/${encodeURIComponent(input.taskId)}`;
       return request({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl,
         path,
         method: "GET",
         validate: getResponse,
         label: "leer la tarea",
+        permission: "Agent tasks",
       });
     },
     async findPullRequest(input) {
@@ -193,26 +200,31 @@ export function createGitHubClient(options: {
       });
       const parsed = await callGitHub({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl,
         path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls?${query.toString()}`,
         method: "GET",
+        permission: "Pull requests",
       });
       return matchPull(parsed, input.id);
     },
     async getPullRequest(input) {
       const parsed = await callGitHub({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl,
         path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls/${encodeURIComponent(String(input.number))}`,
         method: "GET",
+        permission: "Pull requests",
       });
       return readPullState(parsed, input.number);
     },
     async steerTask(taskId, content) {
       await callGitHub({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl: internalBaseUrl,
         path: `/tasks/${encodeURIComponent(taskId)}/steer`,
@@ -220,11 +232,13 @@ export function createGitHubClient(options: {
         body: { content, type: "user_message" },
         profile: "internal",
         acceptEmpty: true,
+        permission: "Contents: write",
       });
     },
     async abortTask(taskId) {
       await callGitHub({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl: internalBaseUrl,
         path: `/tasks/${encodeURIComponent(taskId)}/steer`,
@@ -232,6 +246,7 @@ export function createGitHubClient(options: {
         body: { type: "abort" },
         profile: "internal",
         acceptEmpty: true,
+        permission: "Contents: write",
       });
     },
     async getTaskEvents(taskId, page, perPage) {
@@ -241,34 +256,28 @@ export function createGitHubClient(options: {
       const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
       const parsed = await callGitHub({
         token: options.token,
+        tokens,
         fetchImpl,
         baseUrl: internalBaseUrl,
         path: `/tasks/${encodeURIComponent(taskId)}/events?${query.toString()}`,
         method: "GET",
         profile: "internal",
+        permission: "Agent tasks",
       });
       return parseTaskEvents(parsed);
     },
   };
 }
 
-async function request(options: {
-  token: string;
-  fetchImpl: typeof fetch;
-  baseUrl: string;
-  path: string;
-  method: "GET" | "POST";
-  body?: Record<string, unknown>;
-  validate: Validate;
-  label: string;
-}): Promise<AgentTask> {
+async function request(options: GitHubCall & { validate: Validate; label: string }): Promise<AgentTask> {
   const parsed = await callGitHub(options);
   assertSchema(options.validate, parsed, options.label);
   return parsed as AgentTask;
 }
 
-async function callGitHub(options: {
+type GitHubCall = {
   token: string;
+  tokens?: AccessTokenSource;
   fetchImpl: typeof fetch;
   baseUrl: string;
   path: string;
@@ -276,11 +285,24 @@ async function callGitHub(options: {
   body?: Record<string, unknown>;
   profile?: "public" | "internal";
   acceptEmpty?: boolean;
-}): Promise<unknown> {
+  permission: GithubPermission;
+};
+
+async function callGitHub(options: GitHubCall): Promise<unknown> {
+  const firstToken = options.tokens ? await options.tokens.current() : options.token;
+  const first = await sendGitHub(options, firstToken);
+  if (first.response.status === 401 && options.tokens) {
+    const nextToken = await options.tokens.refresh(firstToken);
+    return acceptGitHub(options, await sendGitHub(options, nextToken), nextToken);
+  }
+  return acceptGitHub(options, first, firstToken);
+}
+
+async function sendGitHub(options: GitHubCall, token: string): Promise<{ response: Response; parsed: unknown; text: string }> {
   const profile = options.profile ?? "public";
   const headers: Record<string, string> = {
     accept: profile === "internal" ? "application/json" : "application/vnd.github+json",
-    authorization: `Bearer ${options.token}`,
+    authorization: `Bearer ${token}`,
     "user-agent": "copilot-agents-mcp",
   };
   if (profile === "public") headers["x-github-api-version"] = API_VERSION;
@@ -295,7 +317,7 @@ async function callGitHub(options: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "error de red";
-    throw new GitHubError(redact(`No se pudo llamar a la API de GitHub: ${message}`, options.token));
+    throw new GitHubError(redact(`No se pudo llamar a la API de GitHub: ${message}`, token));
   }
   const text = await response.text();
   let parsed: unknown = null;
@@ -306,11 +328,18 @@ async function callGitHub(options: {
       parsed = null;
     }
   }
+  return { response, parsed, text };
+}
+
+function acceptGitHub(options: GitHubCall, sent: { response: Response; parsed: unknown; text: string }, token: string): unknown {
+  const { response, parsed, text } = sent;
   if (!response.ok) {
-    const message = parsed === null && text
+    const detail = parsed === null && text
       ? `HTTP ${response.status}`
       : formatApiError(response.status, response.headers, parsed);
-    throw new GitHubError(redact(message, options.token));
+    const missing = missingPermission(response.status, response.headers, parsed ?? text, options.permission);
+    const message = missing ? `${missing} ${detail}` : detail;
+    throw new GitHubError(redact(message, token));
   }
   if (options.acceptEmpty && response.status === 202) return undefined;
   if (parsed === null) throw new GitHubError(`La respuesta de GitHub no es JSON (HTTP ${response.status}).`);

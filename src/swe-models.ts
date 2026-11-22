@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ModelsError, redact } from "./errors.ts";
+import type { AccessTokenSource } from "./auth.ts";
+import { missingPermission, ModelsError, redact } from "./errors.ts";
 
 export const GRAPHQL_URL = "https://api.github.com/graphql";
 export const ENDPOINTS_QUERY = "query { viewer { copilotEndpoints { api } } }";
@@ -55,16 +56,18 @@ export async function readSweModels(options: {
   token: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  tokens?: AccessTokenSource;
 }): Promise<SweModelsResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
-  const api = await readApiBase(fetchImpl, options.token);
+  const holder = { token: options.tokens ? await options.tokens.current() : options.token };
+  const api = await readApiBase(fetchImpl, holder, options.tokens);
   const url = `${api}${SWE_MODELS_PATH}`;
-  const body = await readJson(fetchImpl, options.token, url, {
+  const body = await readJson(fetchImpl, holder, options.tokens, url, {
     method: "GET",
     headers: {
       accept: "application/json",
-      authorization: `Bearer ${options.token}`,
+      authorization: `Bearer ${holder.token}`,
       "user-agent": "copilot-agents-mcp",
       "x-github-api-version": SWE_MODELS_API_VERSION,
       "copilot-integration-id": COPILOT_INTEGRATION_ID,
@@ -85,12 +88,12 @@ export async function readSweModels(options: {
   };
 }
 
-async function readApiBase(fetchImpl: typeof fetch, token: string): Promise<string> {
-  const body = await readJson(fetchImpl, token, GRAPHQL_URL, {
+async function readApiBase(fetchImpl: typeof fetch, holder: { token: string }, tokens?: AccessTokenSource): Promise<string> {
+  const body = await readJson(fetchImpl, holder, tokens, GRAPHQL_URL, {
     method: "POST",
     headers: {
       accept: "application/json",
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${holder.token}`,
       "content-type": "application/json",
       "user-agent": "copilot-agents-mcp",
     },
@@ -112,12 +115,23 @@ function readApi(body: unknown): string | null {
   return api;
 }
 
-async function readJson(fetchImpl: typeof fetch, token: string, url: string, init: RequestInit): Promise<unknown> {
+async function readJson(
+  fetchImpl: typeof fetch,
+  holder: { token: string },
+  tokens: AccessTokenSource | undefined,
+  url: string,
+  init: RequestInit,
+  retried = false,
+): Promise<unknown> {
   const method = init.method ?? "GET";
+  const token = holder.token;
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
   let response: Response;
   try {
     response = await fetchImpl(url, {
       ...init,
+      headers,
       redirect: "error",
       signal: AbortSignal.timeout(15_000),
     });
@@ -125,8 +139,24 @@ async function readJson(fetchImpl: typeof fetch, token: string, url: string, ini
     const message = error instanceof Error ? error.message : "error de red";
     throw new ModelsError(redact(`No se pudo llamar a ${method} ${url}: ${message}`, token));
   }
+  if (response.status === 401 && tokens && !retried) {
+    await response.text();
+    holder.token = await tokens.refresh(token);
+    return readJson(fetchImpl, holder, tokens, url, init, true);
+  }
   if (response.status !== 200) {
-    throw new ModelsError(redact(`${method} ${url} respondió HTTP ${response.status}.`, token));
+    const text = await response.text();
+    let parsed: unknown = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        parsed = null;
+      }
+    }
+    const missing = missingPermission(response.status, response.headers, parsed ?? text, "Agent tasks");
+    const base = `${method} ${url} respondió HTTP ${response.status}.`;
+    throw new ModelsError(redact(missing ? `${missing} ${base}` : base, token));
   }
   const text = await response.text();
   try {

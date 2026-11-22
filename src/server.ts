@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { failureMessage, modelUnavailableMessage, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN, toolError, toolJson, ToolFailure } from "./errors.ts";
+import { failureMessage, modelUnavailableMessage, NO_SESSION_MESSAGE, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN, toolError, toolJson, ToolFailure } from "./errors.ts";
 import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
@@ -214,7 +214,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   });
   if (blocked) throw new ToolFailure(blocked);
   const token = deps.readToken();
-  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   const task = await deps.clientForToken(token).createTask({
     owner: parsed.owner,
     repo: parsed.repo,
@@ -256,7 +256,7 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const repo = args.repo?.trim() || known?.repo || "";
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
-  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   const client = deps.clientForToken(token);
   const remote = await client.getTask({
     taskId,
@@ -285,7 +285,7 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const content = required(args.content, "content");
   const token = deps.readToken();
-  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   const client = deps.clientForToken(token);
   const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
   const remote = await client.getTask({
@@ -329,7 +329,7 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
 async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const token = deps.readToken();
-  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   await deps.clientForToken(token).abortTask(taskId);
   return { task_id: taskId, accepted: true };
 }
@@ -337,7 +337,7 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
 async function readEvents(args: z.infer<typeof eventsInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const token = deps.readToken();
-  if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   const page = await deps.clientForToken(token).getTaskEvents(taskId, args.page, args.per_page);
   return {
     task_id: taskId,
