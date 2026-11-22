@@ -210,10 +210,14 @@ async function watch(): Promise<void> {
   }
 }
 
+export function supportsNode(version: string): boolean {
+  const [major] = version.split(".").map(Number);
+  return (major ?? 0) >= 26;
+}
+
 async function main(): Promise<void> {
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  if ((major ?? 0) < 22 || ((major ?? 0) === 22 && (minor ?? 0) < 18)) {
-    console.error(`Hace falta Node.js 22.18 o posterior. Hay ${process.versions.node}.`);
+  if (!supportsNode(process.versions.node)) {
+    console.error(`Hace falta Node.js 26 o posterior. Hay ${process.versions.node}.`);
     process.exitCode = 1;
     return;
   }

@@ -10,7 +10,7 @@ No se despliega. Se ejecuta en tu máquina con stdio o, si lo pides, con HTTP en
 
 ## Requisitos
 
-- Node.js 22.18 o posterior (en Windows también).
+- Node.js 26 o posterior (en Windows también).
 - Una credencial de GitHub: la variable `GITHUB_PERSONAL_ACCESS_TOKEN` o una sesión de GitHub App iniciada con `login`. Hace falta para lanzar, leer una tarea y listar los modelos. No hace falta para listar las herramientas. El detalle está en la sección Autenticación.
 
 ## Cómo preparar el entorno
@@ -45,7 +45,7 @@ Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idl
 
 Hasta que el paquete esté en npm, sustituye `copilot-agents-mcp` por `github:daniel-saezv/copilot-agents-mcp` en los comandos y en `args`.
 
-1. Comprueba Node.js 22.18 o posterior con `node -v`. Si es anterior, instala esa versión antes de seguir.
+1. Comprueba Node.js 26 o posterior con `node -v`. Si es anterior, instala esa versión antes de seguir.
 2. Añade este bloque a la configuración MCP. Pon el token en `env`. Déjalo fuera de `args`.
 
 ```json
