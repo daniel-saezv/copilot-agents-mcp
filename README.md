@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="copilot-agents-mcp">
+</p>
+
 # copilot-agents-mcp
 
 Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado, leer los modelos de Copilot y, de forma experimental, redirigir una tarea.
@@ -37,28 +41,57 @@ npx -y github:daniel-saezv/copilot-agents-mcp watch
 
 Consulta cada tarea hasta `completed`, `failed`, `timed_out`, `cancelled` o `idle`. Guarda el estado en un archivo local y, al volver a arrancar, retoma las que no han terminado. Avisa una sola vez cuando un turno llega a un estado final. Tras `steer_agent_task`, vigila el turno nuevo y puede avisar otra vez.
 
-## Configurarlo en un cliente MCP
+## Instalación
 
-El PAT vive en el entorno del proceso, no en los argumentos ni en un archivo. La sesión de la GitHub App vive en el llavero del sistema. Puedes omitir el PAT si ya ejecutaste `login` en esa cuenta del sistema.
+Hasta que el paquete esté en npm, sustituye `copilot-agents-mcp` por `github:daniel-saezv/copilot-agents-mcp` en los comandos y en `args`.
 
-Stdio:
+1. Comprueba Node.js 22.18 o posterior con `node -v`. Si es anterior, instala esa versión antes de seguir.
+2. Añade este bloque a la configuración MCP. Pon el token en `env`. Déjalo fuera de `args`.
 
 ```json
 {
   "mcpServers": {
     "copilot-agents": {
       "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "args": ["-y", "copilot-agents-mcp"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_…",
-        "COPILOT_AGENTS_NOTIFY_URL": "https://ejemplo.invalid/aviso"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_…"
       }
     }
   }
 }
 ```
 
-HTTP: arranca el proceso con el token en el entorno y apunta el cliente a `http://127.0.0.1:3333/mcp`. El cliente no envía el token de GitHub.
+Comprueba que `command` es `npx` y que `args` lleva `-y` y el paquete. Quita `GITHUB_PERSONAL_ACCESS_TOKEN` si vas a usar la GitHub App con llavero.
+
+3. Añade en `env` solo las variables que necesites.
+
+- `GITHUB_PERSONAL_ACCESS_TOKEN`: token personal. Si tiene valor, es la credencial y el llavero no se usa.
+- `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`: client ID de otra GitHub App. Si falta, se usa el de `copilot-agents-mcp`.
+- `GH_TOKEN`: se ignora. No sirve de credencial.
+- `GITHUB_TOKEN`: se ignora. No sirve de credencial.
+- `GITHUB_TOOLSETS`: toolsets a publicar, separados por coma.
+- `GITHUB_TOOLS`: herramientas a publicar, separadas por coma.
+- `GITHUB_EXCLUDE_TOOLS`: herramientas que se quitan, separadas por coma.
+- `GITHUB_READ_ONLY`: con `1` o `true`, solo publica herramientas de lectura.
+- `COPILOT_AGENTS_NOTIFY_URL`: URL del POST de aviso. Si falta, no hay POST.
+- `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`: valor de la cabecera `Authorization` de ese POST. Si falta, el POST no la envía.
+- `COPILOT_AGENTS_STATE_PATH`: archivo de estado. Por defecto, `~/.copilot-agents-mcp/state.json`.
+- `COPILOT_AGENTS_POLL_INTERVAL_MS`: pausa entre lecturas del vigilante. Por defecto, 15000.
+- `COPILOT_AGENTS_LOG`: si tiene ruta, el vigilante añade ahí su error estándar.
+
+4. Si hay llavero, inicia sesión y mira el estado:
+
+```bash
+npx -y copilot-agents-mcp login
+npx -y copilot-agents-mcp auth status
+```
+
+Comprueba que `auth status` dice `GitHub App`, el nombre de la app, el client ID y las caducidades. Comprueba que no imprime el token. Si `login` avisa de que no hay llavero, el token muere con ese proceso y el servidor no lo conserva. Define `GITHUB_PERSONAL_ACCESS_TOKEN` y comprueba que `auth status` dice `PAT`.
+
+5. Arranca el cliente MCP. Comprueba que lista las herramientas. Para lanzar una tarea hace falta la credencial del paso 4.
+
+Para HTTP, arranca el proceso con `--http --port 3333` y la credencial en el entorno. Apunta el cliente a `http://127.0.0.1:3333/mcp`. El cliente no envía el token de GitHub.
 
 ## Herramientas
 
@@ -178,26 +211,26 @@ Pon el PAT en el entorno del proceso. No lo pongas en los argumentos ni en un ar
 
 ### GitHub App
 
-La app por defecto es `copilot-agents-mcp-test`, con client ID `Iv23liiE0XVsuSo0WG8z`. Para usar otra, define `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`. El client ID no es un secreto. Este programa no incluye client secret: GitHub no lo exige para renovar un token de usuario obtenido con el device flow.
+La app por defecto es `copilot-agents-mcp`, con client ID `Iv23liNbsc3GH7vmP8OT`. Tiene device flow y tokens que caducan. Para usar otra, define `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`. El client ID no es un secreto. Este programa no incluye client secret: GitHub no lo exige para renovar un token de usuario obtenido con el device flow.
 
 Permisos de la app:
 
-- **Agent tasks: read and write.** Hace falta para lanzar una tarea, leerla, listar modelos y leer eventos.
-- **Contents: read and write.** Solo hace falta para `steer_agent_task`. Sin escritura, GitHub responde 403 `repository_write_access_required`. Se pide desde el principio para no reinstalar la app el día que uses steer. Ese token puede escribir archivos en los repositorios donde la app esté instalada y tú puedas escribir. Protege la rama por defecto con reglas de rama o un ruleset, para que el token no haga push directo a ella. Instala la app solo en los repositorios que vayas a usar.
-- **Pull requests: read.** Hace falta para comprobar que la pull request sigue abierta antes de steer, y para rellenar el número y la URL.
-- **Metadata: read.** GitHub lo exige en todas las apps.
+- **Agent tasks: read and write.** Crear una tarea, leerla y leer sus eventos. Listar modelos usa el mismo token.
+- **Contents: read and write.** El steer de GitHub lo exige. Sin escritura, `steer_agent_task` y `abort_agent_task` responden 403 `repository_write_access_required`. Ese token puede escribir en los repositorios donde la app esté instalada y tú puedas escribir. Protege la rama por defecto con reglas de rama o un ruleset.
+- **Pull requests: read.** Leer la pull request de la tarea, comprobar que sigue abierta y rellenar el número y la URL.
+- **Metadata: read.** Obligatorio. GitHub lo exige en todas las apps.
 
-`abort_agent_task` llama al mismo endpoint que steer, así que también necesita Contents: write. `steer_agent_task` usa un endpoint interno no documentado de GitHub (`/cmc_internal/api/agents/.../steer`). Puede cambiar sin aviso.
+`steer_agent_task` usa un endpoint interno no documentado de GitHub (`/cmc_internal/api/agents/.../steer`). Puede cambiar sin aviso. `abort_agent_task` llama al mismo endpoint.
 
 Si falta un permiso, el error dice cuál. Cuando GitHub envía `X-Accepted-GitHub-Permissions`, el texto sale de esa cabecera. Un 403 `repository_write_access_required` indica Contents: write. Un 403 «Resource not accessible by integration» nombra el permiso de esa llamada: Agent tasks, Pull requests o Contents.
 
-Instala la app en los repositorios que elijas, que es lo recomendado:
+Instala la app con **Only select repositories** y marca solo los repositorios que vayas a usar:
 
 ```text
-https://github.com/apps/copilot-agents-mcp-test/installations/new
+https://github.com/apps/copilot-agents-mcp/installations/new
 ```
 
-En el formulario, elige esos repositorios. También puedes instalarla en todos los de la cuenta. En una organización la instala un propietario. Si la organización usa SAML SSO, autoriza la app en la sesión SSO antes de tocar sus repositorios. Con otra app, cambia el slug de la URL y el client ID. El device flow tiene que estar activado en la app.
+En una organización la instala un propietario. Si la organización usa SAML SSO, autoriza la app en la sesión SSO antes de tocar sus repositorios. Con otra app, cambia el slug de la URL y el client ID. El device flow tiene que estar activado en la app.
 
 Inicia sesión en una terminal:
 
@@ -207,21 +240,21 @@ npx -y github:daniel-saezv/copilot-agents-mcp login
 
 Verás una URL y un código. El código caduca a los 15 minutos. Ábrelo tú. No introduzcas nunca un código que no hayas pedido en esa terminal.
 
-El access token caduca a las 8 horas. El refresh token caduca a los 6 meses. El programa pide uno nuevo 5 minutos antes de que caduque el access token, y también si GitHub responde 401. Cada renovación invalida el access token y el refresh token anteriores. Si GitHub responde `bad_refresh_token`, ejecuta `login` otra vez.
+El access token caduca a las 8 horas. El refresh token caduca a los 6 meses. El programa pide uno nuevo 5 minutos antes de que caduque el access token, y también si GitHub responde 401. Cada renovación invalida el access token y el refresh token anteriores. Si el llavero falla al guardar la sesión nueva, el refresh token que sigue en el llavero ya no vale. La sesión nueva permanece en memoria y el programa reintenta guardarla. Si el proceso se cierra antes, ejecuta `login` otra vez. Si GitHub responde `bad_refresh_token`, ejecuta `login` otra vez.
 
-El token se guarda en el llavero, con el servicio `copilot-agents-mcp:github.com` y la cuenta del usuario del sistema. En macOS es el Keychain. En Windows es el Administrador de credenciales. En Linux es Secret Service (gnome-keyring, KWallet o KeePassXC). En Linux no se usa el llavero del kernel: si Secret Service no está, el programa no cambia de backend en silencio. Si no hay llavero, el token se queda solo en la memoria de ese proceso, no se escribe en disco y se pierde al salir. Un aviso en stderr lo dice.
+El token se guarda en el llavero, con el servicio `copilot-agents-mcp:github.com` y la cuenta del usuario del sistema. En macOS es el Keychain. En Windows es el Administrador de credenciales. En Linux es Secret Service (gnome-keyring, KWallet o KeePassXC). En Linux no se usa el llavero del kernel: si Secret Service no está, el programa no cambia de backend en silencio. Sin llavero, `login` no sirve para el servidor: el token queda en la memoria de ese proceso y muere al salir. En la práctica solo funciona el PAT.
 
 ```bash
 npx -y github:daniel-saezv/copilot-agents-mcp logout
 npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-`logout` borra la entrada del llavero e indica cómo revocar el acceso: Settings → Applications → Authorized GitHub Apps. Para quitar la app de los repositorios, desinstálala. `auth status` dice qué credencial está activa y de dónde sale. No imprime el token.
+`logout` borra la entrada del llavero e indica cómo revocar el acceso: Settings → Applications → Authorized GitHub Apps. Para quitar la app de los repositorios, desinstálala. `auth status` dice el mecanismo activo: PAT, por la variable `GITHUB_PERSONAL_ACCESS_TOKEN`, o la GitHub App del llavero. En la app muestra el nombre, el client ID efectivo, si sale del valor por defecto o de `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, y la caducidad del access token y del refresh token. No imprime el token. Si no puede obtener el nombre, muestra «desconocido» y sigue.
 
 ### Variables
 
 - `GITHUB_PERSONAL_ACCESS_TOKEN`: si está, es la credencial. Tiene prioridad sobre el llavero.
-- `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`: client ID de otra GitHub App. Si no está, se usa el de `copilot-agents-mcp-test`.
+- `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`: client ID de otra GitHub App. Si no está, se usa el de `copilot-agents-mcp`.
 - `GH_TOKEN` y `GITHUB_TOKEN`: se ignoran. Ver el cambio de comportamiento arriba.
 - `GITHUB_TOOLSETS`, `GITHUB_TOOLS`, `GITHUB_EXCLUDE_TOOLS` y `GITHUB_READ_ONLY`: iguales que en el MCP oficial de GitHub.
 

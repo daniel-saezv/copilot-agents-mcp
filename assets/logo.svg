@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>copilot-agents-mcp · Constelación con nodo local</title>
+  <rect width="512" height="512" fill="#24124A"/>
+  <g stroke="#B9A6FF" stroke-width="32" stroke-linecap="round" fill="none">
+    <path d="M256 256 L256 128"/>
+    <path d="M256 256 L145 320"/>
+    <path d="M256 256 L367 320"/>
+  </g>
+  <g fill="#5EEAD4">
+    <circle cx="256" cy="120" r="40"/>
+    <circle cx="138" cy="324" r="40"/>
+    <circle cx="374" cy="324" r="40"/>
+  </g>
+  <rect x="210" y="210" width="92" height="92" rx="22" fill="#FFFFFF"/>
+  <rect x="236" y="236" width="40" height="40" rx="8" fill="#24124A"/>
+</svg>

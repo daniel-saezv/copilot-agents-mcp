@@ -57,6 +57,19 @@ function deps(statePath: string, client: GitHubClient, launchWatcher: () => void
 }
 
 describe("herramientas", () => {
+  it("anuncia la versión de package.json", async () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    const statePath = await tempPath();
+    const mcp = buildServer(baseSelection, deps(statePath, unusedClient(), () => {}));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport);
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+    expect(client.getServerVersion()).toMatchObject({ name: "copilot-agents-mcp", version: pkg.version });
+    await client.close();
+    await mcp.close();
+  });
+
   it("exige readOnlyHint según el método y publica el esquema", async () => {
     const statePath = await tempPath();
     const tools = await listedTools(baseSelection, deps(statePath, unusedClient(), () => {}));

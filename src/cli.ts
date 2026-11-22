@@ -14,6 +14,7 @@ import {
   logoutMessage,
   personalAccessToken,
   readActiveToken,
+  readGitHubAppName,
   statusReport,
   systemAccount,
   type AppSession,
@@ -25,17 +26,18 @@ import { startHttpServer } from "./http.ts";
 import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
 import { assertSelection, splitList, type Selection } from "./selection.ts";
-import { buildServer, defaultLaunchWatcher } from "./server.ts";
+import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
 import { defaultStatePath } from "./state.ts";
 import { deliverNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 
 export type ServeCommand = { command: "serve"; http: false; selection: Selection } | { command: "serve"; http: true; port: number; selection: Selection };
 export type WatchCommand = { command: "watch" };
-export type CliCommand = ServeCommand | WatchCommand | { command: "login" } | { command: "logout" } | { command: "status" };
+export type CliCommand = ServeCommand | WatchCommand | { command: "login" } | { command: "logout" } | { command: "status" } | { command: "version" };
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
   const args = [...argv];
+  if (args.includes("--version")) return { command: "version" };
   if (args[0] === "watch") {
     if (args.length > 1) throw new Error("watch no admite más argumentos.");
     return { command: "watch" };
@@ -135,6 +137,8 @@ function helpText(): string {
   return [
     "copilot-agents-mcp",
     "  Servidor MCP por stdio.",
+    "copilot-agents-mcp --version",
+    "  Muestra la versión de package.json.",
     "copilot-agents-mcp --http [--port 3333]",
     "  Servidor MCP por HTTP en 127.0.0.1.",
     "copilot-agents-mcp watch",
@@ -219,6 +223,7 @@ async function main(): Promise<void> {
     else if (command.command === "login") await login();
     else if (command.command === "logout") await logout();
     else if (command.command === "status") await status();
+    else if (command.command === "version") console.log(packageVersion());
     else await serve(command);
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Error.");
@@ -298,11 +303,13 @@ async function status(): Promise<void> {
     });
     stored = session.stored();
   }
+  const appName = !pat && stored ? await readGitHubAppName(stored.access_token, fetch) : null;
   console.log(statusReport({
     env: process.env,
     stored,
     keyring: opened.persistent ? "ready" : "memory",
     account: systemAccount(),
+    appName,
   }));
 }
 

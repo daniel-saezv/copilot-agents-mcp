@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ACCESS_TOKEN_REFRESH_MARGIN_MS,
   DEFAULT_GITHUB_APP_CLIENT_ID,
@@ -12,6 +12,7 @@ import {
   loginWithDeviceFlow,
   logoutLocal,
   logoutMessage,
+  readGitHubAppName,
   statusReport,
   systemAccount,
   type SecretStore,
@@ -217,39 +218,99 @@ describe("renovación", () => {
     expect(warnings.join("\n")).not.toContain("access-viejo");
   });
 
-  it("si el llavero falla al guardar, el token nuevo se queda en memoria y no va a disco", async () => {
+  it("si el llavero falla tras rotar el token, la sesión sigue en memoria y se guarda al recuperarse", async () => {
+    let saved: string | null = credential({
+      access: "ghu_viejo",
+      refresh: "ghr_viejo",
+      expiresAt: NOW + 60_000,
+    });
+    const before = saved;
+    let failing = true;
     let writes = 0;
+    const delays: number[] = [];
     const warnings: string[] = [];
-    const session = createAppSession({
-      store: {
-        read: () => credential({ access: "access-viejo", refresh: "refresh-viejo", expiresAt: NOW + 60_000 }),
-        write: () => {
-          writes += 1;
-          throw new KeyringError("lleno");
-        },
-        delete: () => {
-          throw new Error("no borrar");
-        },
+    const store: SecretStore = {
+      read: () => saved,
+      write: (next) => {
+        writes += 1;
+        if (failing) throw new KeyringError("no disponible");
+        saved = next;
       },
+      delete: () => {
+        saved = null;
+      },
+    };
+    const session = createAppSession({
+      store,
       lockPath: await lockPath(),
       clientId: "client-de-prueba",
       now: () => NOW,
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
       warn: (message) => warnings.push(message),
       fetchImpl: async () => oauth({
-        access_token: "access-nuevo",
-        refresh_token: "refresh-nuevo",
+        access_token: "ghu_nuevo",
+        refresh_token: "ghr_nuevo",
         expires_in: 28_800,
         refresh_token_expires_in: 15_897_600,
       }),
     });
-    await expect(session.current()).resolves.toBe("access-nuevo");
-    await expect(session.current()).resolves.toBe("access-nuevo");
-    expect(writes).toBe(1);
+    await expect(session.current()).resolves.toBe("ghu_nuevo");
+    await expect(session.current()).resolves.toBe("ghu_nuevo");
+    expect(saved).toBe(before);
+    expect(writes).toBeGreaterThan(1);
+    expect(delays.length).toBeGreaterThan(0);
+    expect(delays.every((ms) => ms > 0 && ms < 1_000)).toBe(true);
     const shown = warnings.join("\n");
-    expect(shown).toMatch(/memoria/);
-    expect(shown).toMatch(/disco/);
-    expect(shown).not.toContain("access-nuevo");
-    expect(shown).not.toContain("refresh-nuevo");
+    expect(shown).toMatch(/ya no es válido/);
+    expect(shown).toMatch(/login/);
+    expect(shown).not.toMatch(/ghu_|ghr_/);
+    failing = false;
+    await expect(session.current()).resolves.toBe("ghu_nuevo");
+    const parsed = JSON.parse(saved ?? "") as StoredCredential;
+    expect(parsed.access_token).toBe("ghu_nuevo");
+    expect(parsed.refresh_token).toBe("ghr_nuevo");
+    const restarted = createAppSession({
+      store,
+      lockPath: await lockPath(),
+      clientId: "client-de-prueba",
+      now: () => NOW,
+      warn: () => {},
+      fetchImpl: async () => {
+        throw new Error("no debía renovar");
+      },
+    });
+    await expect(restarted.current()).resolves.toBe("ghu_nuevo");
+  });
+
+  it("un error que no es KeyringError al guardar no pierde el token en memoria", async () => {
+    const store = memoryStore(credential({
+      access: "ghu_viejo",
+      refresh: "ghr_viejo",
+      expiresAt: NOW + 60_000,
+    }));
+    store.write = () => {
+      throw new Error("fallo ajeno al llavero");
+    };
+    const session = createAppSession({
+      store,
+      lockPath: await lockPath(),
+      clientId: "client-de-prueba",
+      now: () => NOW,
+      sleep: async () => {},
+      warn: () => {},
+      fetchImpl: async () => oauth({
+        access_token: "ghu_nuevo",
+        refresh_token: "ghr_nuevo",
+        expires_in: 28_800,
+        refresh_token_expires_in: 15_897_600,
+      }),
+    });
+    await expect(session.current()).resolves.toBe("ghu_nuevo");
+    expect(session.peek()).toBe("ghu_nuevo");
+    expect(session.stored()?.refresh_token).toBe("ghr_nuevo");
+    expect(store.snapshot()).toContain("ghu_viejo");
   });
 });
 
@@ -357,18 +418,78 @@ describe("device flow", () => {
     expect(shown).not.toContain("access-1");
     expect(shown).not.toContain("refresh-1");
   });
+
+  it("la última espera del sondeo no pasa del plazo", async () => {
+    let now = NOW;
+    const sleeps: number[] = [];
+    const expiresIn = 8;
+    const interval = 5;
+    await expect(loginWithDeviceFlow({
+      clientId: "client-de-prueba",
+      now: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+      store: memoryStore(),
+      persistent: true,
+      stdout: () => {},
+      stderr: () => {},
+      fetchImpl: async (input) => {
+        if (String(input).endsWith("/device/code")) {
+          return oauth({
+            device_code: "device-code-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://github.com/login/device",
+            expires_in: expiresIn,
+            interval,
+          });
+        }
+        return oauth({ error: "authorization_pending" });
+      },
+    })).rejects.toThrow(/caducado/);
+    expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(expiresIn * 1000);
+    expect(sleeps.at(-1)).toBeLessThan(interval * 1000);
+    expect(sleeps.every((ms) => ms > 0)).toBe(true);
+  });
+
+  it("corta la llamada OAuth a los 30 s", async () => {
+    const deadlines: number[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      deadlines.push(ms);
+      return AbortSignal.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    });
+    try {
+      await expect(loginWithDeviceFlow({
+        clientId: "client-de-prueba",
+        now: () => NOW,
+        sleep: async () => {},
+        store: memoryStore(),
+        persistent: true,
+        stdout: () => {},
+        stderr: () => {},
+        fetchImpl: async (_input, init) => {
+          if (init?.signal?.aborted) throw init.signal.reason;
+          throw new Error("la llamada no traía plazo");
+        },
+      })).rejects.toThrow(/30 s/);
+      expect(deadlines).toContain(30_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
 });
 
 describe("estado y logout", () => {
-  it("el estado no incluye el token", () => {
+  it("el estado muestra el mecanismo y no imprime tokens", () => {
     expect(githubAppClientId({})).toBe(DEFAULT_GITHUB_APP_CLIENT_ID);
-    expect(DEFAULT_GITHUB_APP_CLIENT_ID).toBe("Iv23liiE0XVsuSo0WG8z");
+    expect(DEFAULT_GITHUB_APP_CLIENT_ID).toBe("Iv23liNbsc3GH7vmP8OT");
     expect(githubAppClientId({ COPILOT_AGENTS_GITHUB_APP_CLIENT_ID: " otro " })).toBe("otro");
     const name = userInfo().username.trim();
     expect(systemAccount()).toBe(name || "usuario");
     const stored: StoredCredential = {
-      access_token: "access-secreto",
-      refresh_token: "refresh-secreto",
+      access_token: "ghu_accesssecreto",
+      refresh_token: "ghr_refreshsecreto",
       expires_at: NOW + 3_600_000,
       refresh_expires_at: NOW + 86_400_000,
     };
@@ -377,21 +498,58 @@ describe("estado y logout", () => {
       stored,
       keyring: "ready",
       account: "ada",
+      appName: "App de ejemplo",
     });
+    expect(text).toContain("GitHub App");
     expect(text).toContain("llavero");
     expect(text).toContain("ada");
+    expect(text).toContain("App de ejemplo");
+    expect(text).toContain(DEFAULT_GITHUB_APP_CLIENT_ID);
+    expect(text).toContain("valor por defecto");
+    expect(text).toContain(new Date(stored.expires_at).toISOString());
+    expect(text).toContain(new Date(stored.refresh_expires_at ?? 0).toISOString());
     expect(text).toContain("5 minutos");
-    expect(text).not.toContain("access-secreto");
-    expect(text).not.toContain("refresh-secreto");
+    expect(text).not.toMatch(/ghu_|ghr_/);
+    const overridden = statusReport({
+      env: { COPILOT_AGENTS_GITHUB_APP_CLIENT_ID: " client-desde-entorno " },
+      stored,
+      keyring: "ready",
+      account: "ada",
+      appName: null,
+    });
+    expect(overridden).toContain("client-desde-entorno");
+    expect(overridden).toContain("COPILOT_AGENTS_GITHUB_APP_CLIENT_ID");
+    expect(overridden).toContain("desconocido");
+    expect(overridden).not.toMatch(/ghu_|ghr_/);
     const pat = statusReport({
-      env: { GITHUB_PERSONAL_ACCESS_TOKEN: "from-pat" },
+      env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghu_frompat" },
       stored,
       keyring: "ready",
       account: "ada",
     });
+    expect(pat).toContain("PAT");
     expect(pat).toContain("GITHUB_PERSONAL_ACCESS_TOKEN");
-    expect(pat).not.toContain("from-pat");
-    expect(pat).not.toContain("access-secreto");
+    expect(pat).not.toMatch(/ghu_|ghr_/);
+  });
+
+  it("lee el nombre público de la app y, si no puede, no falla", async () => {
+    const token = "ghu_consulta";
+    const name = await readGitHubAppName(token, async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      if (url.endsWith("/user/installations")) {
+        expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+        return oauth({ installations: [{ app_slug: "app-de-prueba" }] });
+      }
+      expect(headers.get("authorization")).toBeNull();
+      expect(url).toContain("/apps/app-de-prueba");
+      return oauth({ name: "App de prueba" });
+    });
+    expect(name).toBe("App de prueba");
+    await expect(readGitHubAppName(token, async () => {
+      throw new Error(`red ${token}`);
+    })).resolves.toBeNull();
+    await expect(readGitHubAppName(token, async () => oauth({ installations: [] }))).resolves.toBeNull();
   });
 
   it("logout es idempotente y explica cómo revocar", () => {

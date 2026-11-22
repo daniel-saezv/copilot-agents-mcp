@@ -1,12 +1,22 @@
 {
   "name": "copilot-agents-mcp",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Servidor MCP local para lanzar agentes de GitHub Copilot en la nube.",
   "type": "module",
   "license": "MIT",
+  "keywords": ["mcp", "github", "copilot", "agents"],
   "bin": {
     "copilot-agents-mcp": "./dist/cli.js"
   },
+  "main": "./dist/cli.js",
+  "exports": {
+    ".": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22.18"
   },
