@@ -1,7 +1,7 @@
 {
   "name": "get_agent_task_events",
   "title": "Eventos de una tarea",
-  "description": "[Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Lee una página de eventos de una tarea.",
+  "description": "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Lee una página de eventos de una tarea (solo lectura).",
   "inputSchema": {
     "type": "object",
     "properties": {

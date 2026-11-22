@@ -1,7 +1,7 @@
 {
   "name": "abort_agent_task",
   "title": "Abortar una tarea",
-  "description": "[Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Aborta una tarea.",
+  "description": "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Envía {type: \"abort\"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub.",
   "inputSchema": {
     "type": "object",
     "properties": {

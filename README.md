@@ -69,9 +69,9 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 | --- | --- | --- | --- |
 | `create_agent_task` | copilot_tasks | no | Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados. |
 | `get_agent_task` | copilot_tasks | sí | Lee una vez el estado de una tarea del agente de Copilot. |
-| `steer_agent_task` | copilot_tasks | no | [Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta. |
-| `abort_agent_task` | copilot_tasks | no | [Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Aborta una tarea. |
-| `get_agent_task_events` | copilot_tasks | sí | [Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Lee una página de eventos de una tarea. |
+| `steer_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta. |
+| `abort_agent_task` | copilot_tasks | no | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Envía {type: "abort"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub. |
+| `get_agent_task_events` | copilot_tasks | sí | [Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Lee una página de eventos de una tarea (solo lectura). |
 | `list_copilot_models` | copilot_models | sí | Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe. |
 <!-- END AUTOMATED TOOLS -->
 
@@ -83,9 +83,11 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 
 `steer_agent_task`, `abort_agent_task` y `get_agent_task_events` llaman a endpoints internos de GitHub. No están documentados y pueden cambiar sin aviso.
 
-`steer_agent_task` lee la tarea y comprueba su pull request con `GET /repos/{owner}/{repo}/pulls/{number}`. Si la tarea no tiene pull request, responde `task_has_no_pull_request` y no envía la instrucción. Si la pull request no está abierta, responde `task_pull_request_not_open` y tampoco la envía.
+`steer_agent_task` envía una instrucción a una tarea con pull request abierta. Lee la tarea y comprueba su pull request con `GET /repos/{owner}/{repo}/pulls/{number}`. Si la tarea no tiene pull request, responde `task_has_no_pull_request` y no envía la instrucción. Si la pull request no está abierta, responde `task_pull_request_not_open` y tampoco la envía. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. La guía oficial está en [gestionar y seguir agentes](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/manage-and-track-agents).
 
-Cada steer consume créditos. Copilot aplica la instrucción cuando termina la herramienta que está ejecutando. La guía oficial está en [gestionar y seguir agentes](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/manage-and-track-agents).
+`abort_agent_task` envía `{type: "abort"}` al endpoint de steer, como hace VS Code (`tasksClient.ts`), para detener la tarea. No se ha probado contra GitHub.
+
+`get_agent_task_events` lee una página de eventos de una tarea. Es solo lectura.
 
 `steer_agent_task` recibe `task_id` y `content`. `abort_agent_task` recibe `task_id`. `get_agent_task_events` recibe `task_id`, `page` y `per_page`.
 

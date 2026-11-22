@@ -76,7 +76,7 @@ const getInput = z.object({
   repo: z.string().optional().describe("Repositorio owner/name. Si se omite, se usa el guardado al lanzar o el endpoint de usuario."),
 }).strict();
 
-const experimental = "Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando.";
+const experimentalNotice = "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso.";
 
 const steerInput = z.object({
   task_id: z.string().describe("Identificador de la tarea."),
@@ -147,7 +147,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   if (enabled.has("steer_agent_task")) {
     server.registerTool("steer_agent_task", {
       title: "Redirigir una tarea",
-      description: `[Experimental] ${experimental} Envía una instrucción a una tarea con pull request abierta.`,
+      description: `${experimentalNotice} Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta.`,
       inputSchema: steerInput,
       outputSchema: steerOutput,
       annotations: annotations("POST", "Redirigir una tarea"),
@@ -156,7 +156,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   if (enabled.has("abort_agent_task")) {
     server.registerTool("abort_agent_task", {
       title: "Abortar una tarea",
-      description: `[Experimental] ${experimental} Aborta una tarea.`,
+      description: `${experimentalNotice} Envía {type: "abort"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub.`,
       inputSchema: abortInput,
       outputSchema: abortOutput,
       annotations: annotations("POST", "Abortar una tarea"),
@@ -165,7 +165,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   if (enabled.has("get_agent_task_events")) {
     server.registerTool("get_agent_task_events", {
       title: "Eventos de una tarea",
-      description: `[Experimental] ${experimental} Lee una página de eventos de una tarea.`,
+      description: `${experimentalNotice} Lee una página de eventos de una tarea (solo lectura).`,
       inputSchema: eventsInput,
       outputSchema: eventsOutput,
       annotations: annotations("GET", "Eventos de una tarea"),

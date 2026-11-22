@@ -1,7 +1,7 @@
 {
   "name": "steer_agent_task",
   "title": "Redirigir una tarea",
-  "description": "[Experimental] Endpoints internos no documentados de GitHub que pueden cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta.",
+  "description": "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Cada steer consume créditos. El agente aplica la instrucción después de terminar la herramienta que esté ejecutando. Envía una instrucción a una tarea con pull request abierta.",
   "inputSchema": {
     "type": "object",
     "properties": {
