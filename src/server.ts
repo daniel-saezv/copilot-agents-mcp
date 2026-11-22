@@ -9,7 +9,13 @@ import { appendWatcherLog } from "./notify.ts";
 import { armSteer, fillPullRequest, headRefOf, initialTask, normalizeModel, observe, taskSessionCount, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
-const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+export function packageVersion(): string {
+  const parsed = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  if (typeof parsed.version !== "string" || parsed.version.trim() === "") {
+    throw new Error("package.json no tiene version.");
+  }
+  return parsed.version;
+}
 
 export type ServerDeps = {
   clientForToken: (token: string) => GitHubClient;
@@ -125,7 +131,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   const enabled = new Set(selectToolNames(selection));
   const server = new McpServer({
     name: "copilot-agents-mcp",
-    version: pkg.version,
+    version: packageVersion(),
   });
   if (enabled.has("create_agent_task")) {
     server.registerTool("create_agent_task", {

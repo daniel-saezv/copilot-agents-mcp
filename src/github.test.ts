@@ -191,6 +191,33 @@ describe("API interna de tareas", () => {
     await expect(client.abortTask("task-ausente")).rejects.toThrow("not found");
   });
 
+  it("un 404 con la app nombra el repositorio y con PAT deja el mensaje de GitHub", async () => {
+    const notFound = () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    const app = createGitHubClient({
+      token: "ghu_app",
+      tokens: {
+        async current() {
+          return "ghu_app";
+        },
+        async refresh() {
+          return "ghu_app";
+        },
+      },
+      fetch: mockFetch(() => notFound()),
+    });
+    await expect(app.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(
+      "Instala la app en octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Not Found",
+    );
+    await expect(app.steerTask("task-1", "sigue")).rejects.toThrow("Not Found");
+    await expect(app.steerTask("task-1", "sigue")).rejects.not.toThrow(/installations\/new/);
+    const pat = createGitHubClient({
+      token,
+      fetch: mockFetch(() => notFound()),
+    });
+    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow("Not Found");
+    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.not.toThrow(/Instala la app/);
+  });
+
   it("pide una página de eventos y conserva el timestamp vacío", async () => {
     const body = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
       events: Array<{ type: string; timestamp?: string }>;

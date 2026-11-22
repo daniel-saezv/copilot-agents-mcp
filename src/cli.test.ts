@@ -11,6 +11,7 @@ describe("cli", () => {
     expect(parseArgs(["login"], {})).toEqual({ command: "login" });
     expect(parseArgs(["logout"], {})).toEqual({ command: "logout" });
     expect(parseArgs(["auth", "status"], {})).toEqual({ command: "status" });
+    expect(parseArgs(["--version"], {})).toEqual({ command: "version" });
     expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
     expect(() => parseArgs(["login", "--http"], {})).toThrow(/no admite/);
   });

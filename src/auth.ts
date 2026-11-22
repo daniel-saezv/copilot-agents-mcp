@@ -1,10 +1,10 @@
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
-import { AuthError, KeyringError, NO_SESSION_MESSAGE, redact, redactTokenShapes } from "./errors.ts";
+import { API_VERSION, appNotInstalledMessage, AuthError, KeyringError, NO_SESSION_MESSAGE, redact, redactTokenShapes } from "./errors.ts";
 import { withDirectoryLock } from "./state.ts";
 
 export const KEYRING_SERVICE = "copilot-agents-mcp:github.com";
-export const DEFAULT_GITHUB_APP_CLIENT_ID = "Iv23liiE0XVsuSo0WG8z";
+export const DEFAULT_GITHUB_APP_CLIENT_ID = "Iv23liNbsc3GH7vmP8OT";
 export const ACCESS_TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
@@ -12,6 +12,11 @@ const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const MARGIN_MINUTES = ACCESS_TOKEN_REFRESH_MARGIN_MS / 60_000;
 const RELOGIN_MESSAGE = "La sesión de GitHub ha caducado o ya no vale. Ejecuta `npx copilot-agents-mcp login`.";
+const REFRESH_NOT_SAVED = "El refresh token guardado en el llavero ya no es válido. La sesión nueva sigue en memoria y se reintentará guardarla. Si este proceso termina antes de guardarla, ejecuta `npx copilot-agents-mcp login`.";
+const WRITE_ATTEMPTS = 3;
+const WRITE_RETRY_DELAY_MS = 50;
+const OAUTH_TIMEOUT_MS = 30_000;
+const APP_LOOKUP_TIMEOUT_MS = 10_000;
 
 export type SecretStore = {
   read(): string | null;
@@ -111,20 +116,58 @@ export function createAppSession(options: {
   fetchImpl: typeof fetch;
   now: () => number;
   warn: (message: string) => void;
+  sleep?: (ms: number) => Promise<void>;
 }): AppSession {
   let memory: StoredCredential | null = null;
-  let memoryOnly = false;
+  let pendingSave = false;
+  let storeUnread = false;
   let inflight: Promise<StoredCredential> | null = null;
-  let warned = false;
+  let warnedStore = false;
+  let warnedSave = false;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  }));
 
-  function warnOnce(message: string): void {
-    if (warned) return;
-    warned = true;
+  function warnStore(message: string): void {
+    if (warnedStore) return;
+    warnedStore = true;
     options.warn(redactTokenShapes(message));
   }
 
+  function warnSave(): void {
+    if (warnedSave) return;
+    warnedSave = true;
+    options.warn(redactTokenShapes(REFRESH_NOT_SAVED));
+  }
+
+  function tryWrite(credential: StoredCredential): boolean {
+    try {
+      options.store.write(serialize(credential));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function persist(credential: StoredCredential): Promise<void> {
+    memory = credential;
+    pendingSave = true;
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await sleep(WRITE_RETRY_DELAY_MS);
+      if (tryWrite(credential)) {
+        pendingSave = false;
+        return;
+      }
+    }
+    warnSave();
+  }
+
   function read(): StoredCredential | null {
-    if (memoryOnly) return memory;
+    if (pendingSave) {
+      if (memory && tryWrite(memory)) pendingSave = false;
+      return memory;
+    }
+    if (storeUnread) return memory;
     try {
       const raw = options.store.read();
       if (raw === null) {
@@ -133,7 +176,7 @@ export function createAppSession(options: {
       }
       const parsed = parseStored(raw);
       if (!parsed) {
-        warnOnce("La sesión del llavero no se puede leer. Ejecuta `npx copilot-agents-mcp login`.");
+        warnStore("La sesión del llavero no se puede leer. Ejecuta `npx copilot-agents-mcp login`.");
         memory = null;
         return null;
       }
@@ -141,33 +184,20 @@ export function createAppSession(options: {
       return parsed;
     } catch (error) {
       if (!(error instanceof KeyringError)) throw error;
-      memoryOnly = true;
-      warnOnce(`No hay llavero disponible (${error.message}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
+      warnStore(`No hay llavero disponible (${error.message}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
       return memory;
-    }
-  }
-
-  function write(credential: StoredCredential): void {
-    memory = credential;
-    if (memoryOnly) return;
-    try {
-      options.store.write(serialize(credential));
-    } catch (error) {
-      if (!(error instanceof KeyringError)) throw error;
-      memoryOnly = true;
-      warnOnce(`No se pudo guardar la sesión en el llavero (${error.message}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
     }
   }
 
   function clear(): void {
     memory = null;
-    if (memoryOnly) return;
+    pendingSave = false;
     try {
       options.store.delete();
     } catch (error) {
       if (!(error instanceof KeyringError)) throw error;
-      memoryOnly = true;
-      warnOnce(`No se pudo borrar la sesión del llavero (${error.message}). No se ha escrito el token en disco.`);
+      storeUnread = true;
+      warnStore(`No se pudo borrar la sesión del llavero (${error.message}). No se ha escrito el token en disco.`);
     }
   }
 
@@ -197,7 +227,7 @@ export function createAppSession(options: {
     try {
       const grant = await requestRefresh(options.clientId, latest.refresh_token, options.fetchImpl);
       const next = toStored(grant, options.now());
-      write(next);
+      await persist(next);
       return next;
     } catch (error) {
       if (error instanceof BadRefreshToken) {
@@ -258,6 +288,7 @@ export async function loginWithDeviceFlow(options: {
   if (!options.persistent) {
     options.store.write(encoded);
     options.stderr("No hay llavero. El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.");
+    await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
   try {
@@ -265,9 +296,11 @@ export async function loginWithDeviceFlow(options: {
   } catch (error) {
     if (!(error instanceof KeyringError)) throw error;
     options.stderr(redactTokenShapes(`No hay llavero disponible (${error.message}). El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.`));
+    await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
   options.stdout("Sesión guardada en el llavero del sistema.");
+  await warnIfAppNotInstalled(credential.access_token, options);
   return { where: "keyring", credential };
 }
 
@@ -306,9 +339,11 @@ export function statusReport(input: {
   stored: StoredCredential | null;
   keyring: "ready" | "memory";
   account: string;
+  appName?: string | null;
+  appNotInstalled?: boolean;
 }): string {
   if (personalAccessToken(input.env)) {
-    const lines = ["Credencial activa: GITHUB_PERSONAL_ACCESS_TOKEN."];
+    const lines = ["Credencial activa: PAT (variable GITHUB_PERSONAL_ACCESS_TOKEN)."];
     if (input.stored) lines.push("Hay una sesión de GitHub App guardada, pero no se usa mientras esa variable esté definida.");
     return lines.join("\n");
   }
@@ -316,15 +351,90 @@ export function statusReport(input: {
   const where = input.keyring === "memory"
     ? "solo en la memoria de este proceso"
     : `en el llavero del sistema (cuenta «${input.account}»)`;
+  const clientId = githubAppClientId(input.env);
+  const source = clientIdFromEnv(input.env)
+    ? "variable COPILOT_AGENTS_GITHUB_APP_CLIENT_ID"
+    : "valor por defecto";
+  const appName = input.appName?.trim() || "desconocido";
   const lines = [
     `Credencial activa: GitHub App, ${where}.`,
+    input.appNotInstalled ? appNotInstalledMessage() : `App: ${appName}.`,
+    `Client ID: ${clientId} (${source}).`,
     `El access token caduca el ${new Date(input.stored.expires_at).toISOString()}. Se renueva solo ${MARGIN_MINUTES} minutos antes, y también si GitHub responde 401.`,
   ];
   if (input.stored.refresh_expires_at !== null) {
     lines.push(`El refresh token caduca el ${new Date(input.stored.refresh_expires_at).toISOString()}.`);
+  } else {
+    lines.push("El refresh token no trae fecha de caducidad.");
   }
   if (input.keyring === "memory") lines.push("No hay llavero: el token no está en disco y se pierde al salir.");
   return lines.join("\n");
+}
+
+export async function readGitHubAppName(accessToken: string, fetchImpl: typeof fetch): Promise<string | null> {
+  return (await readGitHubApp(accessToken, fetchImpl)).name;
+}
+
+export async function readGitHubApp(accessToken: string, fetchImpl: typeof fetch): Promise<{ name: string | null; empty: boolean }> {
+  try {
+    const body = await readGitHubJson(fetchImpl, "https://api.github.com/user/installations", accessToken);
+    if (!body) return { name: null, empty: false };
+    if (body.total_count === 0) return { name: null, empty: true };
+    const slug = installedAppSlug(body);
+    if (!slug) return { name: null, empty: false };
+    const app = await readGitHubJson(fetchImpl, `https://api.github.com/apps/${encodeURIComponent(slug)}`);
+    const name = app && typeof app.name === "string" ? app.name.trim() : "";
+    return { name: name || null, empty: false };
+  } catch {
+    return { name: null, empty: false };
+  }
+}
+
+async function warnIfAppNotInstalled(accessToken: string, options: {
+  fetchImpl: typeof fetch;
+  stdout: (line: string) => void;
+}): Promise<void> {
+  const app = await readGitHubApp(accessToken, options.fetchImpl);
+  if (app.empty) options.stdout(appNotInstalledMessage());
+}
+
+function clientIdFromEnv(env: NodeJS.ProcessEnv): boolean {
+  const override = env.COPILOT_AGENTS_GITHUB_APP_CLIENT_ID;
+  return typeof override === "string" && override.trim() !== "";
+}
+
+function installedAppSlug(body: Record<string, unknown>): string | null {
+  const installations = body.installations;
+  if (!Array.isArray(installations)) return null;
+  for (const item of installations) {
+    if (!item || typeof item !== "object") continue;
+    const slug = "app_slug" in item ? item.app_slug : undefined;
+    if (typeof slug === "string" && slug.trim()) return slug.trim();
+  }
+  return null;
+}
+
+async function readGitHubJson(
+  fetchImpl: typeof fetch,
+  url: string,
+  token?: string,
+): Promise<Record<string, unknown> | null> {
+  const headers: Record<string, string> = {
+    accept: "application/vnd.github+json",
+    "user-agent": "copilot-agents-mcp",
+    "x-github-api-version": API_VERSION,
+  };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers,
+    redirect: "error",
+    signal: AbortSignal.timeout(APP_LOOKUP_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  const parsed: unknown = await response.json();
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed as Record<string, unknown>;
 }
 
 type DeviceCode = {
@@ -361,7 +471,8 @@ async function pollDevice(device: DeviceCode, options: {
   const deadline = options.now() + device.expiresIn * 1000;
   let interval = device.interval;
   while (options.now() < deadline) {
-    await options.sleep(interval * 1000);
+    const remaining = deadline - options.now();
+    await options.sleep(Math.min(interval * 1000, remaining));
     if (options.now() >= deadline) break;
     const body = await postOAuth(ACCESS_TOKEN_URL, {
       client_id: options.clientId,
@@ -418,8 +529,10 @@ async function postOAuth(
       },
       body: JSON.stringify(body),
       redirect: "error",
+      signal: AbortSignal.timeout(OAUTH_TIMEOUT_MS),
     });
   } catch (error) {
+    if (isTimeout(error)) throw new AuthError(`GitHub no respondió a tiempo (${OAUTH_TIMEOUT_MS / 1000} s).`);
     const message = error instanceof Error ? error.message : "error de red";
     throw new AuthError(redactSecrets(`No se pudo llamar a GitHub: ${message}`, secrets));
   }
@@ -515,6 +628,10 @@ function safeOAuthMessage(prefix: string, body: Record<string, unknown>, secrets
   const description = typeof body.error_description === "string" ? body.error_description : "";
   const detail = [code, description].filter(Boolean).join(": ");
   return redactSecrets(detail ? `${prefix}: ${detail}` : prefix, secrets);
+}
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === "TimeoutError";
 }
 
 function redactSecrets(text: string, secrets: string[]): string {
