@@ -75,7 +75,19 @@ Create `.vscode/mcp.json`:
 }
 ```
 
-For GitHub App authentication, run `login` once and remove the `env` property.
+For GitHub App authentication, run `login` once and use this variant:
+
+```json
+{
+  "servers": {
+    "copilot-agents": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
 
 ### Claude Desktop
 
@@ -95,7 +107,18 @@ Add this server to `claude_desktop_config.json`:
 }
 ```
 
-For GitHub App authentication, run `login` once and remove the `env` property.
+For GitHub App authentication, run `login` once and use this variant:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
 
 ### Claude Code
 
@@ -133,7 +156,18 @@ Create `.cursor/mcp.json`:
 }
 ```
 
-For GitHub App authentication, run `login` once and remove the `env` property.
+For GitHub App authentication, run `login` once and use this variant:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
 
 ### Grok Bot
 
@@ -153,7 +187,18 @@ Configure Grok Bot as a local MCP server over stdio with:
 }
 ```
 
-For GitHub App authentication, run `login` once and remove the `env` property.
+For GitHub App authentication, run `login` once and use this variant:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
 
 ## Tools
 
