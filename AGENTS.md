@@ -1,70 +1,52 @@
 # AGENTS.md
 
-## Reglas transversales
+## Rules
 
-1. Demuestra que funciona antes de darlo por hecho: comando real, test o captura.
-2. Arregla la causa raíz, no el síntoma.
-3. Resta antes de sumar: borra código muerto antes de añadir.
-4. Haz el cambio mínimo que resuelve, sin capas ni abstracciones especulativas.
-5. Los tests prueban comportamiento observable, no la implementación.
-6. Amplía un test existente antes de crear otro y borra los que dejen de aplicar.
-7. Sin comentarios en el código: que el nombre y la estructura lo expliquen.
-8. Validación y manejo de errores en los bordes del sistema, no repartidos por todo el código.
-9. Operaciones idempotentes: se pueden repetir sin daño.
-10. Una unidad verificable por commit o PR.
-11. Antes de reportar un número, explícalo y mídelo bien.
-12. Si una corrección se repite, conviértela en estructura (test, lint, tipo) y no en otra instrucción.
-13. Nunca inventes comandos, stack ni datos: solo lo comprobado.
-14. Sin ficheros `.md` largos de planes o decisiones; el porqué va en la PR o en el commit.
-15. Prosa breve y sin relleno en PRs, commits y documentación.
-16. No cambies alcance, diseño ni prioridades por tu cuenta; si algo te bloquea, dilo con exactitud.
-17. La preparación del entorno vive en `scripts/setup`. Es idempotente. Los archivos de cada proveedor de agentes en la nube solo lo invocan. Si cambias dependencias, toolchain o pasos de arranque, actualiza el script y comprueba que esos envoltorios siguen funcionando. Si el proyecto usa un proveedor sin envoltorio, créalo.
+1. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or "it compiles."
+2. Trace each symptom back to the first place the system went wrong and fix it there. A guard is a fix only when the state it handles is legitimate.
+3. Remove dead code, redundant validators, and stub references first, then build on the simpler base.
+4. Bias toward deletion and the smallest change that solves the problem.
+5. Assert what the code's users can observe, so the test fails when that behavior breaks and keeps passing when only the internals change.
+6. Keep a test that catches the first edit and survives the second. Rewrite or delete the rest.
+7. Rename, extract, type, or rearchitecture so the behavior is obvious without prose.
+8. Concentrate guards at system boundaries (CLI, config, network, external APIs). Trust internal types and keep business logic in pure functions.
+9. Design every state-changing operation to converge to the correct state however many times it runs and wherever the previous run stopped.
+10. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself. Each commit lands on its own.
+11. Before you trust, report, or act on a measured number, find what limits it, and rule out that it measured something other than the work you think.
+12. Encode a repeated correction as a lint, metadata flag, runtime check, or script instead of more text.
+13. Write the real symbol, file, flag, or command name, not a synonym or a description of it, and make every count or tree claim true at the commit that lands it.
+14. A PR body is a briefing a reviewer can read in under a minute. Do not paste swarm logs, SHA lists, or metric tables. Link them.
+15. Cut every word that does no work in documentation, PR descriptions, and commit messages.
+16. Product direction comes from the human. Proceed on reversible work and present the result. Confirm only irreversible actions.
+17. Environment setup lives in `scripts/setup` and is idempotent. Each cloud agent provider wrapper only calls that script. When dependencies, the toolchain, or startup steps change, update the script and check that the wrappers still work. If the project uses a provider that has no wrapper, add one.
 
-## Mantenimiento de skills
+## Skills
 
-Hay dos clases:
+This template ships `project-setup` and `agent-environment` in `.agents/skills/`. `.claude/skills/` links to those folders so Claude Code loads the same skills.
 
-1. **Instaladas desde pstack** (inglés, instalador oficial): `blast-radius`, `correct`, `principle-prove-it-works`, `tdd` y `unslop`. Se añaden o actualizan con el CLI [`skills`](https://github.com/vercel-labs/skills), por ejemplo:
+## Credit
 
-   ```bash
-   npx skills add cursor/plugins --skill tdd -a cursor -a github-copilot -a codex -a gemini-cli -a claude-code -y
-   ```
+Rules 1 to 16 are adapted from [pstack](https://github.com/cursor/plugins/tree/main/pstack) by Lauren Tan, under the MIT license.
 
-   Esas skills pueden nombrar otras de pstack que no vienen en la plantilla (por ejemplo, `blast-radius` menciona `why` y `arena`). Si las necesitas, instálalas con `npx skills add cursor/plugins --skill <nombre>` o con `/add-plugin pstack` en Cursor.
+## This project
 
-2. **Propias de la plantilla** (español): `setup-proyecto`, `entorno-agentes`, `pr-lista`, `technical-writing` y `how`. Viven solo en este repositorio; para que Claude Code las vea, mantén los enlaces en `.claude/skills/` apuntando a `.agents/skills/<nombre>`.
-
-Para actualizar las skills bloqueadas en `skills-lock.json`:
-
-```bash
-npx skills update -y
-```
-
-Revisa el diff, valida con `npx skills check` y commitea `.agents/skills/`, `.claude/skills/` y `skills-lock.json`.
-
-### Créditos de skills de pstack
-
-Skills de [pstack](https://github.com/cursor/plugins/tree/main/pstack) por Lauren Tan (licencia MIT), instaladas con el instalador oficial. Las adaptaciones en español `how` y `technical-writing` derivan del mismo origen; ver `.agents/skills/LICENSE`.
-
-## Este proyecto
-
-Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, leer el estado de una tarea, avisar al terminar y consultar los modelos de Copilot. No hay despliegue ni servicio en la nube: se arranca en la máquina con `npx -y github:daniel-saezv/copilot-agents-mcp`.
+Local MCP server to launch GitHub Copilot cloud agents, read task status, notify on completion, and list Copilot models. There is no cloud deployment or hosted service: run it locally with `npx -y github:daniel-saezv/copilot-agents-mcp`.
 
 ### Stack
 
-Node.js 26.13.1 (el paquete pide `>=26`) y npm 11.20.0. En desarrollo, Node ejecuta `src/cli.ts` con type stripping. Node no quita tipos dentro de `node_modules`, así que `prepare` compila a `dist/` con `tsc -p tsconfig.build.json` y el bin de npm es `dist/cli.js`. Dependencias de producción: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8.20.0 y `ajv-formats` 3.0.1. Tests con Vitest 5.1.1. Lint con ESLint 10.15.0 y `typescript-eslint` 8.73.0. Tipos con TypeScript 6.0.3 (`tsc --noEmit`). `@types/node` 26.6.6.
+Node.js 26.13.1 (the package requires `>=26`) and npm 11.20.0. In development, Node runs `src/cli.ts` with type stripping. Node does not strip types inside `node_modules`, so `prepare` compiles to `dist/` with `tsc -p tsconfig.build.json` and the npm bin is `dist/cli.js`. Production dependencies: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8.20.0, and `ajv-formats` 3.0.1. Tests with Vitest 5.1.1. Lint with ESLint 10.15.0 and `typescript-eslint` 8.73.0. Types with TypeScript 6.0.3 (`tsc --noEmit`). `@types/node` 26.6.6.
 
-### Estructura
+### Structure
 
-- `src/cli.ts` arranca stdio, HTTP, `watch`, `login`, `logout` y `auth status`.
-- `src/server.ts` registra las herramientas. `src/http.ts` escucha en `127.0.0.1`. `src/selection.ts` aplica toolsets y cabeceras `X-MCP-*`.
-- `src/github.ts` llama a la API de agent tasks con `X-GitHub-Api-Version: 2026-03-10` y valida la respuesta con el OpenAPI oficial. `steerTask`, `abortTask` y `getTaskEvents` usan `https://api.github.com/cmc_internal/api/agents`, con `Accept: application/json` y sin esa cabecera. Un 401 con sesión de GitHub App renueva el token y reintenta una vez. Un 403 por permiso dice cuál falta.
-- `src/auth.ts` hace el device flow, guarda la sesión en el llavero y renueva el access token. `src/keyring.ts` abre `@napi-rs/keyring` con el servicio `copilot-agents-mcp:github.com` y, en Linux, el backend `secret-service`.
-- `src/swe-models.ts` valida y lee `GET /agents/swe/models`. La base sale de GraphQL y no está escrita en el código. `policy` es opcional: si falta, la salida pone `policy.state` a `null`. `token_prices` es obligatorio salvo que el modelo traiga `billing.multiplier`.
-- `src/state.ts`, `src/watch.ts` y `src/notify.ts` guardan el estado local y avisan una vez por turno. Tras un steer aceptado guardan `session_count` y la marca, rearman el vigilante y el aviso incluye `session_id`.
-- `fixtures/` trae los ejemplos del OpenAPI. `src/__toolsnaps__/` fija `tools/list`.
+- `src/cli.ts` starts stdio, HTTP, `watch`, `login`, `logout`, and `auth status`.
+- `src/server.ts` registers tools. `src/http.ts` listens on `127.0.0.1`. `src/selection.ts` applies toolsets and `X-MCP-*` headers.
+- `src/github.ts` calls the agent tasks API with `X-GitHub-Api-Version: 2026-03-10` and validates responses against the official OpenAPI. `steerTask`, `abortTask`, and `getTaskEvents` use `https://api.github.com/cmc_internal/api/agents`, with `Accept: application/json` and without that header. A 401 with a GitHub App session refreshes the token and retries once. A 403 for permissions states which permission is missing.
+- `src/auth.ts` runs device flow, stores the session in the keyring, and refreshes the access token. `src/keyring.ts` opens `@napi-rs/keyring` with service `copilot-agents-mcp:github.com` and, on Linux, the `secret-service` backend.
+- `src/swe-models.ts` validates and reads `GET /agents/swe/models`. The base URL comes from GraphQL and is not hard-coded. `policy` is optional: when missing, output sets `policy.state` to `null`. `token_prices` is required unless the model includes `billing.multiplier`.
+- `src/state.ts`, `src/watch.ts`, and `src/notify.ts` keep local state and notify once per turn. After an accepted steer they store `session_count` and the timestamp, restart the watcher, and the notification includes `session_id`.
+- `fixtures/` holds OpenAPI examples. `src/__toolsnaps__/` pins `tools/list`.
 
-### Comandos comprobados
+### Verified commands
 
 ```bash
 bash scripts/setup
@@ -79,26 +61,27 @@ node dist/cli.js --help
 node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` se ejecutó dos veces seguidas en Node.js 26.13.1 y salió 0 las dos. Hace `npm ci`, y `prepare` compila `dist/`. La segunda pasada de tests dejó 24 tests en 5 archivos. Tras la redirección experimental, `npm test` dejaba 45 tests en 5 archivos. Con la sesión de GitHub App el conteo subió; en Node.js 26.13.1, `npm test` deja 75 tests en 7 archivos. `npm run typecheck` y `npm run lint` salieron 0. `npm run licenses` aceptó 94 paquetes de producción. `npm audit --audit-level=low` encontró 0 vulnerabilidades. `npm run build` salió 0, `node dist/cli.js --help` escribió la ayuda y `node src/cli.ts --version` imprimió `0.0.1`. `node scripts/pack-smoke.mjs` imprimió `--version 0.0.1` y las 6 herramientas de `tools/list`.
+`bash scripts/setup` was run twice in a row on Node.js 26.13.1 and exited 0 both times. It runs `npm ci`, and `prepare` compiles `dist/`. An earlier test pass left 24 tests in 5 files. After experimental redirect, `npm test` left 45 tests in 5 files. With a GitHub App session the count rose; on Node.js 26.13.1, `npm test` leaves 75 tests in 7 files. `npm run typecheck` and `npm run lint` exited 0. `npm run licenses` accepted 94 production packages. `npm audit --audit-level=low` found 0 vulnerabilities. `npm run build` exited 0, `node dist/cli.js --help` printed help, and `node src/cli.ts --version` printed `0.0.1`. `node scripts/pack-smoke.mjs` printed `--version 0.0.1` and the 6 tools from `tools/list`.
 
-### Buenas prácticas de este stack
+### Stack-specific practices
 
-Los imports relativos llevan extensión `.ts`. El esquema de cada herramienta lleva `additionalProperties: false`. Las respuestas de GitHub se validan en el cliente, antes de usarlas. El PAT entra por `GITHUB_PERSONAL_ACCESS_TOKEN`. La sesión de la GitHub App se guarda en el llavero, no en archivos. No se leen `GH_TOKEN` ni `GITHUB_TOKEN`. `npm audit --audit-level=low` y el chequeo de licencias forman parte del CI. Zod 4.6.7 y Vitest 5.1.1 están en ese rango porque las versiones anteriores arrastraban avisos de `npm audit`.
+Relative imports use the `.ts` extension. Each tool schema sets `additionalProperties: false`. GitHub responses are validated client-side before use. The PAT is supplied via `GITHUB_PERSONAL_ACCESS_TOKEN`. The GitHub App session lives in the keyring, not in files. `GH_TOKEN` and `GITHUB_TOKEN` are not read. `npm audit --audit-level=low` and the license check are part of CI. Zod 4.6.7 and Vitest 5.1.1 are pinned in this range because earlier versions carried `npm audit` warnings.
 
 ### CI/CD
 
-Workflows en cada pull request y en cada push a `main`:
+Workflows run on each pull request and each push to `main`:
 
-- `.github/workflows/ci.yml`: Node 26. `npm ci`, tipos, lint, tests, `npm audit --audit-level=low`, licencias y CodeQL (`javascript-typescript`). Las actions están fijadas por SHA.
-- `.github/workflows/skills.yml`: comprueba el lock de skills. Node 26.
-- `.github/workflows/copilot-setup-steps.yml`: instala Node 26 y ejecuta `bash scripts/setup` si cambia ese script o el workflow.
+- `.github/workflows/ci.yml`: Node 26. `npm ci`, types, lint, tests, `npm audit --audit-level=low`, licenses, and CodeQL (`javascript-typescript`). Actions are pinned by SHA.
+- `.github/workflows/skills.yml`: validates `project-setup` and `agent-environment` with `skills-ref`. Node 26.
+- `.github/workflows/copilot-setup-steps.yml`: installs Node 26 and runs `bash scripts/setup` when that script or the workflow changes.
+- `.github/workflows/release.yml`: on `v*` tags, checks tag vs `package.json` version and runs `node scripts/pack-smoke.mjs`.
 
-La API de protección de rama respondió 403, así que no consta aquí si algún check es obligatorio. Los workflows de arriba se ejecutan en cada PR. Conviene exigir los jobs `test` y `codeql` de `ci.yml` antes del merge si aún no lo están. El proyecto no se despliega y no se publica en npm. La distribución es `npx` desde este repositorio de GitHub.
+The branch protection API returned 403, so required checks are not recorded here. The workflows above run on each PR. Consider requiring the `test` and `codeql` jobs from `ci.yml` before merge if they are not already required. The project is not deployed and is not published to npm. Distribution is `npx` from this GitHub repository.
 
 ## Cursor Cloud specific instructions
 
-`.cursor/environment.json` solo llama a `bash scripts/setup`. No hay `start`: el servidor por defecto se queda en stdio.
+`.cursor/environment.json` only calls `bash scripts/setup`. There is no `start`: the default server stays on stdio.
 
-Para probar: `npm test`, `npm run typecheck` y `npm run lint`. Para ver las herramientas, `node src/cli.ts` por stdio o `node src/cli.ts --http --port 3333` y el cliente en `http://127.0.0.1:3333/mcp`.
+To test: `npm test`, `npm run typecheck`, and `npm run lint`. To list tools, run `node src/cli.ts` over stdio or `node src/cli.ts --http --port 3333` and point the client at `http://127.0.0.1:3333/mcp`.
 
-Secretos que se pueden añadir en Cursor, sin valor aquí: `GITHUB_PERSONAL_ACCESS_TOKEN` (hace falta para lanzar una tarea, leerla o listar modelos si no usas `login`; no hace falta para el CI ni para `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` y `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` es opcional y no es un secreto: si no está, se usa el client ID que va en el código.
+Secrets you can add in Cursor, with no values here: `GITHUB_PERSONAL_ACCESS_TOKEN` (needed to create a task, read a task, or list models without `login`; not needed for CI or `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` is optional and not a secret: when unset, the client ID embedded in the code is used.
