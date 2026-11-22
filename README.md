@@ -225,6 +225,10 @@ npx -y github:daniel-saezv/copilot-agents-mcp watch
 
 The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](docs/notifications.md).
 
+## Release
+
+Push a tag named `vMAJOR.MINOR.PATCH` to build, test, and publish the matching package version to npm with provenance. Configure npm Trusted Publishing for this repository and workflow. For a first publish, set the `NPM_TOKEN` repository secret as a fallback.
+
 ## Test and build
 
 ```bash
