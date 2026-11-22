@@ -168,7 +168,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
   let error = messages.at(-1) ?? null;
   if (unavailable && context.requestedModel) {
     rememberRejected(state, normalizeModel(context.requestedModel));
-    error = `${modelUnavailableMessage(context.requestedModel, state.models.accepted)} Detalle: ${unavailable}`;
+    error = `${modelUnavailableMessage(context.requestedModel, state.models.accepted)} Detail: ${unavailable}`;
   }
   const latestModel = [...sessions].reverse().find((session) => typeof session.model === "string" && session.model.trim());
   const latestUsage = [...sessions].reverse().find((session) => session.usage);
@@ -222,7 +222,7 @@ export async function fillPullRequest(
   if (pull.number !== null && pull.html_url !== null) return;
   const slash = task.repo.indexOf("/");
   if (slash <= 0 || !headRef) {
-    await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: faltan el repositorio o head_ref.`);
+    await log(`Could not resolve pull request ${pull.id} for ${task.task_id}: the repository or head_ref is missing.`);
     return;
   }
   try {
@@ -233,13 +233,13 @@ export async function fillPullRequest(
       headRef,
     });
     if (!found) {
-      await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: la lista no incluye esa id.`);
+      await log(`Could not resolve pull request ${pull.id} for ${task.task_id}: the list does not contain that ID.`);
       return;
     }
     pull.number = found.number;
     pull.html_url = found.html_url;
   } catch (error) {
-    await log(`No se pudo resolver la pull request ${pull.id} de ${task.task_id}: ${failureMessage(error)}`);
+    await log(`Could not resolve pull request ${pull.id} for ${task.task_id}: ${failureMessage(error)}`);
   }
 }
 
@@ -312,7 +312,7 @@ export async function withDirectoryLock<T>(
   await acquire(
     lock,
     options?.timeoutMs ?? 10_000,
-    options?.busyMessage ?? "No se pudo guardar el estado local: el archivo está en uso.",
+    options?.busyMessage ?? "Could not save local state: the file is in use.",
   );
   try {
     return await fn();
@@ -344,12 +344,12 @@ function parseState(text: string): StateFile {
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    throw new Error("El estado local no es JSON válido.");
+    throw new Error("The local state is not valid JSON.");
   }
-  if (!parsed || typeof parsed !== "object") throw new Error("El estado local no es válido.");
+  if (!parsed || typeof parsed !== "object") throw new Error("The local state is invalid.");
   const record = parsed as Record<string, unknown>;
   if (!record.tasks || typeof record.tasks !== "object" || !record.models || typeof record.models !== "object") {
-    throw new Error("El estado local no es válido.");
+    throw new Error("The local state is invalid.");
   }
   return record as StateFile;
 }

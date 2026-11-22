@@ -47,7 +47,7 @@ async function refreshPending(options: {
         observe(state, remote, { repo: task.repo, requestedModel: task.requestedModel });
       });
     } catch (error) {
-      console.error(`No se pudo leer la tarea ${task.taskId}: ${failureMessage(error)}`);
+      console.error(`Could not read task ${task.taskId}: ${failureMessage(error)}`);
     }
   }
 }
@@ -94,7 +94,7 @@ async function notifyFinal(options: {
         task.notified_at = claimed.previous.notified_at;
         task.steer = claimed.previous.steer;
       });
-      console.error(`No se pudo avisar de la tarea ${taskId}: ${failureMessage(error)}`);
+      console.error(`Could not notify for task ${taskId}: ${failureMessage(error)}`);
     }
   }
 }

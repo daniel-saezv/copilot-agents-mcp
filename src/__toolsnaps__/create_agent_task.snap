@@ -1,36 +1,36 @@
 {
   "name": "create_agent_task",
-  "title": "Lanzar tarea de Copilot",
-  "description": "Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados.",
+  "title": "Launch Copilot task",
+  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "repo": {
         "type": "string",
-        "description": "Repositorio en la forma owner/name."
+        "description": "Repository in owner/name form."
       },
       "prompt": {
         "type": "string",
-        "description": "Instrucción para el agente."
+        "description": "Instructions for the agent."
       },
       "model": {
         "type": "string",
-        "description": "Modelo. Se envía tal cual a la API, sin una lista cerrada."
+        "description": "Model sent unchanged to the API without a closed allowlist."
       },
       "base_ref": {
-        "description": "Rama base para la rama nueva o la pull request.",
+        "description": "Base branch for a new branch or pull request.",
         "type": "string"
       },
       "head_ref": {
-        "description": "Rama existente. Con base_ref, el agente hace commit en esa rama.",
+        "description": "Existing branch. With base_ref, the agent commits to this branch.",
         "type": "string"
       },
       "custom_agent": {
-        "description": "Nombre del custom agent, sin la extensión.",
+        "description": "Custom agent name without the extension.",
         "type": "string"
       },
       "create_pull_request": {
-        "description": "Si es true, la API abre una pull request.",
+        "description": "When true, the API creates a pull request.",
         "type": "boolean"
       }
     },
@@ -82,7 +82,7 @@
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Lanzar tarea de Copilot",
+    "title": "Launch Copilot task",
     "readOnlyHint": false,
     "destructiveHint": false,
     "idempotentHint": false,

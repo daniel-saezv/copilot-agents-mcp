@@ -63,18 +63,18 @@ export function selectToolNames(selection: Selection): string[] {
 export function assertSelection(selection: Selection): void {
   for (const feature of selection.features) {
     if (!FEATURES.includes(feature as (typeof FEATURES)[number])) {
-      throw new Error(`Feature desconocida: ${feature}.`);
+      throw new Error(`Unknown feature: ${feature}.`);
     }
   }
   for (const name of selection.toolsets ?? []) {
-    if (!isToolset(name)) throw new Error(`Toolset desconocido: ${name}.`);
+    if (!isToolset(name)) throw new Error(`Unknown toolset: ${name}.`);
     const feature = TOOLSETS[name].feature;
     if (feature && !selection.features.includes(feature)) {
-      throw new Error(`El toolset ${name} requiere --features=${feature}.`);
+      throw new Error(`Toolset ${name} requires --features=${feature}.`);
     }
   }
   for (const name of selection.tools ?? []) {
-    if (!TOOLS.some((tool) => tool.name === name)) throw new Error(`Herramienta desconocida: ${name}.`);
+    if (!TOOLS.some((tool) => tool.name === name)) throw new Error(`Unknown tool: ${name}.`);
   }
 }
 
@@ -84,7 +84,7 @@ export function selectionFromHttp(url: string, headers: Headers, base: Selection
   const toolsetMatch = /^(?:\/mcp)?\/x\/([^/]+)$/.exec(path);
   const readOnlyPath = path === "/readonly" || path === "/mcp/readonly";
   const known = path === "/" || path === "/mcp" || readOnlyPath || toolsetMatch !== null;
-  if (!known) throw new Error("Ruta desconocida.");
+  if (!known) throw new Error("Unknown path.");
   const selection: Selection = {
     exclude: [...base.exclude],
     readOnly: base.readOnly,

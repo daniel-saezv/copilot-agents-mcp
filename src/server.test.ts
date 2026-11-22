@@ -56,8 +56,8 @@ function deps(statePath: string, client: GitHubClient, launchWatcher: () => void
   };
 }
 
-describe("herramientas", () => {
-  it("anuncia la versión de package.json", async () => {
+describe("tools", () => {
+  it("advertises the package.json version", async () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
     const statePath = await tempPath();
     const mcp = buildServer(baseSelection, deps(statePath, unusedClient(), () => {}));
@@ -70,7 +70,7 @@ describe("herramientas", () => {
     await mcp.close();
   });
 
-  it("exige readOnlyHint según el método y publica el esquema", async () => {
+  it("sets readOnlyHint by method and publishes the schema", async () => {
     const statePath = await tempPath();
     const tools = await listedTools(baseSelection, deps(statePath, unusedClient(), () => {}));
     expect(tools.map((tool) => tool.name)).toEqual(TOOLS.map((tool) => tool.name));
@@ -107,19 +107,19 @@ describe("herramientas", () => {
     expect(match?.[1]).toBe(block);
   });
 
-  it("sin credencial dice cómo iniciar sesión y no llama a la API", async () => {
+  it("explains how to sign in without a credential and does not call the API", async () => {
     const statePath = await tempPath();
     const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("No hay sesión de GitHub");
+    expect(textOf(result)).toContain("No GitHub session is available");
     expect(textOf(result)).toContain("npx copilot-agents-mcp login");
   });
 
-  it("corta un modelo ya rechazado y no llama a la API", async () => {
+  it("blocks an already rejected model without calling the API", async () => {
     const statePath = await tempPath();
     await withStateLock(statePath, (state) => {
       state.models.accepted = ["mai-code-2", "grok-4.7"];
-      state.models.rejected = ["modelo-inexistente-123"];
+      state.models.rejected = ["missing-model-123"];
     });
     let called = false;
     const result = await callTool(statePath, {
@@ -148,14 +148,14 @@ describe("herramientas", () => {
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
-      model: "modelo-inexistente-123",
+      model: "missing-model-123",
     });
     expect(called).toBe(false);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("Modelos vistos aceptados: grok-4.7, mai-code-2");
+    expect(textOf(result)).toContain("Accepted models observed: grok-4.7, mai-code-2");
   });
 
-  it("lanza cualquier modelo, lo guarda y arranca el vigilante", async () => {
+  it("launches any model, stores it, and starts the watcher", async () => {
     const statePath = await tempPath();
     let launched = 0;
     let body: unknown;
@@ -185,18 +185,18 @@ describe("herramientas", () => {
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
-      model: "modelo-libre",
+      model: "freeform-model",
       base_ref: "main",
     }, () => {
       launched += 1;
     });
     expect(result.isError).toBeUndefined();
-    expect(body).toMatchObject({ model: "modelo-libre", owner: "octocat", repo: "hello-world", base_ref: "main" });
+    expect(body).toMatchObject({ model: "freeform-model", owner: "octocat", repo: "hello-world", base_ref: "main" });
     expect(launched).toBe(1);
-    expect((await readState(statePath)).tasks["task-1"]?.requested_model).toBe("modelo-libre");
+    expect((await readState(statePath)).tasks["task-1"]?.requested_model).toBe("freeform-model");
   });
 
-  it("muestra el rechazo tardío al leer el estado", async () => {
+  it("shows a delayed model rejection when reading status", async () => {
     const statePath = await tempPath();
     await withStateLock(statePath, (state) => {
       state.models.accepted = ["mai-code-2"];
@@ -250,15 +250,15 @@ describe("herramientas", () => {
         throw new Error("no");
       },
     }, "get_agent_task", { task_id: "task-1" });
-    expect(textOf(result)).toContain("El modelo «claude-sonnet-4.6» no está disponible");
+    expect(textOf(result)).toContain("The model \\\"claude-sonnet-4.6\\\" is not available");
     expect(textOf(result)).toContain("mai-code-2");
   });
 
-  it("añade number y html_url y sigue si la API de pull requests falla", async () => {
+  it("adds number and html_url and continues when the pull request API fails", async () => {
     const statePath = await tempPath();
     const example = structuredClone(JSON.parse(readFileSync(new URL("../fixtures/openapi/get-task.response.json", import.meta.url), "utf8")).example) as AgentTask;
     const session = example.sessions?.[0];
-    if (!session) throw new Error("el ejemplo no trae sesión");
+    if (!session) throw new Error("the example has no session");
     session.usage = { type: "ai_credits", amount: 344_355_000 };
     await withStateLock(statePath, (state) => {
       state.tasks[example.id] = {
@@ -304,11 +304,11 @@ describe("herramientas", () => {
     expect(urls.some((url) => url.includes("head=octocat%3Acopilot%2Ffix-1"))).toBe(true);
   });
 
-  it("no busca la pull request si la tarea ya trae number y html_url", async () => {
+  it("does not look up the pull request when the task already has number and html_url", async () => {
     const statePath = await tempPath();
     const example = structuredClone(JSON.parse(readFileSync(new URL("../fixtures/openapi/get-task.response.json", import.meta.url), "utf8")).example) as AgentTask;
     const pull = example.artifacts?.find((artifact) => artifact.type === "pull");
-    if (!pull?.data) throw new Error("el ejemplo no trae pull");
+    if (!pull?.data) throw new Error("the example has no pull artifact");
     pull.data.number = 7;
     pull.data.html_url = "https://github.com/octocat/hello-world/pull/7";
     await withStateLock(statePath, (state) => {
@@ -347,13 +347,13 @@ describe("herramientas", () => {
     });
   });
 
-  it("devuelve los modelos leídos y un error si el formato no cuadra", async () => {
+  it("returns read models and an error for an invalid format", async () => {
     const statePath = await tempPath();
     const payload: SweModelsResult = {
       source: { url: "https://copilot.example.test/agents/swe/models", fetched_at: "2099-01-01T00:00:00.000Z" },
       models: [{
         id: "test-model-a",
-        name: "Modelo de prueba A",
+        name: "Test model A",
         vendor: "Fabricante Ficticio",
         preview: false,
         policy: { state: "enabled" },
@@ -367,14 +367,14 @@ describe("herramientas", () => {
     expect(textOf(ok)).toContain("test-model-a");
     expect(textOf(ok)).toContain("https://copilot.example.test/agents/swe/models");
     const bad = await callTool(statePath, unusedClient(), "list_copilot_models", {}, () => {}, async () => {
-      throw new ModelsError("GET https://copilot.example.test/agents/swe/models respondió HTTP 200 y el formato no cuadra: falta data[0].billing.token_prices");
+      throw new ModelsError("GET https://copilot.example.test/agents/swe/models returned HTTP 200 with an invalid format: missing data[0].billing.token_prices");
     });
     expect(bad.isError).toBe(true);
-    expect(textOf(bad)).toContain("falta data[0].billing.token_prices");
+    expect(textOf(bad)).toContain("missing data[0].billing.token_prices");
     expect(textOf(bad)).not.toContain("test-model-a");
   });
 
-  it("en solo lectura no publica la herramienta de escritura", () => {
+  it("does not publish write tools in read-only mode", () => {
     expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
     expect(selectToolNames({ exclude: [], readOnly: false, features: [], toolsets: ["copilot_models"] })).toEqual(["list_copilot_models"]);
     expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual([
@@ -387,8 +387,8 @@ describe("herramientas", () => {
   });
 });
 
-describe("redirección experimental", () => {
-  it("no llama a steer si la tarea no tiene pull request", async () => {
+describe("experimental task steering", () => {
+  it("does not call steer when the task has no pull request", async () => {
     const statePath = await tempPath();
     let steers = 0;
     let pulls = 0;
@@ -400,7 +400,7 @@ describe("redirección experimental", () => {
       onPull() {
         pulls += 1;
       },
-    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain(TASK_HAS_NO_PULL_REQUEST);
     expect(textOf(result)).not.toContain("pull_request_closed");
@@ -408,7 +408,7 @@ describe("redirección experimental", () => {
     expect(pulls).toBe(0);
   });
 
-  it("no llama a steer si la pull request no está abierta", async () => {
+  it("does not call steer when the pull request is not open", async () => {
     const statePath = await tempPath();
     let steers = 0;
     let pulls = 0;
@@ -421,7 +421,7 @@ describe("redirección experimental", () => {
       onSteer() {
         steers += 1;
       },
-    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain(TASK_PULL_REQUEST_NOT_OPEN);
     expect(textOf(result)).not.toContain("pull_request_closed");
@@ -429,7 +429,7 @@ describe("redirección experimental", () => {
     expect(pulls).toBe(1);
   });
 
-  it("resuelve el número, guarda el steer y arranca el vigilante", async () => {
+  it("resolves the number, stores the steer, and starts the watcher", async () => {
     const statePath = await tempPath();
     let steers = 0;
     let launched = 0;
@@ -445,14 +445,14 @@ describe("redirección experimental", () => {
         steers += 1;
         content = value;
       },
-    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" }, () => {
+    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" }, () => {
       launched += 1;
     });
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result))).toEqual({ task_id: "task-1", accepted: true, session_count: 1 });
     expect(steers).toBe(1);
     expect(lookups).toBe(1);
-    expect(content).toBe("sigue con los tests");
+    expect(content).toBe("continue with the tests");
     expect(launched).toBe(1);
     const saved = (await readState(statePath)).tasks["task-1"];
     expect(saved?.steer).toMatchObject({ session_count: 1, turn_seen: false, notified: false });
@@ -460,12 +460,12 @@ describe("redirección experimental", () => {
     expect(saved?.repo).toBe("octocat/hello-world");
   });
 
-  it("persiste el steer aceptado y lo conserva cuando el vigilante avisa", async () => {
+  it("persists the accepted steer and keeps it when the watcher notifies", async () => {
     const statePath = await tempPath();
     const steered = await callTool(statePath, steerClient({
       task: taskWithPull(7),
       pull: { number: 7, state: "open" },
-    }), "steer_agent_task", { task_id: "task-1", content: "sigue con los tests" });
+    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" });
     expect(steered.isError).toBeUndefined();
     const raw = JSON.parse(await readFile(statePath, "utf8")) as { tasks: Record<string, { steer?: { at: string; session_count: number; notified: boolean } }> };
     const before = raw.tasks["task-1"]?.steer;
@@ -518,7 +518,7 @@ describe("redirección experimental", () => {
     expect(reads).toBe(1);
   });
 
-  it("devuelve la sesión más reciente", async () => {
+  it("returns the latest session", async () => {
     const statePath = await tempPath();
     const result = await callTool(statePath, {
       ...unusedClient(),
@@ -538,7 +538,7 @@ describe("redirección experimental", () => {
     expect((await readState(statePath)).tasks["task-1"]?.session_id).toBe("session-reciente");
   });
 
-  it("crea el directorio por defecto del estado", async () => {
+  it("creates the default state directory", async () => {
     const home = await mkdtemp(join(tmpdir(), "copilot-home-"));
     dirs.push(home);
     const statePath = defaultStatePath({}, home);
@@ -547,7 +547,7 @@ describe("redirección experimental", () => {
       state.tasks["task-1"] = initialTask({
         id: "task-1",
         repo: "acme/demo",
-        requestedModel: "modelo-sintetico",
+        requestedModel: "synthetic-model",
         state: "queued",
         createdAt: null,
         updatedAt: null,
@@ -561,15 +561,15 @@ describe("redirección experimental", () => {
     expect(await acquireWatcher(lock)).toBe(true);
     try {
       await withStateLock(watcherState, (state) => {
-        state.models.accepted.push("modelo-sintetico");
+        state.models.accepted.push("synthetic-model");
       });
     } finally {
       await releaseWatcher(lock);
     }
-    expect((await readState(watcherState)).models.accepted).toEqual(["modelo-sintetico"]);
+    expect((await readState(watcherState)).models.accepted).toEqual(["synthetic-model"]);
   });
 
-  it("aborta la tarea y lee la página de eventos", async () => {
+  it("aborts the task and reads an events page", async () => {
     const statePath = await tempPath();
     const events = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
       events: Array<{ type: string; timestamp?: string }>;
@@ -601,8 +601,8 @@ describe("redirección experimental", () => {
   });
 });
 
-describe("HTTP local", () => {
-  it("escucha en 127.0.0.1 y aplica las cabeceras X-MCP-*", async () => {
+describe("local HTTP", () => {
+  it("listens on 127.0.0.1 and applies X-MCP-* headers", async () => {
     const statePath = await tempPath();
     const http = await startHttpServer({
       port: 0,
@@ -625,7 +625,7 @@ describe("HTTP local", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
       });
       expect(denied.status).toBe(400);
-      expect(await denied.text()).toContain("Toolset desconocido");
+      expect(await denied.text()).toContain("Unknown toolset");
     } finally {
       await http.close();
     }
@@ -633,10 +633,10 @@ describe("HTTP local", () => {
 });
 
 function renderTools(tools: Array<{ name: string; description?: string; annotations?: { readOnlyHint?: boolean } }>): string {
-  const lines = ["| Herramienta | Toolset | Solo lectura | Descripción |", "| --- | --- | --- | --- |"];
+  const lines = ["| Tool | Toolset | Read-only | Description |", "| --- | --- | --- | --- |"];
   for (const tool of tools) {
     const meta = TOOLS.find((item) => item.name === tool.name);
-    const readOnly = tool.annotations?.readOnlyHint ? "sí" : "no";
+    const readOnly = tool.annotations?.readOnlyHint ? "yes" : "no";
     lines.push(`| \`${tool.name}\` | ${meta?.toolset ?? ""} | ${readOnly} | ${tool.description ?? ""} |`);
   }
   return lines.join("\n");
@@ -702,7 +702,7 @@ function steerClient(options: {
     },
     async getPullRequest() {
       options.onPull?.();
-      if (!options.pull) throw new Error("sin pull");
+      if (!options.pull) throw new Error("no pull");
       return options.pull;
     },
     async steerTask(_taskId, content) {

@@ -1,13 +1,13 @@
 {
   "name": "abort_agent_task",
-  "title": "Abortar una tarea",
-  "description": "[Experimental] Endpoint interno no documentado de GitHub que puede cambiar sin aviso. Envía {type: \"abort\"} al endpoint de steer, como hace VS Code (tasksClient.ts), para detener la tarea. No se ha probado contra GitHub.",
+  "title": "Abort task",
+  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: \"abort\"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Identificador de la tarea."
+        "description": "Task identifier."
       }
     },
     "required": [
@@ -34,7 +34,7 @@
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Abortar una tarea",
+    "title": "Abort task",
     "readOnlyHint": false,
     "destructiveHint": false,
     "idempotentHint": false,

@@ -63,8 +63,8 @@ function oauth(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-describe("renovación", () => {
-  it("varias llamadas a la vez renuevan una sola vez y todas reciben el token nuevo", async () => {
+describe("refresh", () => {
+  it("refreshes once for concurrent calls and gives every call the new token", async () => {
     const store = memoryStore(credential({
       access: "access-viejo",
       refresh: "refresh-viejo",
@@ -74,14 +74,14 @@ describe("renovación", () => {
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: () => {},
       fetchImpl: async (_input, init) => {
         calls += 1;
         const body = JSON.parse(String(init?.body)) as { grant_type?: string; refresh_token?: string; client_id?: string };
         expect(body.grant_type).toBe("refresh_token");
-        expect(body.client_id).toBe("client-de-prueba");
+        expect(body.client_id).toBe("test-client");
         expect(body.refresh_token).toBe("refresh-viejo");
         expect(String(init?.body)).not.toContain("client_secret");
         return oauth({
@@ -104,7 +104,7 @@ describe("renovación", () => {
     expect(saved.expires_at).toBe(NOW + 28_800 * 1000);
   });
 
-  it("no renueva un token al que le quedan más de 5 minutos", async () => {
+  it("does not refresh a token with more than 5 minutes left", async () => {
     let calls = 0;
     const session = createAppSession({
       store: memoryStore(credential({
@@ -113,19 +113,19 @@ describe("renovación", () => {
         expiresAt: NOW + ACCESS_TOKEN_REFRESH_MARGIN_MS + 60_000,
       })),
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: () => {},
       fetchImpl: async () => {
         calls += 1;
-        throw new Error("no debía renovar");
+        throw new Error("should not refresh");
       },
     });
     await expect(session.current()).resolves.toBe("access-vigente");
     expect(calls).toBe(0);
   });
 
-  it("si otro proceso ya renovó, relee el llavero y no llama a refresh", async () => {
+  it("rereads the keyring without refreshing when another process already refreshed", async () => {
     let reads = 0;
     const expiring = credential({ access: "access-viejo", refresh: "refresh-viejo", expiresAt: NOW + 60_000 });
     const fresh = credential({ access: "access-ajeno", refresh: "refresh-ajeno", expiresAt: NOW + 3_600_000 });
@@ -139,7 +139,7 @@ describe("renovación", () => {
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: () => {},
       fetchImpl: async () => {
@@ -151,7 +151,7 @@ describe("renovación", () => {
     expect(calls).toBe(0);
   });
 
-  it("un 401 provoca una renovación y el reintento usa el token nuevo", async () => {
+  it("refreshes after a 401 and uses the new token for the retry", async () => {
     const example = JSON.parse(readFileSync(new URL("../fixtures/openapi/get-task.response.json", import.meta.url), "utf8")) as { example: { id: string } };
     const store = memoryStore(credential({
       access: "access-viejo",
@@ -162,7 +162,7 @@ describe("renovación", () => {
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: () => {},
       fetchImpl: async () => {
@@ -192,7 +192,7 @@ describe("renovación", () => {
     expect(seen).toEqual(["Bearer access-viejo", "Bearer access-nuevo"]);
   });
 
-  it("bad_refresh_token pide iniciar sesión y borra la sesión guardada", async () => {
+  it("asks for login and deletes the stored session on bad_refresh_token", async () => {
     const store = memoryStore(credential({
       access: "access-viejo",
       refresh: "refresh-viejo",
@@ -203,7 +203,7 @@ describe("renovación", () => {
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: (message) => warnings.push(message),
       fetchImpl: async () => {
@@ -219,7 +219,7 @@ describe("renovación", () => {
     expect(warnings.join("\n")).not.toContain("access-viejo");
   });
 
-  it("si el llavero falla tras rotar el token, la sesión sigue en memoria y se guarda al recuperarse", async () => {
+  it("keeps the rotated session in memory and saves it when the keyring recovers", async () => {
     let saved: string | null = credential({
       access: "ghu_viejo",
       refresh: "ghr_viejo",
@@ -234,7 +234,7 @@ describe("renovación", () => {
       read: () => saved,
       write: (next) => {
         writes += 1;
-        if (failing) throw new KeyringError("no disponible");
+        if (failing) throw new KeyringError("unavailable");
         saved = next;
       },
       delete: () => {
@@ -244,7 +244,7 @@ describe("renovación", () => {
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async (ms) => {
         delays.push(ms);
@@ -264,7 +264,7 @@ describe("renovación", () => {
     expect(delays.length).toBeGreaterThan(0);
     expect(delays.every((ms) => ms > 0 && ms < 1_000)).toBe(true);
     const shown = warnings.join("\n");
-    expect(shown).toMatch(/ya no es válido/);
+    expect(shown).toMatch(/is no longer valid/);
     expect(shown).toMatch(/login/);
     expect(shown).not.toMatch(/ghu_|ghr_/);
     failing = false;
@@ -275,29 +275,29 @@ describe("renovación", () => {
     const restarted = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       warn: () => {},
       fetchImpl: async () => {
-        throw new Error("no debía renovar");
+        throw new Error("should not refresh");
       },
     });
     await expect(restarted.current()).resolves.toBe("ghu_nuevo");
   });
 
-  it("un error que no es KeyringError al guardar no pierde el token en memoria", async () => {
+  it("does not lose the in-memory token when a save throws a non-KeyringError", async () => {
     const store = memoryStore(credential({
       access: "ghu_viejo",
       refresh: "ghr_viejo",
       expiresAt: NOW + 60_000,
     }));
     store.write = () => {
-      throw new Error("fallo ajeno al llavero");
+      throw new Error("unrelated write failure");
     };
     const session = createAppSession({
       store,
       lockPath: await lockPath(),
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async () => {},
       warn: () => {},
@@ -316,14 +316,14 @@ describe("renovación", () => {
 });
 
 describe("device flow", () => {
-  it("respeta interval y slow_down, guarda la sesión y no imprime secretos", async () => {
+  it("honors interval and slow_down, stores the session, and prints no secrets", async () => {
     const store = memoryStore();
     const stdout: string[] = [];
     const stderr: string[] = [];
     const sleeps: number[] = [];
     let polls = 0;
     const saved = await loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -335,7 +335,7 @@ describe("device flow", () => {
       fetchImpl: async (input, init) => {
         const url = String(input);
         const body = JSON.parse(String(init?.body)) as Record<string, string>;
-        expect(body.client_id).toBe("client-de-prueba");
+        expect(body.client_id).toBe("test-client");
         expect(JSON.stringify(body)).not.toContain("client_secret");
         if (url.endsWith("/device/code")) {
           expect(body.scope).toBe("offline_access");
@@ -366,8 +366,8 @@ describe("device flow", () => {
     const shown = [...stdout, ...stderr].join("\n");
     expect(shown).toContain("https://github.com/login/device");
     expect(shown).toContain("ABCD-EFGH");
-    expect(shown).toContain("15 minutos");
-    expect(shown).toContain("No introduzcas un código que no hayas pedido tú.");
+    expect(shown).toContain("15 minutes");
+    expect(shown).toContain("Do not enter a code that you did not request.");
     expect(shown).not.toContain("device-code-1");
     expect(shown).not.toContain("access-1");
     expect(shown).not.toContain("refresh-1");
@@ -376,17 +376,17 @@ describe("device flow", () => {
     expect(stored.refresh_token).toBe("refresh-1");
   });
 
-  it("si el llavero falla, deja el token en memoria y avisa sin escribir el secreto", async () => {
+  it("keeps the token in memory and warns without writing the secret when the keyring fails", async () => {
     const stderr: string[] = [];
     const stdout: string[] = [];
     const saved = await loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async () => {},
       store: {
         read: () => null,
         write: () => {
-          throw new KeyringError("secret-service no está");
+          throw new KeyringError("secret-service is unavailable");
         },
         delete: () => {},
       },
@@ -414,19 +414,19 @@ describe("device flow", () => {
     expect(saved.where).toBe("memory");
     expect(saved.credential.access_token).toBe("access-1");
     const shown = [...stdout, ...stderr].join("\n");
-    expect(shown).toMatch(/memoria/);
-    expect(shown).toMatch(/disco/);
+    expect(shown).toMatch(/memory/);
+    expect(shown).toMatch(/disk/);
     expect(shown).not.toContain("access-1");
     expect(shown).not.toContain("refresh-1");
   });
 
-  it("la última espera del sondeo no pasa del plazo", async () => {
+  it("caps the final polling wait at the deadline", async () => {
     let now = NOW;
     const sleeps: number[] = [];
     const expiresIn = 8;
     const interval = 5;
     await expect(loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => now,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -448,13 +448,13 @@ describe("device flow", () => {
         }
         return oauth({ error: "authorization_pending" });
       },
-    })).rejects.toThrow(/caducado/);
+    })).rejects.toThrow(/expired/);
     expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(expiresIn * 1000);
     expect(sleeps.at(-1)).toBeLessThan(interval * 1000);
     expect(sleeps.every((ms) => ms > 0)).toBe(true);
   });
 
-  it("corta la llamada OAuth a los 30 s", async () => {
+  it("times out the OAuth call after 30 seconds", async () => {
     const deadlines: number[] = [];
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
       deadlines.push(ms);
@@ -462,7 +462,7 @@ describe("device flow", () => {
     });
     try {
       await expect(loginWithDeviceFlow({
-        clientId: "client-de-prueba",
+        clientId: "test-client",
         now: () => NOW,
         sleep: async () => {},
         store: memoryStore(),
@@ -471,7 +471,7 @@ describe("device flow", () => {
         stderr: () => {},
         fetchImpl: async (_input, init) => {
           if (init?.signal?.aborted) throw init.signal.reason;
-          throw new Error("la llamada no traía plazo");
+          throw new Error("the call had no deadline");
         },
       })).rejects.toThrow(/30 s/);
       expect(deadlines).toContain(30_000);
@@ -480,10 +480,10 @@ describe("device flow", () => {
     }
   });
 
-  it("avisa si la app no está instalada y el login termina igual", async () => {
+  it("warns when the app is not installed and still completes login", async () => {
     const stdout: string[] = [];
     const saved = await loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async () => {},
       store: memoryStore(),
@@ -512,15 +512,15 @@ describe("device flow", () => {
     });
     expect(saved.where).toBe("keyring");
     const shown = stdout.join("\n");
-    expect(shown).toContain("La app no está instalada en ningún repositorio.");
+    expect(shown).toContain("The app is not installed in any repository.");
     expect(shown).toContain("https://github.com/apps/copilot-agents-mcp/installations/new");
     expect(shown).not.toContain("access-1");
   });
 
-  it("no avisa en el login si ya hay una instalación", async () => {
+  it("does not warn during login when an installation exists", async () => {
     const stdout: string[] = [];
     await loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async () => {},
       store: memoryStore(),
@@ -551,14 +551,14 @@ describe("device flow", () => {
       },
     });
     const shown = stdout.join("\n");
-    expect(shown).not.toContain("no está instalada");
+    expect(shown).not.toContain("is not installed");
     expect(shown).not.toContain("installations/new");
   });
 
-  it("si la consulta de instalaciones falla, el login sigue sin aviso", async () => {
+  it("continues login without a warning when the installation lookup fails", async () => {
     const stdout: string[] = [];
     await expect(loginWithDeviceFlow({
-      clientId: "client-de-prueba",
+      clientId: "test-client",
       now: () => NOW,
       sleep: async () => {},
       store: memoryStore(),
@@ -585,17 +585,17 @@ describe("device flow", () => {
         });
       },
     })).resolves.toMatchObject({ where: "keyring" });
-    expect(stdout.join("\n")).not.toContain("no está instalada");
+    expect(stdout.join("\n")).not.toContain("is not installed");
   });
 });
 
-describe("estado y logout", () => {
-  it("el estado muestra el mecanismo y no imprime tokens", () => {
+describe("status and logout", () => {
+  it("shows the authentication mechanism without printing tokens", () => {
     expect(githubAppClientId({})).toBe(DEFAULT_GITHUB_APP_CLIENT_ID);
     expect(DEFAULT_GITHUB_APP_CLIENT_ID).toBe("Iv23liNbsc3GH7vmP8OT");
     expect(githubAppClientId({ COPILOT_AGENTS_GITHUB_APP_CLIENT_ID: " otro " })).toBe("otro");
     const name = userInfo().username.trim();
-    expect(systemAccount()).toBe(name || "usuario");
+    expect(systemAccount()).toBe(name || "user");
     const stored: StoredCredential = {
       access_token: "ghu_accesssecreto",
       refresh_token: "ghr_refreshsecreto",
@@ -607,17 +607,17 @@ describe("estado y logout", () => {
       stored,
       keyring: "ready",
       account: "ada",
-      appName: "App de ejemplo",
+      appName: "Example app",
     });
     expect(text).toContain("GitHub App");
-    expect(text).toContain("llavero");
+    expect(text).toContain("keyring");
     expect(text).toContain("ada");
-    expect(text).toContain("App de ejemplo");
+    expect(text).toContain("Example app");
     expect(text).toContain(DEFAULT_GITHUB_APP_CLIENT_ID);
-    expect(text).toContain("valor por defecto");
+    expect(text).toContain("default value");
     expect(text).toContain(new Date(stored.expires_at).toISOString());
     expect(text).toContain(new Date(stored.refresh_expires_at ?? 0).toISOString());
-    expect(text).toContain("5 minutos");
+    expect(text).toContain("5 minutes");
     expect(text).not.toMatch(/ghu_|ghr_/);
     const overridden = statusReport({
       env: { COPILOT_AGENTS_GITHUB_APP_CLIENT_ID: " client-desde-entorno " },
@@ -628,7 +628,7 @@ describe("estado y logout", () => {
     });
     expect(overridden).toContain("client-desde-entorno");
     expect(overridden).toContain("COPILOT_AGENTS_GITHUB_APP_CLIENT_ID");
-    expect(overridden).toContain("desconocido");
+    expect(overridden).toContain("unknown");
     expect(overridden).not.toMatch(/ghu_|ghr_/);
     const pat = statusReport({
       env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghu_frompat" },
@@ -641,20 +641,20 @@ describe("estado y logout", () => {
     expect(pat).not.toMatch(/ghu_|ghr_/);
   });
 
-  it("lee el nombre público de la app y, si no puede, no falla", async () => {
+  it("reads the public app name and does not fail when it cannot", async () => {
     const token = "ghu_consulta";
     const name = await readGitHubAppName(token, async (input, init) => {
       const url = String(input);
       const headers = new Headers(init?.headers);
       if (url.endsWith("/user/installations")) {
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
-        return oauth({ installations: [{ app_slug: "app-de-prueba" }] });
+        return oauth({ installations: [{ app_slug: "test-app" }] });
       }
       expect(headers.get("authorization")).toBeNull();
-      expect(url).toContain("/apps/app-de-prueba");
-      return oauth({ name: "App de prueba" });
+      expect(url).toContain("/apps/test-app");
+      return oauth({ name: "Test app" });
     });
-    expect(name).toBe("App de prueba");
+    expect(name).toBe("Test app");
     await expect(readGitHubAppName(token, async () => {
       throw new Error(`red ${token}`);
     })).resolves.toBeNull();
@@ -674,9 +674,9 @@ describe("estado y logout", () => {
       appName: empty.name,
       appNotInstalled: empty.empty,
     });
-    expect(text).toContain("La app no está instalada en ningún repositorio.");
+    expect(text).toContain("The app is not installed in any repository.");
     expect(text).toContain("https://github.com/apps/copilot-agents-mcp/installations/new");
-    expect(text).not.toContain("desconocido");
+    expect(text).not.toContain("unknown");
     expect(text).not.toMatch(/ghu_|ghr_/);
     const failed = await readGitHubApp(token, async () => {
       throw new Error("red");
@@ -689,18 +689,18 @@ describe("estado y logout", () => {
       appName: failed.name,
       appNotInstalled: failed.empty,
     });
-    expect(unknown).toContain("desconocido");
+    expect(unknown).toContain("unknown");
     expect(unknown).not.toContain("installations/new");
   });
 
-  it("logout es idempotente y explica cómo revocar", () => {
+  it("makes logout idempotent and explains how to revoke access", () => {
     const store = createMemoryStore();
-    store.write("sesión");
+    store.write("session");
     expect(logoutLocal(store)).toBe("removed");
     expect(logoutLocal(store)).toBe("absent");
     const message = logoutMessage("removed");
     expect(message).toContain("Authorized GitHub Apps");
-    expect(message).toContain("desinstálala");
-    expect(logoutMessage("unavailable")).toMatch(/disco/);
+    expect(message).toContain("uninstall");
+    expect(logoutMessage("unavailable")).toMatch(/disk/);
   });
 });

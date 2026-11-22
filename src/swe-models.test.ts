@@ -22,8 +22,8 @@ const prices = {
 
 const tokenModel = {
   id: "test-model-a",
-  name: "Modelo de prueba A",
-  vendor: "Fabricante Ficticio",
+  name: "Test model A",
+  vendor: "Fictional vendor",
   preview: false,
   policy: { state: "enabled" },
   billing: { token_prices: { ...prices } },
@@ -31,8 +31,8 @@ const tokenModel = {
 
 const promoModel = {
   id: "test-model-b",
-  name: "Modelo de prueba B",
-  vendor: "Otro Fabricante",
+  name: "Test model B",
+  vendor: "Other vendor",
   preview: true,
   policy: { state: "disabled" },
   billing: {
@@ -40,38 +40,38 @@ const promoModel = {
     promo: {
       discount_percent: 15,
       ends_at: "2099-01-01T00:00:00Z",
-      message: "oferta inventada",
+      message: "fictional offer",
     },
   },
 };
 
 const pricedWithoutPolicy = {
   id: "test-model-c",
-  name: "Modelo sin política",
-  vendor: "Fabricante Ficticio",
+  name: "Model without policy",
+  vendor: "Fictional vendor",
   preview: false,
   billing: { token_prices: { input_price: 7, output_price: 8, cache_price: 2, batch_size: 100 } },
 };
 
 const routerModel = {
   id: "test-router",
-  name: "Enrutador de prueba",
-  vendor: "Fabricante Ficticio",
+  name: "Test router",
+  vendor: "Fictional vendor",
   preview: false,
   billing: { multiplier: 1.25 },
 };
 
 const routerWithPromo = {
   id: "test-router-promo",
-  name: "Enrutador con promo",
-  vendor: "Fabricante Ficticio",
+  name: "Router with promotion",
+  vendor: "Fictional vendor",
   preview: true,
   billing: {
     multiplier: 2,
     promo: {
       discount_percent: 5,
       ends_at: "2099-06-01T00:00:00Z",
-      message: "promo del enrutador",
+      message: "router promotion",
     },
   },
 };
@@ -86,8 +86,8 @@ const fixtures = [
   { data: [tokenModel, promoModel, pricedWithoutPolicy, routerModel, routerWithPromo] },
 ];
 
-describe("validador de /agents/swe/models", () => {
-  it("conserva los campos de interés en todos los fixtures sintéticos", () => {
+describe("/agents/swe/models validator", () => {
+  it("preserves relevant fields across all synthetic fixtures", () => {
     for (const fixture of fixtures) {
       const models = validateSweModels(fixture);
       expect(models).toHaveLength(fixture.data.length);
@@ -99,28 +99,28 @@ describe("validador de /agents/swe/models", () => {
     }
   });
 
-  it("rechaza un formato incompleto o de tipo incorrecto y no devuelve modelos", () => {
-    expect(() => validateSweModels({})).toThrow(/falta data/);
-    expect(() => validateSweModels({ data: { id: "test-model-a" } })).toThrow(/falta data/);
+  it("rejects incomplete or incorrectly typed formats without returning models", () => {
+    expect(() => validateSweModels({})).toThrow(/missing data/);
+    expect(() => validateSweModels({ data: { id: "test-model-a" } })).toThrow(/missing data/);
     const { id, ...withoutId } = tokenModel;
     expect(id).toBe("test-model-a");
-    expect(() => validateSweModels({ data: [withoutId] })).toThrow(/falta data\[0\]\.id/);
-    expect(() => validateSweModels({ data: [{ ...tokenModel, preview: "no" }] })).toThrow(/data\[0\]\.preview no es boolean/);
-    expect(() => validateSweModels({ data: [{ ...tokenModel, billing: {} }] })).toThrow(/falta data\[0\]\.billing\.token_prices/);
+    expect(() => validateSweModels({ data: [withoutId] })).toThrow(/missing data\[0\]\.id/);
+    expect(() => validateSweModels({ data: [{ ...tokenModel, preview: "no" }] })).toThrow(/data\[0\]\.preview is not a boolean/);
+    expect(() => validateSweModels({ data: [{ ...tokenModel, billing: {} }] })).toThrow(/missing data\[0\]\.billing\.token_prices/);
     expect(() => validateSweModels({
       data: [{ ...tokenModel, billing: { token_prices: { ...prices, batch_size: "mil" } } }],
-    })).toThrow(/data\[0\]\.billing\.token_prices\.batch_size no es number/);
-    expect(() => validateSweModels({ data: [{ id: "test-router", name: "Enrutador", vendor: "Ficticio", preview: false, billing: { multiplier: "alto" } }] })).toThrow(/data\[0\]\.billing\.multiplier no es number/);
-    expect(() => validateSweModels({ data: [{ ...promoModel, billing: { ...promoModel.billing, promo: { discount_percent: 15, message: "sin fecha" } } }] })).toThrow(/falta data\[0\]\.billing\.promo\.ends_at/);
+    })).toThrow(/data\[0\]\.billing\.token_prices\.batch_size is not a number/);
+    expect(() => validateSweModels({ data: [{ id: "test-router", name: "Router", vendor: "Fictional", preview: false, billing: { multiplier: "high" } }] })).toThrow(/data\[0\]\.billing\.multiplier is not a number/);
+    expect(() => validateSweModels({ data: [{ ...promoModel, billing: { ...promoModel.billing, promo: { discount_percent: 15, message: "without date" } } }] })).toThrow(/missing data\[0\]\.billing\.promo\.ends_at/);
     expect(() => validateSweModels({
-      data: [tokenModel, { id: "test-model-d", name: "Incompleto", vendor: "Ficticio", preview: false, policy: { state: "enabled" }, billing: {} }],
-    })).toThrow(/falta data\[1\]\.billing\.token_prices/);
+      data: [tokenModel, { id: "test-model-d", name: "Incomplete", vendor: "Fictional", preview: false, policy: { state: "enabled" }, billing: {} }],
+    })).toThrow(/missing data\[1\]\.billing\.token_prices/);
     expect(() => validateSweModels({
       data: [{ ...pricedWithoutPolicy, policy: {} }],
-    })).toThrow(/falta data\[0\]\.policy\.state/);
+    })).toThrow(/missing data\[0\]\.policy\.state/);
   });
 
-  it("no guarda la URL del endpoint ni modelos reales", () => {
+  it("does not store a real endpoint URL or real models", () => {
     const source = readFileSync(new URL("./swe-models.ts", import.meta.url), "utf8");
     expect(source).not.toContain("api.individual.githubcopilot.com");
     expect(source).not.toContain("mai-code-2");
@@ -128,8 +128,8 @@ describe("validador de /agents/swe/models", () => {
   });
 });
 
-describe("lectura de /agents/swe/models", () => {
-  it("pide la base por GraphQL y cita el endpoint con la fecha de la consulta", async () => {
+describe("/agents/swe/models reader", () => {
+  it("gets the base through GraphQL and cites the endpoint and fetch time", async () => {
     const seen: Array<{ url: string; init: RequestInit }> = [];
     const result = await readSweModels({
       token: "test-token",
@@ -159,15 +159,15 @@ describe("lectura de /agents/swe/models", () => {
     expect(header(models?.init, "copilot-integration-id")).toBe(COPILOT_INTEGRATION_ID);
   });
 
-  it("devuelve isError si GraphQL o el GET no responden 200", async () => {
+  it("returns isError when GraphQL or GET does not return 200", async () => {
     const graphql = await toolError(async (url) => {
       if (url === GRAPHQL_URL) return new Response("no", { status: 401 });
-      throw new Error("el GET no debería llamarse");
+      throw new Error("GET should not be called");
     });
     expect(graphql.isError).toBe(true);
     expect(textOf(graphql)).toContain("HTTP 401");
     expect(textOf(graphql)).toContain(GRAPHQL_URL);
-    expect(textOf(graphql)).not.toContain("secreto-de-prueba");
+    expect(textOf(graphql)).not.toContain("test-secret");
 
     const get = await toolError(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
@@ -176,13 +176,13 @@ describe("lectura de /agents/swe/models", () => {
     expect(get.isError).toBe(true);
     expect(textOf(get)).toContain("HTTP 503");
     expect(textOf(get)).toContain("https://copilot.example.test/agents/swe/models");
-    expect(textOf(get)).not.toContain("secreto-de-prueba");
+    expect(textOf(get)).not.toContain("test-secret");
   });
 
-  it("devuelve isError si el formato no cuadra y no incluye datos parciales", async () => {
+  it("returns isError for an invalid format without partial data", async () => {
     const result = await toolError(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
-      return json({ data: [tokenModel, { id: "test-model-c", name: "Incompleto", vendor: "Ficticio", preview: false, policy: { state: "enabled" }, billing: {} }] });
+      return json({ data: [tokenModel, { id: "test-model-c", name: "Incomplete", vendor: "Fictional", preview: false, policy: { state: "enabled" }, billing: {} }] });
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("HTTP 200");
@@ -192,14 +192,14 @@ describe("lectura de /agents/swe/models", () => {
     expect(result).not.toHaveProperty("structuredContent");
   });
 
-  it("devuelve isError si policy viene sin state", async () => {
+  it("returns isError when policy has no state", async () => {
     const result = await toolError(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
-      return json({ data: [{ ...pricedWithoutPolicy, policy: { terms: "sin estado" } }] });
+      return json({ data: [{ ...pricedWithoutPolicy, policy: { terms: "without state" } }] });
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("HTTP 200");
-    expect(textOf(result)).toContain("falta data[0].policy.state");
+    expect(textOf(result)).toContain("missing data[0].policy.state");
     expect(textOf(result)).not.toContain("test-model-c");
   });
 });
@@ -265,10 +265,10 @@ async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise
         throw new Error("no");
       },
     }),
-    readToken: () => "secreto-de-prueba",
+    readToken: () => "test-secret",
     launchWatcher: () => {},
     readModels: () => readSweModels({
-      token: "secreto-de-prueba",
+      token: "test-secret",
       fetchImpl: (input, init) => fetchImpl(String(input), init),
     }),
   });
@@ -288,8 +288,8 @@ function textOf(result: unknown): string {
   return first && typeof first === "object" && "text" in first && typeof first.text === "string" ? first.text : "";
 }
 
-describe("modelos y sesión", () => {
-  it("renueva una vez si GraphQL responde 401 y usa el token nuevo", async () => {
+describe("models and session", () => {
+  it("refreshes once when GraphQL returns 401 and uses the new token", async () => {
     let refreshes = 0;
     let graphql = 0;
     const result = await readSweModels({
@@ -324,14 +324,14 @@ describe("modelos y sesión", () => {
     expect(result.models.map((model) => model.id)).toEqual(["test-model-a"]);
   });
 
-  it("nombra Agent tasks cuando la integración no tiene el permiso", async () => {
+  it("names Agent tasks when the integration lacks permission", async () => {
     const error = await readSweModels({
       token: "access-1",
       fetchImpl: async () => new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 }),
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     if (!(error instanceof Error)) throw error;
-    expect(error.message).toContain("Falta el permiso Agent tasks");
+    expect(error.message).toContain("Missing Agent tasks permission");
     expect(error.message).toContain("HTTP 403");
     expect(error.message).not.toContain("access-1");
   });

@@ -20,7 +20,7 @@ const expectedTools = [
 const packed = JSON.parse(run("npm", ["pack", "--json"], { cwd: root }));
 const filename = packed[0]?.filename;
 if (typeof filename !== "string" || !filename.endsWith(".tgz")) {
-  throw new Error("npm pack no devolvió el tarball.");
+  throw new Error("npm pack did not return a tarball.");
 }
 const tarball = join(root, filename);
 const dir = mkdtempSync(join(tmpdir(), "copilot-pack-"));
@@ -31,7 +31,7 @@ try {
   const bin = join(dir, "node_modules", ".bin", "copilot-agents-mcp");
   const version = run(bin, ["--version"], { cwd: dir }).trim();
   if (version !== expectedVersion) {
-    throw new Error(`--version imprimió ${JSON.stringify(version)}.`);
+    throw new Error(`--version printed ${JSON.stringify(version)}.`);
   }
   console.log(`--version ${version}`);
   const names = await listedTools(bin);
@@ -61,17 +61,17 @@ async function listedTools(bin) {
     await withTimeout(client.connect(transport), 20_000, "initialize");
     const version = client.getServerVersion();
     if (version?.version !== expectedVersion) {
-      throw new Error(`initialize anunció ${JSON.stringify(version)}.`);
+      throw new Error(`initialize advertised ${JSON.stringify(version)}.`);
     }
     const listed = await withTimeout(client.listTools(), 20_000, "tools/list");
     const names = listed.tools.map((tool) => tool.name).sort();
     if (names.join("\n") !== expectedTools.join("\n")) {
-      throw new Error(`tools/list devolvió ${names.join(", ")}.`);
+      throw new Error(`tools/list returned ${names.join(", ")}.`);
     }
     return names;
   } catch (error) {
     const detail = stderr.join("");
-    const message = error instanceof Error ? error.message : "el servidor no respondió";
+    const message = error instanceof Error ? error.message : "the server did not respond";
     throw new Error(detail ? `${message}\n${detail}` : message);
   } finally {
     await client.close().catch(() => {});
@@ -81,7 +81,7 @@ async function listedTools(bin) {
 function withTimeout(promise, ms, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} no respondió en ${ms / 1000} s.`)), ms);
+    timer = setTimeout(() => reject(new Error(`${label} did not respond within ${ms / 1000} s.`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -94,7 +94,7 @@ function run(command, args, options) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error([result.stdout, result.stderr, `${command} salió ${result.status}.`].filter(Boolean).join("\n"));
+    throw new Error([result.stdout, result.stderr, `${command} exited ${result.status}.`].filter(Boolean).join("\n"));
   }
   return result.stdout ?? "";
 }

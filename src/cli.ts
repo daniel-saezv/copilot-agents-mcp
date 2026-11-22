@@ -39,19 +39,19 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
   const args = [...argv];
   if (args.includes("--version")) return { command: "version" };
   if (args[0] === "watch") {
-    if (args.length > 1) throw new Error("watch no admite más argumentos.");
+    if (args.length > 1) throw new Error("watch does not accept additional arguments.");
     return { command: "watch" };
   }
   if (args[0] === "login") {
-    if (args.length > 1) throw new Error("login no admite más argumentos.");
+    if (args.length > 1) throw new Error("login does not accept additional arguments.");
     return { command: "login" };
   }
   if (args[0] === "logout") {
-    if (args.length > 1) throw new Error("logout no admite más argumentos.");
+    if (args.length > 1) throw new Error("logout does not accept additional arguments.");
     return { command: "logout" };
   }
   if (args[0] === "auth") {
-    if (args[1] !== "status" || args.length !== 2) throw new Error("Usa `auth status`.");
+    if (args[1] !== "status" || args.length !== 2) throw new Error("Use `auth status`.");
     return { command: "status" };
   }
   let http = false;
@@ -77,7 +77,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
     if (value.consumed) index += 1;
     if (value.name === "--port") {
       port = Number(value.text);
-      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port tiene que ser un entero entre 0 y 65535.");
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
       continue;
     }
     if (value.name === "--toolsets") {
@@ -96,7 +96,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
       features = splitList(value.text);
       continue;
     }
-    throw new Error(`Argumento desconocido: ${arg}`);
+    throw new Error(`Unknown argument: ${arg}`);
   }
   const selection: Selection = {
     exclude: exclude ?? (env.GITHUB_EXCLUDE_TOOLS ? splitList(env.GITHUB_EXCLUDE_TOOLS) : []),
@@ -109,7 +109,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
   else if (env.GITHUB_TOOLS) selection.tools = splitList(env.GITHUB_TOOLS);
   assertSelection(selection);
   if (http) return { command: "serve", http: true, port: port ?? 3333, selection };
-  if (port !== undefined) throw new Error("--port solo se usa con --http.");
+  if (port !== undefined) throw new Error("--port can only be used with --http.");
   return { command: "serve", http: false, selection };
 }
 
@@ -118,7 +118,7 @@ function valueOf(arg: string, args: string[], index: number): { name: string | u
   for (const name of names) {
     if (arg === name) {
       const text = args[index + 1];
-      if (!text || text.startsWith("--")) throw new Error(`Falta el valor de ${name}.`);
+      if (!text || text.startsWith("--")) throw new Error(`Missing value for ${name}.`);
       return { name, text, consumed: true };
     }
     if (arg.startsWith(`${name}=`)) return { name, text: arg.slice(name.length + 1), consumed: false };
@@ -136,22 +136,22 @@ class Help extends Error {
 function helpText(): string {
   return [
     "copilot-agents-mcp",
-    "  Servidor MCP por stdio.",
+    "  MCP server over stdio.",
     "copilot-agents-mcp --version",
-    "  Muestra la versión de package.json.",
+    "  Print the version from package.json.",
     "copilot-agents-mcp --http [--port 3333]",
-    "  Servidor MCP por HTTP en 127.0.0.1.",
+    "  MCP server over HTTP on 127.0.0.1.",
     "copilot-agents-mcp watch",
-    "  Vigila las tareas pendientes y avisa una vez al terminar.",
+    "  Watch pending tasks and notify once when they finish.",
     "copilot-agents-mcp login",
-    "  Inicia sesión con la GitHub App y guarda el token en el llavero.",
+    "  Sign in with the GitHub App and save the token in the keyring.",
     "copilot-agents-mcp logout",
-    "  Borra la sesión del llavero.",
+    "  Delete the keyring session.",
     "copilot-agents-mcp auth status",
-    "  Dice qué credencial está activa, sin mostrar el token.",
+    "  Show which credential is active without showing the token.",
     "",
-    "Opciones: --toolsets, --tools, --exclude-tools, --read-only, --features",
-    "Variables: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
+    "Options: --toolsets, --tools, --exclude-tools, --read-only, --features",
+    "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
     "GITHUB_TOOLSETS, GITHUB_TOOLS, GITHUB_EXCLUDE_TOOLS, GITHUB_READ_ONLY,",
     "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH",
   ].join("\n");
@@ -180,7 +180,7 @@ async function serve(command: ServeCommand): Promise<void> {
     return;
   }
   const http = await startHttpServer({ port: command.port, selection: command.selection, deps });
-  console.error(`copilot-agents-mcp escuchando en ${http.url}`);
+  console.error(`copilot-agents-mcp listening at ${http.url}`);
 }
 
 async function watch(): Promise<void> {
@@ -217,7 +217,7 @@ export function supportsNode(version: string): boolean {
 
 async function main(): Promise<void> {
   if (!supportsNode(process.versions.node)) {
-    console.error(`Hace falta Node.js 26 o posterior. Hay ${process.versions.node}.`);
+    console.error(`Node.js 26 or later is required. Found ${process.versions.node}.`);
     process.exitCode = 1;
     return;
   }
@@ -245,9 +245,9 @@ async function openSecretStore(warnOnFailure: boolean): Promise<{ store: SecretS
     const { systemSecretStore } = await import("./keyring.ts");
     return { store: systemSecretStore(), persistent: true };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "error desconocido";
+    const reason = error instanceof Error ? error.message : "unknown error";
     if (warnOnFailure) {
-      console.error(`No hay llavero disponible (${reason}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
+      console.error(`No keyring is available (${reason}). The token remains only in this process's memory and is not written to disk.`);
     }
     return { store: createMemoryStore(), persistent: false };
   }
@@ -268,7 +268,7 @@ async function openAppSession(env: NodeJS.ProcessEnv, statePath: string): Promis
 async function login(): Promise<void> {
   warnIgnored(process.env);
   if (personalAccessToken(process.env)) {
-    console.error("GITHUB_PERSONAL_ACCESS_TOKEN está definida y tiene prioridad. La sesión de la app no se usará hasta quitar esa variable.");
+    console.error("GITHUB_PERSONAL_ACCESS_TOKEN is set and takes precedence. The app session will not be used until that variable is removed.");
   }
   const opened = await openSecretStore(true);
   await loginWithDeviceFlow({

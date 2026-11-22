@@ -16,15 +16,15 @@ function mockFetch(handler: (url: string, init: RequestInit | undefined) => Resp
   }) as typeof fetch;
 }
 
-describe("contrato del OpenAPI", () => {
-  it("acepta los ejemplos oficiales de crear y leer una tarea", () => {
+describe("OpenAPI contract", () => {
+  it("accepts the official create and read task examples", () => {
     for (const name of ["create-task.response.json", "get-task.response.json"] as const) {
       const file = fixture(name);
       expect(() => assertSchema(officialSchema(name), file.example, name)).not.toThrow();
     }
   });
 
-  it("envía la versión fijada y el modelo tal cual, y valida la respuesta", async () => {
+  it("sends the pinned version and unchanged model, then validates the response", async () => {
     const created = fixture("create-task.response.json").example;
     let seen: { url: string; init: RequestInit | undefined } | undefined;
     const client = createGitHubClient({
@@ -37,8 +37,8 @@ describe("contrato del OpenAPI", () => {
     const task = await client.createTask({
       owner: "octocat",
       repo: "hello-world",
-      prompt: "Arregla el botón",
-      model: "modelo-inexistente-123",
+      prompt: "Fix the button",
+      model: "missing-model-123",
       base_ref: "main",
       create_pull_request: true,
     });
@@ -48,33 +48,33 @@ describe("contrato del OpenAPI", () => {
     expect(headers.get("x-github-api-version")).toBe(API_VERSION);
     expect(headers.get("authorization")).toBe("Bearer test-token");
     expect(JSON.parse(String(seen?.init?.body))).toEqual({
-      prompt: "Arregla el botón",
-      model: "modelo-inexistente-123",
+      prompt: "Fix the button",
+      model: "missing-model-123",
       base_ref: "main",
       create_pull_request: true,
     });
   });
 
-  it("rechaza una respuesta que no cumple el esquema", async () => {
+  it("rejects a response that does not match the schema", async () => {
     const client = createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify({ state: "nope" }), { status: 200 })),
     });
-    await expect(client.getTask({ taskId: "task-1" })).rejects.toThrow(/no cumple el esquema/);
+    await expect(client.getTask({ taskId: "task-1" })).rejects.toThrow(/does not match the .* schema/);
   });
 
-  it("acepta una sesión con uso y con el modelo que devuelve la API", () => {
+  it("accepts a session with usage and the model returned by the API", () => {
     const file = fixture("get-task.response.json");
     const example = structuredClone(file.example) as { sessions: Array<Record<string, unknown>> };
     const session = example.sessions[0];
-    if (!session) throw new Error("el ejemplo no trae sesión");
+    if (!session) throw new Error("the example has no session");
     session.model = "sweagent-capi:mai-code-2";
     session.usage = { type: "ai_credits", amount: 60454886000 };
     session.error = { message: "The selected model isn't available" };
-    assertSchema(officialSchema("get-task.response.json"), example, "leer la tarea");
+    assertSchema(officialSchema("get-task.response.json"), example, "read task");
   });
 
-  it("aplana un 422 y un límite de tasa sin copiar el token", async () => {
+  it("flattens a 422 and a rate limit without copying the token", async () => {
     const limited = createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify({ message: "API rate limit exceeded for test-token" }), {
@@ -101,7 +101,7 @@ describe("contrato del OpenAPI", () => {
 });
 
 describe("pull request", () => {
-  it("elige la id de la lista filtrada por head", async () => {
+  it("selects the ID from the list filtered by head", async () => {
     let seen = "";
     const client = createGitHubClient({
       token,
@@ -123,7 +123,7 @@ describe("pull request", () => {
     expect(seen).toBe("https://api.github.com/repos/octocat/hello-world/pulls?state=all&head=octocat%3Acopilot%2Fdemo&per_page=100");
   });
 
-  it("devuelve null si esa id no está en la lista", async () => {
+  it("returns null when that ID is not in the list", async () => {
     const client = createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify([{ id: 9, number: 1, html_url: "https://github.com/octocat/hello-world/pull/1" }]), { status: 200 })),
@@ -137,10 +137,10 @@ describe("pull request", () => {
   });
 });
 
-describe("API interna de tareas", () => {
+describe("internal task API", () => {
   const internalBase = "https://internal.test/agents";
 
-  it("envía steer y abort sin la versión de la API y acepta un 202 vacío", async () => {
+  it("sends steer and abort without the API version and accepts an empty 202", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const client = createGitHubClient({
       token,
@@ -150,7 +150,7 @@ describe("API interna de tareas", () => {
         return new Response(null, { status: 202 });
       }),
     });
-    await expect(client.steerTask("task-1", "sigue con los tests")).resolves.toBeUndefined();
+    await expect(client.steerTask("task-1", "continue with the tests")).resolves.toBeUndefined();
     await expect(client.abortTask("task-1")).resolves.toBeUndefined();
     expect(calls.map((call) => call.url)).toEqual([
       `${internalBase}/tasks/task-1/steer`,
@@ -158,7 +158,7 @@ describe("API interna de tareas", () => {
     ]);
     const steer = calls[0];
     const abort = calls[1];
-    if (!steer || !abort) throw new Error("faltan llamadas");
+    if (!steer || !abort) throw new Error("missing calls");
     expect(steer.init?.method).toBe("POST");
     expect(abort.init?.method).toBe("POST");
     for (const call of [steer, abort]) {
@@ -168,7 +168,7 @@ describe("API interna de tareas", () => {
       expect(headers.get("content-type")).toBe("application/json");
       expect(headers.get("x-github-api-version")).toBeNull();
     }
-    expect(JSON.parse(String(steer.init?.body))).toEqual({ content: "sigue con los tests", type: "user_message" });
+    expect(JSON.parse(String(steer.init?.body))).toEqual({ content: "continue with the tests", type: "user_message" });
     expect(JSON.parse(String(abort.init?.body))).toEqual({ type: "abort" });
     const fallback = createGitHubClient({
       token,
@@ -180,18 +180,18 @@ describe("API interna de tareas", () => {
     await expect(fallback.abortTask("task-1")).resolves.toBeUndefined();
   });
 
-  it("mapea un 404 de steer", async () => {
+  it("maps a steer 404", async () => {
     const body = JSON.parse(readFileSync(new URL("../fixtures/internal/not-found.json", import.meta.url), "utf8")) as unknown;
     const client = createGitHubClient({
       token,
       internalBaseUrl: internalBase,
       fetch: mockFetch(() => new Response(JSON.stringify(body), { status: 404 })),
     });
-    await expect(client.steerTask("task-ausente", "sigue")).rejects.toThrow("not found");
-    await expect(client.abortTask("task-ausente")).rejects.toThrow("not found");
+    await expect(client.steerTask("missing-task", "continue")).rejects.toThrow("not found");
+    await expect(client.abortTask("missing-task")).rejects.toThrow("not found");
   });
 
-  it("un 404 con la app nombra el repositorio y con PAT deja el mensaje de GitHub", async () => {
+  it("names the repository for an app 404 and preserves GitHub's message for a PAT", async () => {
     const notFound = () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
     const app = createGitHubClient({
       token: "ghu_app",
@@ -206,19 +206,19 @@ describe("API interna de tareas", () => {
       fetch: mockFetch(() => notFound()),
     });
     await expect(app.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(
-      "Instala la app en octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Not Found",
+      "Install the app for octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Not Found",
     );
-    await expect(app.steerTask("task-1", "sigue")).rejects.toThrow("Not Found");
-    await expect(app.steerTask("task-1", "sigue")).rejects.not.toThrow(/installations\/new/);
+    await expect(app.steerTask("task-1", "continue")).rejects.toThrow("Not Found");
+    await expect(app.steerTask("task-1", "continue")).rejects.not.toThrow(/installations\/new/);
     const pat = createGitHubClient({
       token,
       fetch: mockFetch(() => notFound()),
     });
     await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow("Not Found");
-    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.not.toThrow(/Instala la app/);
+    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.not.toThrow(/Install the app/);
   });
 
-  it("pide una página de eventos y conserva el timestamp vacío", async () => {
+  it("gets an events page and preserves an empty timestamp", async () => {
     const body = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
       events: Array<{ type: string; timestamp?: string }>;
       total: number;
@@ -250,7 +250,7 @@ describe("API interna de tareas", () => {
     expect(page.events[0]?.timestamp).toBe("0001-01-01T00:00:00Z");
   });
 
-  it("lee una pull request por número con la versión pública", async () => {
+  it("reads a pull request by number with the public API version", async () => {
     let seen = "";
     const client = createGitHubClient({
       token,
@@ -268,8 +268,8 @@ describe("API interna de tareas", () => {
   });
 });
 
-describe("credencial de la app", () => {
-  it("un 401 renueva una vez y reintenta con el token nuevo", async () => {
+describe("app credential", () => {
+  it("refreshes once and retries with the new token after a 401", async () => {
     const seen: string[] = [];
     let refreshes = 0;
     const client = createGitHubClient({
@@ -296,7 +296,7 @@ describe("credencial de la app", () => {
     expect(seen).toEqual(["Bearer access-viejo", "Bearer access-nuevo"]);
   });
 
-  it("un 401 con token fijo no reintenta", async () => {
+  it("does not retry a 401 with a fixed token", async () => {
     let calls = 0;
     const client = createGitHubClient({
       token,
@@ -309,7 +309,7 @@ describe("credencial de la app", () => {
     expect(calls).toBe(1);
   });
 
-  it("dice el permiso que falta", async () => {
+  it("names the missing permission", async () => {
     const denied = (body: unknown, headers?: Record<string, string>) => createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify(body), { status: 403, headers })),
@@ -317,23 +317,23 @@ describe("credencial de la app", () => {
     await expect(denied({
       message: "user does not have write access to every repository",
       errors: [{ code: "repository_write_access_required" }],
-    }).steerTask("task-1", "sigue")).rejects.toThrow(/Falta el permiso Contents: write/);
+    }).steerTask("task-1", "continue")).rejects.toThrow(/Missing Contents: write permission/);
     await expect(denied({ message: "Resource not accessible by integration" }).getPullRequest({
       owner: "octocat",
       repo: "hello-world",
       number: 7,
-    })).rejects.toThrow(/Falta el permiso Pull requests/);
+    })).rejects.toThrow(/Missing Pull requests permission/);
     await expect(denied({ message: "Resource not accessible by integration" }).getTask({
       taskId: "task-1",
-    })).rejects.toThrow(/Falta el permiso Agent tasks/);
+    })).rejects.toThrow(/Missing Agent tasks permission/);
     await expect(denied({ message: "Resource not accessible by integration" }, {
       "x-accepted-github-permissions": "contents=write, metadata=read",
-    }).getTask({ taskId: "task-1" })).rejects.toThrow("Faltan los permisos Contents: write y Metadata: read.");
+    }).getTask({ taskId: "task-1" })).rejects.toThrow("Missing permissions: Contents: write and Metadata: read.");
   });
 });
 
 describe("formatApiError", () => {
-  it("calcula la espera con x-ratelimit-reset", () => {
+  it("calculates the wait from x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);
     const text = formatApiError(403, {
       get(name) {

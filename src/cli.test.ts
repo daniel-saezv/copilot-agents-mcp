@@ -3,7 +3,7 @@ import { ignoredTokenWarning, readActiveToken } from "./auth.ts";
 import { parseArgs, supportsNode } from "./cli.ts";
 
 describe("cli", () => {
-  it("arranca en stdio y solo abre HTTP con el flag", () => {
+  it("starts over stdio and only opens HTTP with the flag", () => {
     expect(parseArgs([], {})).toMatchObject({ command: "serve", http: false });
     expect(parseArgs(["--http"], {})).toMatchObject({ command: "serve", http: true, port: 3333 });
     expect(parseArgs(["--http", "--port", "4010"], {})).toMatchObject({ port: 4010 });
@@ -13,23 +13,23 @@ describe("cli", () => {
     expect(parseArgs(["auth", "status"], {})).toEqual({ command: "status" });
     expect(parseArgs(["--version"], {})).toEqual({ command: "version" });
     expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
-    expect(() => parseArgs(["login", "--http"], {})).toThrow(/no admite/);
+    expect(() => parseArgs(["login", "--http"], {})).toThrow(/does not accept/);
   });
 
-  it("exige Node.js 26", () => {
+  it("requires Node.js 26", () => {
     expect(supportsNode("26.0.0")).toBe(true);
     expect(supportsNode("26.13.1")).toBe(true);
     expect(supportsNode("22.23.4")).toBe(false);
     expect(supportsNode("24.11.1")).toBe(false);
   });
 
-  it("prioriza el PAT y no usa GH_TOKEN ni GITHUB_TOKEN", () => {
+  it("prefers the PAT and ignores GH_TOKEN and GITHUB_TOKEN", () => {
     expect(readActiveToken({
       GITHUB_PERSONAL_ACCESS_TOKEN: "from-pat",
       GH_TOKEN: "from-gh",
       GITHUB_TOKEN: "from-hub",
     }, () => {
-      throw new Error("no leas el llavero");
+      throw new Error("do not read the keyring");
     })).toBe("from-pat");
     expect(readActiveToken({ GH_TOKEN: "from-gh", GITHUB_TOKEN: "from-hub" }, () => "from-keyring")).toBe("from-keyring");
     expect(readActiveToken({ GITHUB_TOKEN: "from-hub" }, () => null)).toBeNull();
@@ -43,7 +43,7 @@ describe("cli", () => {
     expect(ignoredTokenWarning({})).toBeNull();
   });
 
-  it("toma toolsets de flags o del entorno", () => {
+  it("takes toolsets from flags or the environment", () => {
     expect(parseArgs(["--toolsets", "copilot_models", "--read-only"], {})).toMatchObject({
       selection: { toolsets: ["copilot_models"], readOnly: true, features: [] },
     });

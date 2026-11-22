@@ -1,16 +1,16 @@
 {
   "name": "get_agent_task",
-  "title": "Estado de una tarea",
-  "description": "Lee una vez el estado de una tarea del agente de Copilot.",
+  "title": "Get task status",
+  "description": "Read a GitHub Copilot agent task once.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Identificador de la tarea."
+        "description": "Task identifier."
       },
       "repo": {
-        "description": "Repositorio owner/name. Si se omite, se usa el guardado al lanzar o el endpoint de usuario.",
+        "description": "Repository in owner/name form. If omitted, use the saved repository or user endpoint.",
         "type": "string"
       }
     },
@@ -39,7 +39,7 @@
         ]
       },
       "resolved_model": {
-        "description": "sessions[].model, tal como lo devuelve la API.",
+        "description": "sessions[].model exactly as returned by the API.",
         "type": [
           "string",
           "null"
@@ -52,7 +52,7 @@
             "properties": {
               "id": {
                 "type": "number",
-                "description": "Id interno de la API. No es el número de la pull request."
+                "description": "Internal API ID, not the pull request number."
               },
               "number": {
                 "type": [
@@ -167,11 +167,11 @@
               },
               "amount": {
                 "type": "number",
-                "description": "Valor crudo de la API. Con ai_credits está en nano unidades."
+                "description": "Raw value from the API. ai_credits uses nano-units."
               },
               "amount_human": {
                 "type": "number",
-                "description": "ai_credits dividido entre 1e9. premium_requests se deja igual."
+                "description": "ai_credits divided by 1e9. premium_requests is unchanged."
               }
             },
             "required": [
@@ -205,7 +205,7 @@
         ]
       },
       "session_id": {
-        "description": "Id de la sesión más reciente de la tarea.",
+        "description": "ID of the task's latest session.",
         "type": [
           "string",
           "null"
@@ -232,7 +232,7 @@
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Estado de una tarea",
+    "title": "Get task status",
     "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,
