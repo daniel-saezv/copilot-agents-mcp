@@ -287,3 +287,52 @@ function textOf(result: unknown): string {
   const first: unknown = result.content[0];
   return first && typeof first === "object" && "text" in first && typeof first.text === "string" ? first.text : "";
 }
+
+describe("modelos y sesión", () => {
+  it("renueva una vez si GraphQL responde 401 y usa el token nuevo", async () => {
+    let refreshes = 0;
+    let graphql = 0;
+    const result = await readSweModels({
+      token: "access-viejo",
+      tokens: {
+        async current() {
+          return "access-viejo";
+        },
+        async refresh(rejected) {
+          expect(rejected).toBe("access-viejo");
+          refreshes += 1;
+          return "access-nuevo";
+        },
+      },
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url === GRAPHQL_URL) {
+          graphql += 1;
+          if (graphql === 1) {
+            expect(authorization).toBe("Bearer access-viejo");
+            return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 });
+          }
+          expect(authorization).toBe("Bearer access-nuevo");
+          return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
+        }
+        expect(authorization).toBe("Bearer access-nuevo");
+        return json({ data: [tokenModel] });
+      },
+    });
+    expect(refreshes).toBe(1);
+    expect(result.models.map((model) => model.id)).toEqual(["test-model-a"]);
+  });
+
+  it("nombra Agent tasks cuando la integración no tiene el permiso", async () => {
+    const error = await readSweModels({
+      token: "access-1",
+      fetchImpl: async () => new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 }),
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    if (!(error instanceof Error)) throw error;
+    expect(error.message).toContain("Falta el permiso Agent tasks");
+    expect(error.message).toContain("HTTP 403");
+    expect(error.message).not.toContain("access-1");
+  });
+});

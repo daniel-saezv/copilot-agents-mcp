@@ -24,6 +24,24 @@ export class ModelsError extends Error {
   }
 }
 
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+export class KeyringError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KeyringError";
+  }
+}
+
+export const NO_SESSION_MESSAGE = "No hay sesión de GitHub. Define GITHUB_PERSONAL_ACCESS_TOKEN o ejecuta `npx copilot-agents-mcp login`.";
+
+export type GithubPermission = "Agent tasks" | "Pull requests" | "Contents: write";
+
 export function toolError(message: string) {
   return {
     isError: true as const,
@@ -39,7 +57,13 @@ export function toolJson(value: Record<string, unknown>) {
 }
 
 export function failureMessage(error: unknown): string {
-  if (error instanceof ToolFailure || error instanceof GitHubError || error instanceof ModelsError) {
+  if (
+    error instanceof ToolFailure
+    || error instanceof GitHubError
+    || error instanceof ModelsError
+    || error instanceof AuthError
+    || error instanceof KeyringError
+  ) {
     return error.message;
   }
   if (error instanceof Error && error.message) return error.message;
@@ -103,4 +127,60 @@ function retrySeconds(headers: HeaderLookup): number | null {
 export function redact(text: string, secret: string): string {
   if (!secret) return text;
   return text.split(secret).join("[redacted]");
+}
+
+const TOKEN_SHAPE = /\b(?:github_pat_|gh[a-z]_)[A-Za-z0-9_]+\b/g;
+
+export function redactTokenShapes(text: string): string {
+  return text.replace(TOKEN_SHAPE, "[redacted]");
+}
+
+export function missingPermission(
+  status: number,
+  headers: HeaderLookup,
+  body: unknown,
+  needed: GithubPermission,
+): string | null {
+  if (status !== 403) return null;
+  const accepted = acceptedPermissions(headers.get("x-accepted-github-permissions"));
+  if (accepted.length === 1) return `Falta el permiso ${accepted[0]}.`;
+  if (accepted.length > 1) return `Faltan los permisos ${joinSpanish(accepted)}.`;
+  const blob = typeof body === "string" ? body : JSON.stringify(body ?? "");
+  if (
+    blob.includes("repository_write_access_required")
+    || /user does not have write access to every repository/i.test(blob)
+  ) {
+    return "Falta el permiso Contents: write.";
+  }
+  if (/resource not accessible by integration/i.test(blob)) return `Falta el permiso ${needed}.`;
+  return null;
+}
+
+function acceptedPermissions(header: string | null): string[] {
+  if (!header) return [];
+  const labels: string[] = [];
+  for (const part of header.split(/[;,]/)) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    const slug = (eq === -1 ? trimmed : trimmed.slice(0, eq)).trim().toLowerCase();
+    const level = eq === -1 ? "" : trimmed.slice(eq + 1).trim().toLowerCase();
+    if (!slug) continue;
+    const name = permissionLabel(slug);
+    labels.push(level ? `${name}: ${level}` : name);
+  }
+  return labels;
+}
+
+function permissionLabel(slug: string): string {
+  const words = slug.split("_").filter(Boolean);
+  const first = words[0];
+  if (!first) return slug;
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(" ");
+}
+
+function joinSpanish(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  const last = items[items.length - 1] ?? "";
+  return `${items.slice(0, -1).join(", ")} y ${last}`;
 }

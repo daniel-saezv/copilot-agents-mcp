@@ -3,9 +3,26 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  authLockPath,
+  createAppSession,
+  createMemoryStore,
+  githubAppClientId,
+  ignoredTokenWarning,
+  loginWithDeviceFlow,
+  logoutLocal,
+  logoutMessage,
+  personalAccessToken,
+  readActiveToken,
+  statusReport,
+  systemAccount,
+  type AppSession,
+  type SecretStore,
+  type StoredCredential,
+} from "./auth.ts";
 import { createGitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
-import { ToolFailure } from "./errors.ts";
+import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
 import { assertSelection, splitList, type Selection } from "./selection.ts";
 import { buildServer, defaultLaunchWatcher } from "./server.ts";
@@ -13,25 +30,27 @@ import { defaultStatePath } from "./state.ts";
 import { deliverNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 
-const TOKEN_ENVS = ["GITHUB_PERSONAL_ACCESS_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"] as const;
-
-export function readGitHubToken(env: NodeJS.ProcessEnv): string | null {
-  for (const name of TOKEN_ENVS) {
-    const value = env[name];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 export type ServeCommand = { command: "serve"; http: false; selection: Selection } | { command: "serve"; http: true; port: number; selection: Selection };
 export type WatchCommand = { command: "watch" };
-export type CliCommand = ServeCommand | WatchCommand;
+export type CliCommand = ServeCommand | WatchCommand | { command: "login" } | { command: "logout" } | { command: "status" };
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
   const args = [...argv];
   if (args[0] === "watch") {
     if (args.length > 1) throw new Error("watch no admite más argumentos.");
     return { command: "watch" };
+  }
+  if (args[0] === "login") {
+    if (args.length > 1) throw new Error("login no admite más argumentos.");
+    return { command: "login" };
+  }
+  if (args[0] === "logout") {
+    if (args.length > 1) throw new Error("logout no admite más argumentos.");
+    return { command: "logout" };
+  }
+  if (args[0] === "auth") {
+    if (args[1] !== "status" || args.length !== 2) throw new Error("Usa `auth status`.");
+    return { command: "status" };
   }
   let http = false;
   let port: number | undefined;
@@ -120,24 +139,34 @@ function helpText(): string {
     "  Servidor MCP por HTTP en 127.0.0.1.",
     "copilot-agents-mcp watch",
     "  Vigila las tareas pendientes y avisa una vez al terminar.",
+    "copilot-agents-mcp login",
+    "  Inicia sesión con la GitHub App y guarda el token en el llavero.",
+    "copilot-agents-mcp logout",
+    "  Borra la sesión del llavero.",
+    "copilot-agents-mcp auth status",
+    "  Dice qué credencial está activa, sin mostrar el token.",
     "",
     "Opciones: --toolsets, --tools, --exclude-tools, --read-only, --features",
-    "Variables: GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_TOOLSETS, GITHUB_TOOLS,",
-    "GITHUB_EXCLUDE_TOOLS, GITHUB_READ_ONLY, COPILOT_AGENTS_NOTIFY_URL,",
-    "COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH",
+    "Variables: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
+    "GITHUB_TOOLSETS, GITHUB_TOOLS, GITHUB_EXCLUDE_TOOLS, GITHUB_READ_ONLY,",
+    "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH",
   ].join("\n");
 }
 
 async function serve(command: ServeCommand): Promise<void> {
+  warnIgnored(process.env);
   const statePath = defaultStatePath();
+  const pat = personalAccessToken(process.env);
+  const session = pat ? null : await openAppSession(process.env, statePath);
+  const readToken = () => readActiveToken(process.env, () => session?.peek() ?? null);
   const deps = {
     statePath,
-    readToken: () => readGitHubToken(process.env),
-    clientForToken: (token: string) => createGitHubClient({ token }),
+    readToken,
+    clientForToken: (token: string) => createGitHubClient({ token, tokens: session ?? undefined }),
     readModels: async () => {
-      const token = readGitHubToken(process.env);
-      if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
-      return readSweModels({ token });
+      const token = readToken();
+      if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
+      return readSweModels({ token, tokens: session ?? undefined });
     },
     launchWatcher: defaultLaunchWatcher,
   };
@@ -151,20 +180,23 @@ async function serve(command: ServeCommand): Promise<void> {
 }
 
 async function watch(): Promise<void> {
-  const token = readGitHubToken(process.env);
+  warnIgnored(process.env);
+  const statePath = defaultStatePath();
+  const pat = personalAccessToken(process.env);
+  const session = pat ? null : await openAppSession(process.env, statePath);
+  const token = readActiveToken(process.env, () => session?.peek() ?? null);
   if (!token) {
-    console.error("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+    console.error(NO_SESSION_MESSAGE);
     process.exitCode = 1;
     return;
   }
-  const statePath = defaultStatePath();
   const lock = watcherLockPath(statePath);
   const acquired = await acquireWatcher(lock);
   if (!acquired) return;
   try {
     const interval = Number(process.env.COPILOT_AGENTS_POLL_INTERVAL_MS ?? "15000");
     await runWatcher({
-      client: createGitHubClient({ token }),
+      client: createGitHubClient({ token, tokens: session ?? undefined }),
       statePath,
       deliver: (notice) => deliverNotice(notice),
       intervalMs: Number.isFinite(interval) && interval >= 0 ? interval : 15_000,
@@ -184,11 +216,94 @@ async function main(): Promise<void> {
   try {
     const command = parseArgs(process.argv.slice(2), process.env);
     if (command.command === "watch") await watch();
+    else if (command.command === "login") await login();
+    else if (command.command === "logout") await logout();
+    else if (command.command === "status") await status();
     else await serve(command);
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Error.");
     process.exitCode = error instanceof Help ? 0 : 1;
   }
+}
+
+function warnIgnored(env: NodeJS.ProcessEnv): void {
+  const message = ignoredTokenWarning(env);
+  if (message) console.error(message);
+}
+
+async function openSecretStore(warnOnFailure: boolean): Promise<{ store: SecretStore; persistent: boolean }> {
+  try {
+    const { systemSecretStore } = await import("./keyring.ts");
+    return { store: systemSecretStore(), persistent: true };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "error desconocido";
+    if (warnOnFailure) {
+      console.error(`No hay llavero disponible (${reason}). El token se queda solo en la memoria de este proceso y no se escribe en disco.`);
+    }
+    return { store: createMemoryStore(), persistent: false };
+  }
+}
+
+async function openAppSession(env: NodeJS.ProcessEnv, statePath: string): Promise<AppSession> {
+  const opened = await openSecretStore(true);
+  return createAppSession({
+    store: opened.store,
+    lockPath: authLockPath(statePath),
+    clientId: githubAppClientId(env),
+    fetchImpl: fetch,
+    now: () => Date.now(),
+    warn: (message) => console.error(message),
+  });
+}
+
+async function login(): Promise<void> {
+  warnIgnored(process.env);
+  if (personalAccessToken(process.env)) {
+    console.error("GITHUB_PERSONAL_ACCESS_TOKEN está definida y tiene prioridad. La sesión de la app no se usará hasta quitar esa variable.");
+  }
+  const opened = await openSecretStore(true);
+  await loginWithDeviceFlow({
+    clientId: githubAppClientId(process.env),
+    fetchImpl: fetch,
+    sleep: (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)),
+    now: () => Date.now(),
+    store: opened.store,
+    persistent: opened.persistent,
+    stdout: (line) => console.log(line),
+    stderr: (line) => console.error(line),
+  });
+}
+
+async function logout(): Promise<void> {
+  warnIgnored(process.env);
+  const opened = await openSecretStore(true);
+  console.log(logoutMessage(logoutLocal(opened.store)));
+}
+
+async function status(): Promise<void> {
+  warnIgnored(process.env);
+  const pat = personalAccessToken(process.env);
+  const opened = await openSecretStore(!pat);
+  let stored: StoredCredential | null = null;
+  if (opened.persistent || !pat) {
+    const session = createAppSession({
+      store: opened.store,
+      lockPath: authLockPath(defaultStatePath()),
+      clientId: githubAppClientId(process.env),
+      fetchImpl: fetch,
+      now: () => Date.now(),
+      warn: (message) => {
+        if (!pat) console.error(message);
+      },
+    });
+    stored = session.stored();
+  }
+  console.log(statusReport({
+    env: process.env,
+    stored,
+    keyring: opened.persistent ? "ready" : "memory",
+    account: systemAccount(),
+  }));
 }
 
 function invokedDirectly(): boolean {

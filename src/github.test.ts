@@ -241,6 +241,70 @@ describe("API interna de tareas", () => {
   });
 });
 
+describe("credencial de la app", () => {
+  it("un 401 renueva una vez y reintenta con el token nuevo", async () => {
+    const seen: string[] = [];
+    let refreshes = 0;
+    const client = createGitHubClient({
+      token: "access-viejo",
+      tokens: {
+        async current() {
+          return "access-viejo";
+        },
+        async refresh(rejected) {
+          expect(rejected).toBe("access-viejo");
+          refreshes += 1;
+          return "access-nuevo";
+        },
+      },
+      fetch: mockFetch((_url, init) => {
+        const authorization = new Headers(init?.headers).get("authorization") ?? "";
+        seen.push(authorization);
+        if (seen.length === 1) return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 });
+        return new Response(JSON.stringify(fixture("get-task.response.json").example), { status: 200 });
+      }),
+    });
+    await expect(client.getTask({ taskId: "task-1" })).resolves.toMatchObject({ id: expect.any(String) });
+    expect(refreshes).toBe(1);
+    expect(seen).toEqual(["Bearer access-viejo", "Bearer access-nuevo"]);
+  });
+
+  it("un 401 con token fijo no reintenta", async () => {
+    let calls = 0;
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch(() => {
+        calls += 1;
+        return new Response("{}", { status: 401 });
+      }),
+    });
+    await expect(client.getTask({ taskId: "task-1" })).rejects.toThrow(/HTTP 401/);
+    expect(calls).toBe(1);
+  });
+
+  it("dice el permiso que falta", async () => {
+    const denied = (body: unknown, headers?: Record<string, string>) => createGitHubClient({
+      token,
+      fetch: mockFetch(() => new Response(JSON.stringify(body), { status: 403, headers })),
+    });
+    await expect(denied({
+      message: "user does not have write access to every repository",
+      errors: [{ code: "repository_write_access_required" }],
+    }).steerTask("task-1", "sigue")).rejects.toThrow(/Falta el permiso Contents: write/);
+    await expect(denied({ message: "Resource not accessible by integration" }).getPullRequest({
+      owner: "octocat",
+      repo: "hello-world",
+      number: 7,
+    })).rejects.toThrow(/Falta el permiso Pull requests/);
+    await expect(denied({ message: "Resource not accessible by integration" }).getTask({
+      taskId: "task-1",
+    })).rejects.toThrow(/Falta el permiso Agent tasks/);
+    await expect(denied({ message: "Resource not accessible by integration" }, {
+      "x-accepted-github-permissions": "contents=write, metadata=read",
+    }).getTask({ taskId: "task-1" })).rejects.toThrow("Faltan los permisos Contents: write y Metadata: read.");
+  });
+});
+
 describe("formatApiError", () => {
   it("calcula la espera con x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);

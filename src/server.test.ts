@@ -94,6 +94,14 @@ describe("herramientas", () => {
     expect(match?.[1]).toBe(block);
   });
 
+  it("sin credencial dice cómo iniciar sesión y no llama a la API", async () => {
+    const statePath = await tempPath();
+    const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("No hay sesión de GitHub");
+    expect(textOf(result)).toContain("npx copilot-agents-mcp login");
+  });
+
   it("corta un modelo ya rechazado y no llama a la API", async () => {
     const statePath = await tempPath();
     await withStateLock(statePath, (state) => {
@@ -628,8 +636,9 @@ async function callTool(
   args: Record<string, unknown>,
   launchWatcher: () => void = () => {},
   readModels?: ServerDeps["readModels"],
+  readToken?: () => string | null,
 ) {
-  const serverDeps = deps(statePath, client, launchWatcher);
+  const serverDeps = deps(statePath, client, launchWatcher, readToken);
   if (readModels) serverDeps.readModels = readModels;
   const mcp = buildServer(baseSelection, serverDeps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
