@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { failureMessage, modelUnavailableMessage, toolError, toolJson, ToolFailure } from "./errors.ts";
 import type { GitHubClient } from "./github.ts";
-import { readPricing, pricingResultSchema } from "./pricing.ts";
+import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { initialTask, normalizeModel, observe, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
@@ -14,7 +14,7 @@ export type ServerDeps = {
   clientForToken: (token: string) => GitHubClient;
   statePath: string;
   readToken: () => string | null;
-  readPricing: typeof readPricing;
+  readModels: () => Promise<SweModelsResult>;
   launchWatcher: () => void;
 };
 
@@ -95,12 +95,12 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   }
   if (enabled.has("list_copilot_models")) {
     server.registerTool("list_copilot_models", {
-      title: "Precios de los modelos",
-      description: "Lee la tabla oficial de precios de los modelos de Copilot y devuelve el nombre, el precio y las ofertas con fecha de fin.",
+      title: "Modelos de Copilot",
+      description: "Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe.",
       inputSchema: z.object({}).strict(),
-      outputSchema: pricingResultSchema,
-      annotations: annotations("GET", "Precios de los modelos"),
-    }, async () => run(() => deps.readPricing()));
+      outputSchema: sweModelsResultSchema,
+      annotations: annotations("GET", "Modelos de Copilot"),
+    }, async () => run(() => deps.readModels()));
   }
   return server;
 }

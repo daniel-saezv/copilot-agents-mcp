@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createGitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
-import { readPricing } from "./pricing.ts";
+import { ToolFailure } from "./errors.ts";
+import { readSweModels } from "./swe-models.ts";
 import { assertSelection, splitList, type Selection } from "./selection.ts";
 import { buildServer, defaultLaunchWatcher } from "./server.ts";
 import { defaultStatePath } from "./state.ts";
@@ -133,7 +134,11 @@ async function serve(command: ServeCommand): Promise<void> {
     statePath,
     readToken: () => readGitHubToken(process.env),
     clientForToken: (token: string) => createGitHubClient({ token }),
-    readPricing,
+    readModels: async () => {
+      const token = readGitHubToken(process.env);
+      if (!token) throw new ToolFailure("Falta la variable de entorno GITHUB_PERSONAL_ACCESS_TOKEN.");
+      return readSweModels({ token });
+    },
     launchWatcher: defaultLaunchWatcher,
   };
   if (!command.http) {

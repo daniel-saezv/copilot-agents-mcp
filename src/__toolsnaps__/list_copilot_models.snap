@@ -1,7 +1,7 @@
 {
   "name": "list_copilot_models",
-  "title": "Precios de los modelos",
-  "description": "Lee la tabla oficial de precios de los modelos de Copilot y devuelve el nombre, el precio y las ofertas con fecha de fin.",
+  "title": "Modelos de Copilot",
+  "description": "Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe.",
   "inputSchema": {
     "type": "object",
     "properties": {},
@@ -11,163 +11,125 @@
   "outputSchema": {
     "type": "object",
     "properties": {
-      "page": {
-        "type": "string"
-      },
-      "sources": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "url": {
-              "type": "string"
-            },
-            "fetched_at": {
-              "type": "string"
-            }
+      "source": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
           },
-          "required": [
-            "url",
-            "fetched_at"
-          ],
-          "additionalProperties": false
-        }
+          "fetched_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "fetched_at"
+        ],
+        "additionalProperties": false
       },
       "models": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
+            "id": {
+              "type": "string"
+            },
             "name": {
               "type": "string"
             },
-            "provider": {
+            "vendor": {
               "type": "string"
             },
-            "price": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "tier": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "threshold": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "input_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "cached_input_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "output_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "cache_write_per_1m_tokens": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "tier",
-                  "threshold",
-                  "input_per_1m_tokens",
-                  "cached_input_per_1m_tokens",
-                  "output_per_1m_tokens",
-                  "cache_write_per_1m_tokens"
-                ],
-                "additionalProperties": false
-              }
+            "preview": {
+              "type": "boolean"
             },
-            "offers": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "ends_on": {
-                    "type": "string"
+            "policy": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "state"
+              ],
+              "additionalProperties": false
+            },
+            "billing": {
+              "type": "object",
+              "properties": {
+                "token_prices": {
+                  "type": "object",
+                  "properties": {
+                    "input_price": {
+                      "type": "number"
+                    },
+                    "output_price": {
+                      "type": "number"
+                    },
+                    "cache_price": {
+                      "type": "number"
+                    },
+                    "batch_size": {
+                      "type": "number"
+                    }
                   },
-                  "input_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "cached_input_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "output_per_1m_tokens": {
-                    "type": "string"
-                  },
-                  "standard_price": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "starts_on": {
-                            "type": "string"
-                          },
-                          "input_per_1m_tokens": {
-                            "type": "string"
-                          },
-                          "cached_input_per_1m_tokens": {
-                            "type": "string"
-                          },
-                          "output_per_1m_tokens": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "starts_on",
-                          "input_per_1m_tokens",
-                          "cached_input_per_1m_tokens",
-                          "output_per_1m_tokens"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
+                  "required": [
+                    "input_price",
+                    "output_price",
+                    "cache_price",
+                    "batch_size"
+                  ],
+                  "additionalProperties": false
                 },
-                "required": [
-                  "ends_on",
-                  "input_per_1m_tokens",
-                  "cached_input_per_1m_tokens",
-                  "output_per_1m_tokens",
-                  "standard_price"
-                ],
-                "additionalProperties": false
-              }
+                "promo": {
+                  "type": "object",
+                  "properties": {
+                    "discount_percent": {
+                      "type": "number"
+                    },
+                    "ends_at": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "discount_percent",
+                    "ends_at",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                },
+                "multiplier": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [
+            "id",
             "name",
-            "provider",
-            "price",
-            "offers"
+            "vendor",
+            "preview",
+            "billing"
           ],
           "additionalProperties": false
         }
       }
     },
     "required": [
-      "page",
-      "sources",
+      "source",
       "models"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#",
     "additionalProperties": false
   },
   "annotations": {
-    "title": "Precios de los modelos",
+    "title": "Modelos de Copilot",
     "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,

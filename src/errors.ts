@@ -14,10 +14,10 @@ export class GitHubError extends Error {
   }
 }
 
-export class PricingError extends Error {
+export class ModelsError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "PricingError";
+    this.name = "ModelsError";
   }
 }
 
@@ -36,7 +36,7 @@ export function toolJson(value: Record<string, unknown>) {
 }
 
 export function failureMessage(error: unknown): string {
-  if (error instanceof ToolFailure || error instanceof GitHubError || error instanceof PricingError) {
+  if (error instanceof ToolFailure || error instanceof GitHubError || error instanceof ModelsError) {
     return error.message;
   }
   if (error instanceof Error && error.message) return error.message;

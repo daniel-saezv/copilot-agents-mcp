@@ -1,13 +1,13 @@
 # copilot-agents-mcp
 
-Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado y leer los precios oficiales de los modelos.
+Servidor MCP local para lanzar agentes de GitHub Copilot en la nube, consultar su estado y leer los modelos de Copilot.
 
 No se despliega. Se ejecuta en tu máquina con stdio o, si lo pides, con HTTP en `127.0.0.1`.
 
 ## Requisitos
 
 - Node.js 22.18 o posterior (en Windows también).
-- Un token de GitHub con el permiso «Agent tasks: read and write» en los repositorios donde lances tareas. Hace falta para lanzar y leer. No hace falta para listar las herramientas ni para leer los precios.
+- Un token de GitHub con el permiso «Agent tasks: read and write» en los repositorios donde lances tareas. Hace falta para lanzar, leer una tarea y listar los modelos. No hace falta para listar las herramientas.
 
 ## Cómo preparar el entorno
 
@@ -69,12 +69,12 @@ Por defecto están `copilot_tasks` y `copilot_models`. Los toolsets `copilot_aut
 | --- | --- | --- | --- |
 | `create_agent_task` | copilot_tasks | no | Lanza una tarea del agente de Copilot en la nube. El modelo se envía tal cual. Si ese modelo ya se vio rechazado, no llama a la API y lista los modelos vistos aceptados. |
 | `get_agent_task` | copilot_tasks | sí | Lee una vez el estado de una tarea del agente de Copilot. |
-| `list_copilot_models` | copilot_models | sí | Lee la tabla oficial de precios de los modelos de Copilot y devuelve el nombre, el precio y las ofertas con fecha de fin. |
+| `list_copilot_models` | copilot_models | sí | Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe. |
 <!-- END AUTOMATED TOOLS -->
 
 `create_agent_task` recibe `repo` (`owner/name`), `prompt`, `model` y, si quieres, `base_ref`, `head_ref`, `custom_agent` y `create_pull_request`. El modelo se envía tal cual: no hay una lista en el código. La API responde 201 y puede rechazar el modelo después. Si ya se vio ese rechazo, la herramienta corta con `isError` y lista los modelos vistos aceptados. Si el rechazo llega más tarde, el mismo error queda en el estado y en el aviso.
 
-`get_agent_task` hace una sola lectura. `list_copilot_models` lee, en cada llamada, la fuente de la página [Models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing). No mezcla tareas ni facturación. Si el formato cambia, devuelve un error y no inventa precios.
+`get_agent_task` hace una sola lectura. `list_copilot_models` pide a GraphQL (`viewer.copilotEndpoints.api`) la base de la API de Copilot y, en cada llamada, lee `{api}/agents/swe/models`. No guarda caché ni mezcla tareas. La respuesta cita esa URL y `fetched_at`. Si GraphQL o el GET no responden 200, o el formato no cuadra, devuelve un error y no inventa modelos. Los precios salen tal cual, con `batch_size`. Un modelo con `billing.multiplier` no necesita `policy` ni `token_prices`.
 
 ## Aviso al terminar
 
@@ -137,4 +137,4 @@ Las reglas para agentes están en `AGENTS.md`.
 
 [MIT](LICENSE).
 
-La referencia comunitaria [fvegiard/copilot-cloud-agent-mcp](https://github.com/fvegiard/copilot-cloud-agent-mcp) es MIT y no se copia código suyo. Los fixtures de precios vienen de [github/docs](https://github.com/github/docs) (CC-BY-4.0) y los de la API, de [github/rest-api-description](https://github.com/github/rest-api-description) (MIT).
+La referencia comunitaria [fvegiard/copilot-cloud-agent-mcp](https://github.com/fvegiard/copilot-cloud-agent-mcp) es MIT y no se copia código suyo. Los fixtures de la API de tareas vienen de [github/rest-api-description](https://github.com/github/rest-api-description) (MIT).

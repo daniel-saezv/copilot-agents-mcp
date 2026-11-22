@@ -7,12 +7,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { PricingError } from "./errors.ts";
+import { ModelsError } from "./errors.ts";
 import type { AgentTask, GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
-import type { PricingResult } from "./pricing.ts";
+import type { SweModelsResult } from "./swe-models.ts";
 import { readState, withStateLock } from "./state.ts";
 
 const dirs: string[] = [];
@@ -47,8 +47,8 @@ function deps(statePath: string, client: GitHubClient, launchWatcher: () => void
     statePath,
     clientForToken: () => client,
     readToken,
-    readPricing: async () => {
-      throw new Error("pricing");
+    readModels: async () => {
+      throw new Error("models");
     },
     launchWatcher,
   };
@@ -183,44 +183,31 @@ describe("herramientas", () => {
     expect(textOf(result)).toContain("mai-code-2");
   });
 
-  it("devuelve los precios leídos y un error si el formato cambia", async () => {
+  it("devuelve los modelos leídos y un error si el formato no cuadra", async () => {
     const statePath = await tempPath();
-    const payload: PricingResult = {
-      page: "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
-      sources: [{ url: "https://example.test/tabla", fetched_at: "2026-11-22T00:00:00.000Z" }],
+    const payload: SweModelsResult = {
+      source: { url: "https://copilot.example.test/agents/swe/models", fetched_at: "2099-01-01T00:00:00.000Z" },
       models: [{
-        name: "MAI Code 2",
-        provider: "Microsoft",
-        price: [{
-          tier: null,
-          threshold: null,
-          input_per_1m_tokens: "0.50",
-          cached_input_per_1m_tokens: "0.025",
-          output_per_1m_tokens: "2.50",
-          cache_write_per_1m_tokens: null,
-        }],
-        offers: [{
-          ends_on: "2027-05-17",
-          input_per_1m_tokens: "0.50",
-          cached_input_per_1m_tokens: "0.025",
-          output_per_1m_tokens: "2.50",
-          standard_price: {
-            starts_on: "2027-05-18",
-            input_per_1m_tokens: "1.00",
-            cached_input_per_1m_tokens: "0.05",
-            output_per_1m_tokens: "5.00",
-          },
-        }],
+        id: "test-model-a",
+        name: "Modelo de prueba A",
+        vendor: "Fabricante Ficticio",
+        preview: false,
+        policy: { state: "enabled" },
+        billing: {
+          token_prices: { input_price: 11, output_price: 22, cache_price: 3, batch_size: 1000 },
+        },
       }],
     };
     const ok = await callTool(statePath, unusedClient(), "list_copilot_models", {}, () => {}, async () => payload);
     expect(ok.isError).toBeUndefined();
-    expect(textOf(ok)).toContain("2027-05-17");
+    expect(textOf(ok)).toContain("test-model-a");
+    expect(textOf(ok)).toContain("https://copilot.example.test/agents/swe/models");
     const bad = await callTool(statePath, unusedClient(), "list_copilot_models", {}, () => {}, async () => {
-      throw new PricingError("La página de precios no tiene el formato esperado: campo desconocido extra.");
+      throw new ModelsError("GET https://copilot.example.test/agents/swe/models respondió HTTP 200 y el formato no cuadra: falta data[0].billing.token_prices");
     });
     expect(bad.isError).toBe(true);
-    expect(textOf(bad)).toContain("campo desconocido extra");
+    expect(textOf(bad)).toContain("falta data[0].billing.token_prices");
+    expect(textOf(bad)).not.toContain("test-model-a");
   });
 
   it("en solo lectura no publica la herramienta de escritura", () => {
@@ -277,10 +264,10 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
   launchWatcher: () => void = () => {},
-  readPricing?: ServerDeps["readPricing"],
+  readModels?: ServerDeps["readModels"],
 ) {
   const serverDeps = deps(statePath, client, launchWatcher);
-  if (readPricing) serverDeps.readPricing = readPricing;
+  if (readModels) serverDeps.readModels = readModels;
   const mcp = buildServer(baseSelection, serverDeps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcp.connect(serverTransport);
