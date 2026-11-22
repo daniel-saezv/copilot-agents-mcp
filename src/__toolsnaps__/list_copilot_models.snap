@@ -1,0 +1,145 @@
+{
+  "name": "list_copilot_models",
+  "title": "Modelos de Copilot",
+  "description": "Lee /agents/swe/models y devuelve id, nombre, vendor, preview, el precio por tokens o el multiplier, y la promo si existe.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "source": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "fetched_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "fetched_at"
+        ],
+        "additionalProperties": false
+      },
+      "models": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "vendor": {
+              "type": "string"
+            },
+            "preview": {
+              "type": "boolean"
+            },
+            "policy": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "state"
+              ],
+              "additionalProperties": false
+            },
+            "billing": {
+              "type": "object",
+              "properties": {
+                "token_prices": {
+                  "type": "object",
+                  "properties": {
+                    "input_price": {
+                      "type": "number"
+                    },
+                    "output_price": {
+                      "type": "number"
+                    },
+                    "cache_price": {
+                      "type": "number"
+                    },
+                    "batch_size": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "input_price",
+                    "output_price",
+                    "cache_price",
+                    "batch_size"
+                  ],
+                  "additionalProperties": false
+                },
+                "promo": {
+                  "type": "object",
+                  "properties": {
+                    "discount_percent": {
+                      "type": "number"
+                    },
+                    "ends_at": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "discount_percent",
+                    "ends_at",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                },
+                "multiplier": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "vendor",
+            "preview",
+            "policy",
+            "billing"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "source",
+      "models"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "Modelos de Copilot",
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}

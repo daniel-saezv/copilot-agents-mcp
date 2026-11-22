@@ -1,0 +1,236 @@
+{
+  "name": "get_agent_task",
+  "title": "Estado de una tarea",
+  "description": "Lee una vez el estado de una tarea del agente de Copilot.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string",
+        "description": "Identificador de la tarea."
+      },
+      "repo": {
+        "description": "Repositorio owner/name. Si se omite, se usa el guardado al lanzar o el endpoint de usuario.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string"
+      },
+      "requested_model": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "resolved_model": {
+        "description": "sessions[].model, tal como lo devuelve la API.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "pull_request": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "number",
+                "description": "Id interno de la API. No es el número de la pull request."
+              },
+              "number": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "html_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "number",
+              "html_url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "branch": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "head_ref": {
+                "type": "string"
+              },
+              "base_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "head_ref",
+              "base_ref"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "artifacts": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "pull"
+                },
+                "id": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "branch"
+                },
+                "head_ref": {
+                  "type": "string"
+                },
+                "base_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "head_ref",
+                "base_ref"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "usage": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ai_credits",
+                  "premium_requests"
+                ]
+              },
+              "amount": {
+                "type": "number",
+                "description": "Valor crudo de la API. Con ai_credits está en nano unidades."
+              },
+              "amount_human": {
+                "type": "number",
+                "description": "ai_credits dividido entre 1e9. premium_requests se deja igual."
+              }
+            },
+            "required": [
+              "type",
+              "amount",
+              "amount_human"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "created_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "updated_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "completed_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "task_id",
+      "repo",
+      "state",
+      "requested_model",
+      "resolved_model",
+      "pull_request",
+      "branch",
+      "artifacts",
+      "error",
+      "usage",
+      "created_at",
+      "updated_at",
+      "completed_at"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "Estado de una tarea",
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}
