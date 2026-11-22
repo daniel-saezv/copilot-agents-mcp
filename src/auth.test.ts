@@ -12,6 +12,7 @@ import {
   loginWithDeviceFlow,
   logoutLocal,
   logoutMessage,
+  readGitHubApp,
   readGitHubAppName,
   statusReport,
   systemAccount,
@@ -478,6 +479,114 @@ describe("device flow", () => {
       timeout.mockRestore();
     }
   });
+
+  it("avisa si la app no está instalada y el login termina igual", async () => {
+    const stdout: string[] = [];
+    const saved = await loginWithDeviceFlow({
+      clientId: "client-de-prueba",
+      now: () => NOW,
+      sleep: async () => {},
+      store: memoryStore(),
+      persistent: true,
+      stdout: (line) => stdout.push(line),
+      stderr: () => {},
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith("/device/code")) {
+          return oauth({
+            device_code: "device-code-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://github.com/login/device",
+            expires_in: 900,
+            interval: 1,
+          });
+        }
+        if (url.endsWith("/user/installations")) return oauth({ total_count: 0, installations: [] });
+        return oauth({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 28_800,
+          refresh_token_expires_in: 15_897_600,
+        });
+      },
+    });
+    expect(saved.where).toBe("keyring");
+    const shown = stdout.join("\n");
+    expect(shown).toContain("La app no está instalada en ningún repositorio.");
+    expect(shown).toContain("https://github.com/apps/copilot-agents-mcp/installations/new");
+    expect(shown).not.toContain("access-1");
+  });
+
+  it("no avisa en el login si ya hay una instalación", async () => {
+    const stdout: string[] = [];
+    await loginWithDeviceFlow({
+      clientId: "client-de-prueba",
+      now: () => NOW,
+      sleep: async () => {},
+      store: memoryStore(),
+      persistent: true,
+      stdout: (line) => stdout.push(line),
+      stderr: () => {},
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith("/device/code")) {
+          return oauth({
+            device_code: "device-code-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://github.com/login/device",
+            expires_in: 900,
+            interval: 1,
+          });
+        }
+        if (url.endsWith("/user/installations")) {
+          return oauth({ total_count: 1, installations: [{ app_slug: "copilot-agents-mcp" }] });
+        }
+        if (url.includes("/apps/")) return oauth({ name: "copilot-agents-mcp" });
+        return oauth({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 28_800,
+          refresh_token_expires_in: 15_897_600,
+        });
+      },
+    });
+    const shown = stdout.join("\n");
+    expect(shown).not.toContain("no está instalada");
+    expect(shown).not.toContain("installations/new");
+  });
+
+  it("si la consulta de instalaciones falla, el login sigue sin aviso", async () => {
+    const stdout: string[] = [];
+    await expect(loginWithDeviceFlow({
+      clientId: "client-de-prueba",
+      now: () => NOW,
+      sleep: async () => {},
+      store: memoryStore(),
+      persistent: true,
+      stdout: (line) => stdout.push(line),
+      stderr: () => {},
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith("/device/code")) {
+          return oauth({
+            device_code: "device-code-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://github.com/login/device",
+            expires_in: 900,
+            interval: 1,
+          });
+        }
+        if (url.endsWith("/user/installations")) throw new Error("red");
+        return oauth({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 28_800,
+          refresh_token_expires_in: 15_897_600,
+        });
+      },
+    })).resolves.toMatchObject({ where: "keyring" });
+    expect(stdout.join("\n")).not.toContain("no está instalada");
+  });
 });
 
 describe("estado y logout", () => {
@@ -550,6 +659,38 @@ describe("estado y logout", () => {
       throw new Error(`red ${token}`);
     })).resolves.toBeNull();
     await expect(readGitHubAppName(token, async () => oauth({ installations: [] }))).resolves.toBeNull();
+    const stored: StoredCredential = {
+      access_token: token,
+      refresh_token: "ghr_refreshsecreto",
+      expires_at: NOW + 3_600_000,
+      refresh_expires_at: NOW + 86_400_000,
+    };
+    const empty = await readGitHubApp(token, async () => oauth({ total_count: 0, installations: [] }));
+    const text = statusReport({
+      env: {},
+      stored,
+      keyring: "ready",
+      account: "ada",
+      appName: empty.name,
+      appNotInstalled: empty.empty,
+    });
+    expect(text).toContain("La app no está instalada en ningún repositorio.");
+    expect(text).toContain("https://github.com/apps/copilot-agents-mcp/installations/new");
+    expect(text).not.toContain("desconocido");
+    expect(text).not.toMatch(/ghu_|ghr_/);
+    const failed = await readGitHubApp(token, async () => {
+      throw new Error("red");
+    });
+    const unknown = statusReport({
+      env: {},
+      stored,
+      keyring: "ready",
+      account: "ada",
+      appName: failed.name,
+      appNotInstalled: failed.empty,
+    });
+    expect(unknown).toContain("desconocido");
+    expect(unknown).not.toContain("installations/new");
   });
 
   it("logout es idempotente y explica cómo revocar", () => {

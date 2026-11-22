@@ -1,6 +1,6 @@
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
-import { API_VERSION, AuthError, KeyringError, NO_SESSION_MESSAGE, redact, redactTokenShapes } from "./errors.ts";
+import { API_VERSION, appNotInstalledMessage, AuthError, KeyringError, NO_SESSION_MESSAGE, redact, redactTokenShapes } from "./errors.ts";
 import { withDirectoryLock } from "./state.ts";
 
 export const KEYRING_SERVICE = "copilot-agents-mcp:github.com";
@@ -288,6 +288,7 @@ export async function loginWithDeviceFlow(options: {
   if (!options.persistent) {
     options.store.write(encoded);
     options.stderr("No hay llavero. El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.");
+    await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
   try {
@@ -295,9 +296,11 @@ export async function loginWithDeviceFlow(options: {
   } catch (error) {
     if (!(error instanceof KeyringError)) throw error;
     options.stderr(redactTokenShapes(`No hay llavero disponible (${error.message}). El token queda solo en la memoria de este proceso, no se ha escrito en disco y se pierde al salir.`));
+    await warnIfAppNotInstalled(credential.access_token, options);
     return { where: "memory", credential };
   }
   options.stdout("Sesión guardada en el llavero del sistema.");
+  await warnIfAppNotInstalled(credential.access_token, options);
   return { where: "keyring", credential };
 }
 
@@ -337,6 +340,7 @@ export function statusReport(input: {
   keyring: "ready" | "memory";
   account: string;
   appName?: string | null;
+  appNotInstalled?: boolean;
 }): string {
   if (personalAccessToken(input.env)) {
     const lines = ["Credencial activa: PAT (variable GITHUB_PERSONAL_ACCESS_TOKEN)."];
@@ -354,7 +358,7 @@ export function statusReport(input: {
   const appName = input.appName?.trim() || "desconocido";
   const lines = [
     `Credencial activa: GitHub App, ${where}.`,
-    `App: ${appName}.`,
+    input.appNotInstalled ? appNotInstalledMessage() : `App: ${appName}.`,
     `Client ID: ${clientId} (${source}).`,
     `El access token caduca el ${new Date(input.stored.expires_at).toISOString()}. Se renueva solo ${MARGIN_MINUTES} minutos antes, y también si GitHub responde 401.`,
   ];
@@ -368,16 +372,30 @@ export function statusReport(input: {
 }
 
 export async function readGitHubAppName(accessToken: string, fetchImpl: typeof fetch): Promise<string | null> {
+  return (await readGitHubApp(accessToken, fetchImpl)).name;
+}
+
+export async function readGitHubApp(accessToken: string, fetchImpl: typeof fetch): Promise<{ name: string | null; empty: boolean }> {
   try {
-    const slug = await readInstalledAppSlug(accessToken, fetchImpl);
-    if (!slug) return null;
+    const body = await readGitHubJson(fetchImpl, "https://api.github.com/user/installations", accessToken);
+    if (!body) return { name: null, empty: false };
+    if (body.total_count === 0) return { name: null, empty: true };
+    const slug = installedAppSlug(body);
+    if (!slug) return { name: null, empty: false };
     const app = await readGitHubJson(fetchImpl, `https://api.github.com/apps/${encodeURIComponent(slug)}`);
-    if (!app || typeof app.name !== "string") return null;
-    const name = app.name.trim();
-    return name || null;
+    const name = app && typeof app.name === "string" ? app.name.trim() : "";
+    return { name: name || null, empty: false };
   } catch {
-    return null;
+    return { name: null, empty: false };
   }
+}
+
+async function warnIfAppNotInstalled(accessToken: string, options: {
+  fetchImpl: typeof fetch;
+  stdout: (line: string) => void;
+}): Promise<void> {
+  const app = await readGitHubApp(accessToken, options.fetchImpl);
+  if (app.empty) options.stdout(appNotInstalledMessage());
 }
 
 function clientIdFromEnv(env: NodeJS.ProcessEnv): boolean {
@@ -385,9 +403,8 @@ function clientIdFromEnv(env: NodeJS.ProcessEnv): boolean {
   return typeof override === "string" && override.trim() !== "";
 }
 
-async function readInstalledAppSlug(accessToken: string, fetchImpl: typeof fetch): Promise<string | null> {
-  const body = await readGitHubJson(fetchImpl, "https://api.github.com/user/installations", accessToken);
-  const installations = body?.installations;
+function installedAppSlug(body: Record<string, unknown>): string | null {
+  const installations = body.installations;
   if (!Array.isArray(installations)) return null;
   for (const item of installations) {
     if (!item || typeof item !== "object") continue;

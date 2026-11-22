@@ -1,4 +1,35 @@
 export const API_VERSION = "2026-03-10";
+export const GITHUB_APP_SLUG = "copilot-agents-mcp";
+
+export function githubAppInstallUrl(): string {
+  return `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`;
+}
+
+export function appNotInstalledMessage(): string {
+  return `La app no está instalada en ningún repositorio. Instálala en ${githubAppInstallUrl()}.`;
+}
+
+export function withMissingAppInstall(message: string, status: number, path: string, appCredential: boolean): string {
+  if (!appCredential || status !== 404) return message;
+  const repository = repositoryFromPath(path);
+  if (!repository) return message;
+  return `Instala la app en ${repository.owner}/${repository.repo}: ${githubAppInstallUrl()}. ${message}`;
+}
+
+function repositoryFromPath(path: string): { owner: string; repo: string } | null {
+  const match = /\/repos\/([^/]+)\/([^/?]+)/.exec(path);
+  const ownerPart = match?.[1];
+  const repoPart = match?.[2];
+  if (!ownerPart || !repoPart) return null;
+  try {
+    const owner = decodeURIComponent(ownerPart);
+    const repo = decodeURIComponent(repoPart);
+    if (!owner || !repo) return null;
+    return { owner, repo };
+  } catch {
+    return null;
+  }
+}
 
 export const TASK_HAS_NO_PULL_REQUEST = "task_has_no_pull_request";
 export const TASK_PULL_REQUEST_NOT_OPEN = "task_pull_request_not_open";

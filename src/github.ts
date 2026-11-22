@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Ajv, type AnySchema } from "ajv";
 import addFormatsDefault from "ajv-formats";
 import type { AccessTokenSource } from "./auth.ts";
-import { GitHubError, API_VERSION, formatApiError, missingPermission, redact, type GithubPermission } from "./errors.ts";
+import { GitHubError, API_VERSION, formatApiError, missingPermission, redact, withMissingAppInstall, type GithubPermission } from "./errors.ts";
 
 export type AgentSession = {
   id?: string;
@@ -339,7 +339,8 @@ function acceptGitHub(options: GitHubCall, sent: { response: Response; parsed: u
       : formatApiError(response.status, response.headers, parsed);
     const missing = missingPermission(response.status, response.headers, parsed ?? text, options.permission);
     const message = missing ? `${missing} ${detail}` : detail;
-    throw new GitHubError(redact(message, token));
+    const annotated = withMissingAppInstall(message, response.status, options.path, options.tokens !== undefined);
+    throw new GitHubError(redact(annotated, token));
   }
   if (options.acceptEmpty && response.status === 202) return undefined;
   if (parsed === null) throw new GitHubError(`La respuesta de GitHub no es JSON (HTTP ${response.status}).`);

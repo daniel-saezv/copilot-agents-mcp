@@ -249,7 +249,7 @@ npx -y github:daniel-saezv/copilot-agents-mcp logout
 npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-`logout` borra la entrada del llavero e indica cómo revocar el acceso: Settings → Applications → Authorized GitHub Apps. Para quitar la app de los repositorios, desinstálala. `auth status` dice el mecanismo activo: PAT, por la variable `GITHUB_PERSONAL_ACCESS_TOKEN`, o la GitHub App del llavero. En la app muestra el nombre, el client ID efectivo, si sale del valor por defecto o de `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, y la caducidad del access token y del refresh token. No imprime el token. Si no puede obtener el nombre, muestra «desconocido» y sigue.
+`logout` borra la entrada del llavero e indica cómo revocar el acceso: Settings → Applications → Authorized GitHub Apps. Para quitar la app de los repositorios, desinstálala. `auth status` dice el mecanismo activo: PAT, por la variable `GITHUB_PERSONAL_ACCESS_TOKEN`, o la GitHub App del llavero. En la app muestra el nombre, el client ID efectivo, si sale del valor por defecto o de `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, y la caducidad del access token y del refresh token. No imprime el token. Si no puede obtener el nombre, muestra «desconocido» y sigue. Si no hay instalaciones, `login` y `auth status` dicen que la app no está instalada en ningún repositorio y enlazan la instalación; un 404 con la app nombra el repositorio y usa el mismo enlace.
 
 ### Variables
 

@@ -14,7 +14,7 @@ import {
   logoutMessage,
   personalAccessToken,
   readActiveToken,
-  readGitHubAppName,
+  readGitHubApp,
   statusReport,
   systemAccount,
   type AppSession,
@@ -303,13 +303,14 @@ async function status(): Promise<void> {
     });
     stored = session.stored();
   }
-  const appName = !pat && stored ? await readGitHubAppName(stored.access_token, fetch) : null;
+  const app = !pat && stored ? await readGitHubApp(stored.access_token, fetch) : null;
   console.log(statusReport({
     env: process.env,
     stored,
     keyring: opened.persistent ? "ready" : "memory",
     account: systemAccount(),
-    appName,
+    appName: app?.name ?? null,
+    appNotInstalled: app?.empty === true,
   }));
 }
 
