@@ -1,9 +1,9 @@
-## What
+## Qué
 
-## Why
+## Por qué
 
-## How it was tested
+## Cómo se ha probado
 
-## Evidence
+## Evidencias
 
-Link screenshots or a recording for visual changes.
+Si hay cambios visuales, enlaza capturas o una grabación.

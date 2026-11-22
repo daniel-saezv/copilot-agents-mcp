@@ -22,10 +22,10 @@ jobs:
           node-version: "26"
           cache: npm
 
-      - name: Instalar
+      - name: Install
         run: npm ci
 
-      - name: Tipos
+      - name: Typecheck
         run: npm run typecheck
 
       - name: Lint
@@ -34,13 +34,13 @@ jobs:
       - name: Tests
         run: npm test
 
-      - name: Paquete
+      - name: Package smoke test
         run: node scripts/pack-smoke.mjs
 
       - name: Audit
         run: npm audit --audit-level=low
 
-      - name: Licencias
+      - name: Licenses
         run: npm run licenses
 
   codeql:
@@ -53,10 +53,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Inicializar CodeQL
+      - name: Initialize CodeQL
         uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           languages: javascript-typescript
 
-      - name: Analizar
+      - name: Analyze
         uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
