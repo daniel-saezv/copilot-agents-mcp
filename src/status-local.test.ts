@@ -7,7 +7,6 @@ import {
   envFlagSet,
   formatDbusDiagnostics,
   formatNotifyEnvDiagnostics,
-  notifyAuthorizationWarnings,
   probeStateWritable,
 } from "./status-local.ts";
 
@@ -40,7 +39,7 @@ describe("notify env diagnostics", () => {
     expect(formatNotifyEnvDiagnostics({})).toEqual(["  Info: webhook: not configured (optional)"]);
   });
 
-  it("reports valid webhook config without warnings", () => {
+  it("reports both set without warnings", () => {
     const secretUrl = "https://notify-host-7xkq99.example/webhook/segment-xy99";
     const secretAuth = "Bearer key-part-7xkq99-xy99";
     const lines = formatNotifyEnvDiagnostics({
@@ -66,31 +65,10 @@ describe("notify env diagnostics", () => {
   it("warns when only authorization is set", () => {
     const secretAuth = "Bearer only-auth-7xkq99";
     const lines = formatNotifyEnvDiagnostics({ COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth });
+    expect(lines[0]).toBe("COPILOT_AGENTS_NOTIFY_URL: no");
     expect(lines[1]).toBe("COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes");
-    expect(lines.some((line) => line.includes("Warning:") && line.includes("COPILOT_AGENTS_NOTIFY_AUTHORIZATION is set"))).toBe(true);
+    expect(lines[2]).toMatch(/Warning:.*COPILOT_AGENTS_NOTIFY_AUTHORIZATION is set but COPILOT_AGENTS_NOTIFY_URL is not/);
     noSecrets(lines.join("\n"), [secretAuth]);
-  });
-
-  it("warns when authorization looks like a URL", () => {
-    const lines = formatNotifyEnvDiagnostics({
-      COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
-      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "https://wrong.example/paste",
-    });
-    expect(lines.some((line) => line.includes("Warning:") && line.includes("looks like a URL"))).toBe(true);
-    noSecrets(lines.join("\n"), ["wrong.example", "https://wrong.example/paste"]);
-  });
-
-  it("warns when authorization lacks the Bearer prefix", () => {
-    const lines = formatNotifyEnvDiagnostics({
-      COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
-      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "plain-key-only",
-    });
-    expect(lines.some((line) => line.includes("Warning:") && line.includes("Bearer "))).toBe(true);
-    noSecrets(lines.join("\n"), ["plain-key-only"]);
-  });
-
-  it("does not warn on well-formed Bearer authorization", () => {
-    expect(notifyAuthorizationWarnings("Bearer routine-key")).toEqual([]);
   });
 });
 
@@ -141,13 +119,12 @@ describe("buildLocalStatusDiagnostics", () => {
     expect(text).not.toMatch(/Warning:/);
   });
 
-  it("does not fail on webhook warnings alone", async () => {
+  it("does not fail on one-sided notify config", async () => {
     const home = await mkdtemp(join(tmpdir(), "status-local-home-"));
     const { failed } = await buildLocalStatusDiagnostics(
       {
         COPILOT_AGENTS_STATE_PATH: join(home, "state.json"),
         COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
-        COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "https://paste",
       },
       { home },
     );
@@ -182,8 +159,10 @@ describe("buildLocalStatusDiagnostics", () => {
 });
 
 describe("envFlagSet", () => {
-  it("treats whitespace-only values as unset", () => {
-    expect(envFlagSet({ FOO: "  " }, "FOO")).toBe(false);
+  it("uses presence only without inspecting values", () => {
+    expect(envFlagSet({}, "FOO")).toBe(false);
+    expect(envFlagSet({ FOO: "" }, "FOO")).toBe(false);
+    expect(envFlagSet({ FOO: " " }, "FOO")).toBe(true);
     expect(envFlagSet({ FOO: "x" }, "FOO")).toBe(true);
   });
 });

@@ -27,7 +27,7 @@ npx -y github:daniel-saezv/copilot-agents-mcp login
 npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-Complete the device flow in the browser. `auth status` shows the active credential without printing tokens, then **local diagnostics** (no network, never printing notify secret values): state file and lock directory writability (non-writable → exit code 1); webhook env (both unset → info: optional; mismatched pair, URL-like Authorization, or missing `Bearer ` prefix → warnings only); `DBUS_SESSION_BUS_ADDRESS` yes/no plus an info line on Linux when unset. Warnings and optional webhook do not change the exit code. Alternatively set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP server process environment (never commit tokens in project config).
+Complete the device flow in the browser. `auth status` shows the active credential without printing tokens, then **local diagnostics** (no network, never reading notify secret values): state file and lock directory writability (non-writable → exit code 1); webhook env set yes/no only (both unset → info: optional; exactly one set → warning); `DBUS_SESSION_BUS_ADDRESS` yes/no plus an info line on Linux when unset. Optional webhook and notify warnings do not change the exit code. Alternatively set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP server process environment (never commit tokens in project config).
 
 Optional: `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, `COPILOT_AGENTS_GITHUB_API_BASE_URL` (GitHub Enterprise).
 

@@ -16,24 +16,7 @@ export function stateLockDir(statePath: string): string {
 }
 
 export function envFlagSet(env: NodeJS.ProcessEnv, name: string): boolean {
-  const value = env[name];
-  return typeof value === "string" && value.trim() !== "";
-}
-
-export function notifyAuthorizationWarnings(authorization: string): string[] {
-  const trimmed = authorization.trim();
-  if (!trimmed) return [];
-  const warnings: string[] = [];
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith("http://") || lower.startsWith("https://")) {
-    warnings.push(
-      `${NOTIFY_AUTHORIZATION_ENV} looks like a URL; use the webhook URL only in ${NOTIFY_URL_ENV} and set this variable to Bearer <routine-key>.`,
-    );
-  }
-  if (!trimmed.startsWith("Bearer ")) {
-    warnings.push(`${NOTIFY_AUTHORIZATION_ENV} should start with \`Bearer \` followed by the routine Authorization key.`);
-  }
-  return warnings;
+  return name in env && env[name] !== "";
 }
 
 export function formatNotifyEnvDiagnostics(env: NodeJS.ProcessEnv): string[] {
@@ -53,13 +36,6 @@ export function formatNotifyEnvDiagnostics(env: NodeJS.ProcessEnv): string[] {
     const present = urlSet ? NOTIFY_URL_ENV : NOTIFY_AUTHORIZATION_ENV;
     const missing = urlSet ? NOTIFY_AUTHORIZATION_ENV : NOTIFY_URL_ENV;
     lines.push(`  Warning: ${present} is set but ${missing} is not; configure both or neither.`);
-  }
-
-  const auth = env[NOTIFY_AUTHORIZATION_ENV];
-  if (typeof auth === "string" && auth.trim()) {
-    for (const warning of notifyAuthorizationWarnings(auth)) {
-      lines.push(`  Warning: ${warning}`);
-    }
   }
 
   return lines;
