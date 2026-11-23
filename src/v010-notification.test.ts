@@ -204,6 +204,32 @@ export function unusedClient(): GitHubClient {
   };
 }
 
+describe("v0.1.0 session and PR urls", () => {
+  it("list rows include session_url and pr_url", async () => {
+    const path = await stateFile();
+    await withStateLock(path, (state) => {
+      state.tasks.done = {
+        ...initialTask({
+          id: "done",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-02T00:00:00Z",
+          htmlUrl: "https://github.com/octocat/hello-world/copilot/tasks/done",
+        }),
+        pull_request: { id: 1, number: 2, html_url: "https://github.com/octocat/hello-world/pull/2" },
+        completed_at: "2026-01-02T00:00:00Z",
+      };
+    });
+    const row = (await import("./tasks.ts")).toListRow((await readState(path)).tasks.done ?? initialTask({
+      id: "x", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null,
+    }));
+    expect(row.session_url).toBe("https://github.com/octocat/hello-world/copilot/tasks/done");
+    expect(row.pr_url).toBe("https://github.com/octocat/hello-world/pull/2");
+  });
+});
+
 describe("v0.1.0 watcher channel guard", () => {
   it("activeNotificationChannels may be empty in CI", () => {
     expect(Array.isArray(activeNotificationChannels(process.platform, process.env))).toBe(true);

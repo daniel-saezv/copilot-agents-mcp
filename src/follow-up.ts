@@ -8,6 +8,7 @@ export type FollowUpBlock = {
   check_after: string;
   min_interval_s: number;
   check_with: "list_agent_tasks";
+  session_url?: string;
 };
 
 export const DEFAULT_FIRST_CHECK_MS = 10 * 60 * 1000;
@@ -42,6 +43,7 @@ export function followUpBlock(
   channels: NotifyChannel[],
   watcherStarted: boolean,
   now = Date.now(),
+  sessionUrl?: string,
 ): FollowUpBlock {
   const plan = followUpMode(channels, watcherStarted);
   const block: FollowUpBlock = {
@@ -51,6 +53,7 @@ export function followUpBlock(
     check_with: "list_agent_tasks",
   };
   if (plan.channels.length > 0) block.channels = plan.channels;
+  if (sessionUrl) block.session_url = sessionUrl;
   return block;
 }
 

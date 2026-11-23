@@ -1,4 +1,5 @@
 import type { TrackedTask } from "./state.ts";
+import { appendUrlHints, prUrl, sessionUrl } from "./task-urls.ts";
 
 export type TaskStatusName = "working" | "needs_input" | "completed" | "failed" | "cancelled";
 
@@ -52,13 +53,16 @@ export type SummaryContext = {
 export function buildSummary(task: TrackedTask, context: SummaryContext = {}): string {
   const mapped = mapRawState(task.state);
   const dur = durationLabel(task);
+  const session = sessionUrl(task);
+  const prLink = prUrl(task);
+  const withHints = (base: string) => appendUrlHints(base, session, prLink);
   if (mapped.status === "working") {
-    if (context.checkAfterLocal) return `Working for ${dur}. Check again after ${context.checkAfterLocal}.`;
-    return `Working for ${dur}.`;
+    if (context.checkAfterLocal) return withHints(`Working for ${dur}. Check again after ${context.checkAfterLocal}.`);
+    return withHints(`Working for ${dur}.`);
   }
   if (mapped.status === "needs_input") {
     const line = task.error ? sanitizeLine(task.error, 120) : "agent";
-    return `Waiting for input: ${line}.`;
+    return withHints(`Waiting for input: ${line}.`);
   }
   if (mapped.status === "completed") {
     const pr = task.pull_request;
@@ -68,22 +72,22 @@ export function buildSummary(task: TrackedTask, context: SummaryContext = {}): s
       const titleText = "";
       void titleText;
       const prTitle = resolvePullTitle(task);
-      if (prTitle) return `Completed in ${dur}: opened PR #${pr.number} '${sanitizeLine(prTitle, 60)}'.`;
-      return `Completed in ${dur}: opened PR #${pr.number}.`;
+      if (prTitle) return withHints(`Completed in ${dur}: opened PR #${pr.number} '${sanitizeLine(prTitle, 60)}'.`);
+      return withHints(`Completed in ${dur}: opened PR #${pr.number}.`);
     }
     if (pr && pr.number === null) {
-      return `Completed in ${dur}: opened a pull request (number not resolved yet).`;
+      return withHints(`Completed in ${dur}: opened a pull request (number not resolved yet).`);
     }
     const head = task.branch?.head_ref;
-    if (head) return `Completed in ${dur} on branch ${sanitizeLine(head, 40)}.`;
-    return `Completed in ${dur}; no changes.`;
+    if (head) return withHints(`Completed in ${dur} on branch ${sanitizeLine(head, 40)}.`);
+    return withHints(`Completed in ${dur}; no changes.`);
   }
   if (mapped.status === "failed") {
-    if (task.state === "timed_out") return "Failed: timed out after 60m.";
+    if (task.state === "timed_out") return withHints("Failed: timed out after 60m.");
     const line = task.error ? sanitizeLine(task.error, 100) : "unknown error";
-    return `Failed after ${dur}: ${line}.`;
+    return withHints(`Failed after ${dur}: ${line}.`);
   }
-  return `Cancelled after ${dur}.`;
+  return withHints(`Cancelled after ${dur}.`);
 }
 
 function resolvePullTitle(task: TrackedTask): string | null {

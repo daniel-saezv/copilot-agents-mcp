@@ -96,6 +96,8 @@ The watcher polls pending tasks, stores local state, and sends completion notifi
 
 Several agents on one machine can share one MCP server process, state file, and GitHub token. The server cannot tell callers apart; pass a stable `owner` on `create_agent_task` and filter with `list_agent_tasks` — that is a labeling convention, not a security boundary.
 
+Compact task results include `session_url` (Copilot agent session page) and `pr_url` when GitHub already returned them — no extra API calls.
+
 ## Release
 
 Push a tag `vMAJOR.MINOR.PATCH`. The release workflow checks that the tag (without the leading `v`) matches `version` in `package.json`, then runs typecheck, lint, tests, build, and a package smoke test on Node 26. The `publish` job stages the version on npm with `npm stage publish --provenance --access public` using [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers/) (no npm tokens). The maintainer (Gamusino) approves each staged release on [npmjs.com](https://www.npmjs.com/) with 2FA before it becomes the live version.

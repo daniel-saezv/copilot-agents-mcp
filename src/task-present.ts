@@ -3,6 +3,7 @@ import { deliveryForTask } from "./delivery.ts";
 import { buildSummary, mapRawState, pullRequestView } from "./task-status.ts";
 import type { TrackedTask, Usage } from "./state.ts";
 import { formatCheckAfterLocal } from "./tasks.ts";
+import { prUrl, sessionUrl } from "./task-urls.ts";
 
 const ERROR_VERBOSE_MAX = 2048;
 
@@ -30,8 +31,12 @@ export function compactGetTask(
     delivery,
   };
   if (task.owner) body.owner = task.owner;
+  const session = sessionUrl(task);
+  if (session) body.session_url = session;
+  const prLink = prUrl(task);
+  if (prLink) body.pr_url = prLink;
   const pr = pullRequestView(task);
-  if (pr) body.pull_request = pr;
+  if (pr && options?.verbose) body.pull_request = pr;
   if (task.completed_at) body.completed_at = task.completed_at;
   if (!mapped.terminal && options?.checkAfter) {
     body.next_step = `Still working (${buildSummary(task).match(/for (\d+m)/)?.[1] ?? "a while"}). End your turn; check again after ${formatCheckAfterLocal(options.checkAfter)}.`;

@@ -83,6 +83,7 @@ const followUpSchema = z.object({
   check_after: z.string(),
   min_interval_s: z.number(),
   check_with: z.literal("list_agent_tasks"),
+  session_url: z.string().optional(),
 }).strict();
 
 const createOutput = z.object({
@@ -92,7 +93,7 @@ const createOutput = z.object({
   status: z.enum(["working", "needs_input", "completed", "failed", "cancelled"]),
   terminal: z.boolean(),
   requested_model: z.string(),
-  html_url: z.string().optional(),
+  session_url: z.string().optional(),
   follow_up: followUpSchema,
   next_step: z.string(),
 }).strict();
@@ -304,6 +305,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       updatedAt: task.updated_at ?? null,
       ...(taskOwner ? { owner: taskOwner } : {}),
       deliveryRecord,
+      htmlUrl: task.html_url ?? task.url ?? null,
     });
   });
   let watcher_started = false;
@@ -315,7 +317,8 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
     }
   }
-  const follow_up = followUpBlock(channels, watcher_started);
+  const session = task.html_url ?? task.url ?? undefined;
+  const follow_up = followUpBlock(channels, watcher_started, Date.now(), session);
   const planMode = follow_up.mode;
   const next_step = createFollowUpNextStep(planMode, taskOwner, task.id, channels.length > 0 && !watcher_started);
   const body: Record<string, unknown> = {
@@ -328,7 +331,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     next_step,
   };
   if (taskOwner) body.owner = taskOwner;
-  if (task.html_url) body.html_url = task.html_url;
+  if (session) body.session_url = session;
   return body;
 }
 

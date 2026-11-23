@@ -402,6 +402,7 @@ describe("tools", () => {
     const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id, verbose: true });
     expect(broken.isError).toBeUndefined();
     expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42 });
+    expect(JSON.parse(textOf(broken)).pr_url).toBeUndefined();
     const urls: string[] = [];
     const client = createGitHubClient({
       token: "test-token",
@@ -415,7 +416,7 @@ describe("tools", () => {
     const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(ok.isError).toBeUndefined();
     const body = JSON.parse(textOf(ok)) as { pull_request: unknown; usage: unknown; branch: unknown; resolved_model: string };
-    expect(body.pull_request).toEqual({ number: 7, url: "https://github.com/octocat/hello-world/pull/7" });
+    expect(body.pr_url).toBe("https://github.com/octocat/hello-world/pull/7");
     expect(body.usage).toEqual({ type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 });
     expect(body.resolved_model).toBe("claude-sonnet-4.6");
     expect(urls.some((url) => url.includes("head=octocat%3Acopilot%2Ffix-1"))).toBe(true);
@@ -457,10 +458,7 @@ describe("tools", () => {
     const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(result.isError).toBeUndefined();
     expect(pulls).toBe(0);
-    expect(JSON.parse(textOf(result)).pull_request).toEqual({
-      number: 7,
-      url: "https://github.com/octocat/hello-world/pull/7",
-    });
+    expect(JSON.parse(textOf(result)).pr_url).toBe("https://github.com/octocat/hello-world/pull/7");
   });
 
   it("returns read models and an error for an invalid format", async () => {

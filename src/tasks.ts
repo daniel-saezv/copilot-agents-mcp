@@ -1,5 +1,6 @@
 import type { GitHubClient } from "./github.ts";
-import { buildSummary, mapRawState, pullRequestView, type MappedStatus } from "./task-status.ts";
+import { buildSummary, mapRawState, type MappedStatus } from "./task-status.ts";
+import { prUrl, sessionUrl } from "./task-urls.ts";
 import {
   fillPullRequest,
   headRefOf,
@@ -36,6 +37,7 @@ export type ListTaskRow = {
   terminal: boolean;
   summary: string;
   pr_url?: string;
+  session_url?: string;
   updated_at?: string;
   stale?: true;
   cached?: true;
@@ -162,8 +164,10 @@ export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached
     updated_at: task.updated_at ?? undefined,
   };
   if (task.owner) row.owner = task.owner;
-  const pr = pullRequestView(task);
-  if (pr && "url" in pr && pr.url) row.pr_url = pr.url;
+  const session = sessionUrl(task);
+  if (session) row.session_url = session;
+  const link = prUrl(task);
+  if (link) row.pr_url = link;
   if (options?.stale) row.stale = true;
   if (options?.cached) row.cached = true;
   return row;

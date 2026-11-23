@@ -61,6 +61,7 @@ export type TrackedTask = {
   delivery_record?: DeliveryRecord | null;
   last_fetched_at?: string | null;
   pr_title?: string | null;
+  html_url?: string | null;
   session_id?: string | null;
   steer?: SteerWatch | null;
 };
@@ -222,6 +223,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
         : existing?.delivery_record ?? null),
     last_fetched_at: existing?.last_fetched_at ?? null,
     pr_title: existing?.pr_title ?? null,
+    html_url: task.html_url ?? task.url ?? existing?.html_url ?? null,
     session_id: latestSessionId(sessions) ?? existing?.session_id ?? null,
     steer,
   };
@@ -317,6 +319,7 @@ export function initialTask(input: {
   updatedAt: string | null;
   owner?: string;
   deliveryRecord?: DeliveryRecord | null;
+  htmlUrl?: string | null;
 }): TrackedTask {
   return {
     task_id: input.id,
@@ -335,6 +338,7 @@ export function initialTask(input: {
     completed_at: null,
     notified_at: null,
     delivery_record: input.deliveryRecord ?? null,
+    html_url: input.htmlUrl ?? null,
   };
 }
 

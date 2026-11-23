@@ -77,7 +77,7 @@
       "requested_model": {
         "type": "string"
       },
-      "html_url": {
+      "session_url": {
         "type": "string"
       },
       "follow_up": {
@@ -110,6 +110,9 @@
           "check_with": {
             "type": "string",
             "const": "list_agent_tasks"
+          },
+          "session_url": {
+            "type": "string"
           }
         },
         "required": [
