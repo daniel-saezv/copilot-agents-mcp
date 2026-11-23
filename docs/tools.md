@@ -4,9 +4,11 @@
 
 All schemas reject additional properties. GET tools are read-only. POST tools are not marked idempotent.
 
+The MCP server also publishes **instructions** at initialize time: cloud tasks take minutes, `create_agent_task` returns immediately, clients must not poll in a loop, and completion arrives outside MCP through the notification channels listed in the create response (or a user follow-up).
+
 ## `create_agent_task`
 
-Launch a GitHub Copilot cloud agent task.
+Launch a GitHub Copilot cloud agent task. Returns immediately; do not poll in a loop—end the turn and wait for `notification.channels` or a user prompt before calling `get_agent_task`.
 
 Input:
 
@@ -20,7 +22,7 @@ Input:
 | `custom_agent` | string | no | Custom agent name without the extension. |
 | `create_pull_request` | boolean | no | When true, the API creates a pull request. |
 
-Output: `task_id`, `repo`, `state`, `requested_model`, nullable `created_at`, and nullable `html_url`.
+Output: `task_id`, `repo`, `state`, `requested_model`, nullable `created_at`, nullable `html_url`, and `notification` (`channels`: `system` and/or `webhook` in effect, plus `watcher_started`).
 
 The server blocks a model already recorded as rejected and lists accepted models observed so far.
 
@@ -53,6 +55,7 @@ Output fields:
 | `updated_at` | string or null | Update time. |
 | `completed_at` | string or null | Completion time. |
 | `session_id` | string or null | Latest session ID. |
+| `notified` | boolean | `true` after the watcher delivered a completion notice; `false` if still pending or delivery failed. |
 
 For `ai_credits`, `amount_human` is `amount / 1e9`. For `premium_requests`, it equals `amount`.
 

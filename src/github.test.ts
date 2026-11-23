@@ -332,6 +332,26 @@ describe("app credential", () => {
   });
 });
 
+describe("timeouts", () => {
+  it("fails create_agent_task when the GitHub fetch never resolves", async () => {
+    const client = createGitHubClient({
+      token,
+      fetchTimeoutMs: 50,
+      fetch: (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }),
+    });
+    await expect(client.createTask({
+      owner: "octocat",
+      repo: "hello-world",
+      prompt: "x",
+      model: "mai-code-2",
+    })).rejects.toThrow(/timed out after 50 milliseconds/);
+  });
+});
+
 describe("formatApiError", () => {
   it("calculates the wait from x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);

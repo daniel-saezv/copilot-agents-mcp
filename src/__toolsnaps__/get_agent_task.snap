@@ -210,6 +210,10 @@
           "string",
           "null"
         ]
+      },
+      "notified": {
+        "type": "boolean",
+        "description": "True when the watcher recorded a successful completion notification."
       }
     },
     "required": [
@@ -226,7 +230,8 @@
       "created_at",
       "updated_at",
       "completed_at",
-      "session_id"
+      "session_id",
+      "notified"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#",
     "additionalProperties": false

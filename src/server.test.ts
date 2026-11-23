@@ -57,6 +57,88 @@ function deps(statePath: string, client: GitHubClient, launchWatcher: () => void
 }
 
 describe("tools", () => {
+  it("publishes server instructions on initialize", async () => {
+    const statePath = await tempPath();
+    const mcp = buildServer(baseSelection, deps(statePath, unusedClient(), () => {}));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport);
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+    const instructions = client.getInstructions();
+    expect(instructions).toContain("do not wait on the tool");
+    expect(instructions).toContain("get_agent_task");
+    await client.close();
+    await mcp.close();
+  });
+
+  it("surfaces GitHub timeouts from create_agent_task", async () => {
+    const statePath = await tempPath();
+    const client = createGitHubClient({
+      token: "test-token",
+      fetchTimeoutMs: 50,
+      fetch: (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }),
+    });
+    const result = await callTool(statePath, client, "create_agent_task", {
+      repo: "octocat/hello-world",
+      prompt: "hola",
+      model: "mai-code-2",
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("timed out after 50 milliseconds");
+  });
+
+  it("returns notification channels and responds immediately on create", async () => {
+    const statePath = await tempPath();
+    const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    const started = performance.now();
+    try {
+      const slow: GitHubClient = {
+        async createTask() {
+          return { id: "task-1", state: "queued" };
+        },
+        async getTask() {
+          throw new Error("no");
+        },
+        async findPullRequest() {
+          throw new Error("no");
+        },
+        async getPullRequest() {
+          throw new Error("no");
+        },
+        async steerTask() {
+          throw new Error("no");
+        },
+        async abortTask() {
+          throw new Error("no");
+        },
+        async getTaskEvents() {
+          throw new Error("no");
+        },
+      };
+      const result = await callTool(statePath, slow, "create_agent_task", {
+        repo: "octocat/hello-world",
+        prompt: "hola",
+        model: "freeform-model",
+      });
+      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(result.isError).toBeUndefined();
+      const body = JSON.parse(textOf(result)) as {
+        notification: { channels: string[]; watcher_started: boolean };
+      };
+      expect(body.notification.channels).toContain("system");
+      expect(body.notification.channels).toContain("webhook");
+      expect(body.notification.watcher_started).toBe(true);
+    } finally {
+      if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
+      else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
+    }
+  });
+
   it("advertises the package.json version", async () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
     const statePath = await tempPath();
@@ -492,6 +574,7 @@ describe("experimental task steering", () => {
       statePath,
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
+        return { channels: ["system"] as const };
       },
       intervalMs: 0,
       sleep: async () => {},
@@ -509,6 +592,7 @@ describe("experimental task steering", () => {
       statePath,
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
+        return { channels: ["system"] as const };
       },
       intervalMs: 0,
       sleep: async () => {},
