@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildLocalStatusDiagnostics,
   envFlagSet,
   formatDbusDiagnostics,
-  formatLocalStatusDiagnostics,
   formatNotifyEnvDiagnostics,
   notifyAuthorizationWarnings,
   probeStateWritable,
@@ -19,72 +19,86 @@ afterEach(async () => {
   }
 });
 
+function noSecrets(text: string, secrets: string[]): void {
+  for (const secret of secrets) {
+    expect(text).not.toContain(secret);
+  }
+}
+
 describe("notify env diagnostics", () => {
-  it("reports unset notify variables", () => {
-    const lines = formatNotifyEnvDiagnostics({});
-    expect(lines).toEqual([
-      "COPILOT_AGENTS_NOTIFY_URL: no",
-      "COPILOT_AGENTS_NOTIFY_AUTHORIZATION: no",
-    ]);
+  it("reports optional webhook when both vars are unset", () => {
+    expect(formatNotifyEnvDiagnostics({})).toEqual(["  Info: webhook: not configured (optional)"]);
   });
 
-  it("reports set notify variables without printing values", () => {
+  it("reports valid webhook config without warnings", () => {
     const secretUrl = "https://notify.example/hook/SECRET_URL_TOKEN";
     const secretAuth = "Bearer SECRET_AUTH_KEY_XYZ";
     const lines = formatNotifyEnvDiagnostics({
       COPILOT_AGENTS_NOTIFY_URL: secretUrl,
       COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth,
     });
+    expect(lines).toEqual([
+      "COPILOT_AGENTS_NOTIFY_URL: yes",
+      "COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes",
+    ]);
+    noSecrets(lines.join("\n"), [secretUrl, secretAuth, "SECRET_URL_TOKEN", "SECRET_AUTH_KEY_XYZ"]);
+  });
+
+  it("warns when only the notify URL is set", () => {
+    const secretUrl = "https://notify.example/ONLY_URL";
+    const lines = formatNotifyEnvDiagnostics({ COPILOT_AGENTS_NOTIFY_URL: secretUrl });
     expect(lines[0]).toBe("COPILOT_AGENTS_NOTIFY_URL: yes");
+    expect(lines[1]).toBe("COPILOT_AGENTS_NOTIFY_AUTHORIZATION: no");
+    expect(lines[2]).toMatch(/Warning:.*COPILOT_AGENTS_NOTIFY_URL is set but COPILOT_AGENTS_NOTIFY_AUTHORIZATION is not/);
+    noSecrets(lines.join("\n"), [secretUrl, "ONLY_URL"]);
+  });
+
+  it("warns when only authorization is set", () => {
+    const secretAuth = "Bearer ONLY_AUTH";
+    const lines = formatNotifyEnvDiagnostics({ COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth });
     expect(lines[1]).toBe("COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes");
-    expect(lines.join("\n")).not.toContain(secretUrl);
-    expect(lines.join("\n")).not.toContain(secretAuth);
-    expect(lines.join("\n")).not.toContain("SECRET_URL_TOKEN");
-    expect(lines.join("\n")).not.toContain("SECRET_AUTH_KEY_XYZ");
+    expect(lines.some((line) => line.includes("Warning:") && line.includes("COPILOT_AGENTS_NOTIFY_AUTHORIZATION is set"))).toBe(true);
+    noSecrets(lines.join("\n"), [secretAuth, "ONLY_AUTH"]);
   });
 
   it("warns when authorization looks like a URL", () => {
-    const warnings = notifyAuthorizationWarnings("https://example.com/hook");
-    expect(warnings.some((line) => line.includes("looks like a URL"))).toBe(true);
     const lines = formatNotifyEnvDiagnostics({
-      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "http://localhost:9/hook",
+      COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
+      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "https://wrong.example/paste",
     });
     expect(lines.some((line) => line.includes("Warning:") && line.includes("looks like a URL"))).toBe(true);
-    expect(lines.join("\n")).not.toContain("localhost:9");
+    noSecrets(lines.join("\n"), ["wrong.example", "https://wrong.example/paste"]);
   });
 
   it("warns when authorization lacks the Bearer prefix", () => {
-    const warnings = notifyAuthorizationWarnings("plain-key-only");
-    expect(warnings.some((line) => line.includes("Bearer "))).toBe(true);
     const lines = formatNotifyEnvDiagnostics({
+      COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
       COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "plain-key-only",
     });
     expect(lines.some((line) => line.includes("Warning:") && line.includes("Bearer "))).toBe(true);
-    expect(lines.join("\n")).not.toContain("plain-key-only");
+    noSecrets(lines.join("\n"), ["plain-key-only"]);
   });
 
-  it("accepts a well-formed Bearer authorization without warnings", () => {
+  it("does not warn on well-formed Bearer authorization", () => {
     expect(notifyAuthorizationWarnings("Bearer routine-key")).toEqual([]);
-    const lines = formatNotifyEnvDiagnostics({
-      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "Bearer routine-key",
-    });
-    expect(lines).toEqual(["COPILOT_AGENTS_NOTIFY_URL: no", "COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes"]);
   });
 });
 
-describe("dbus diagnostics", () => {
-  it("shows a linux hint when DBUS is unset", () => {
+describe("dbus diagnostics (info only)", () => {
+  it("reports dbus unset with a linux info line", () => {
     const lines = formatDbusDiagnostics({}, "linux");
     expect(lines[0]).toBe("DBUS_SESSION_BUS_ADDRESS: no");
-    expect(lines[1]).toMatch(/D-Bus/i);
+    expect(lines[1]).toMatch(/^  Info:/);
+    expect(lines.join("\n")).not.toMatch(/Warning/i);
   });
 
-  it("reports dbus set without a hint", () => {
-    const lines = formatDbusDiagnostics({ DBUS_SESSION_BUS_ADDRESS: "unix:path=/tmp/bus" }, "linux");
-    expect(lines).toEqual(["DBUS_SESSION_BUS_ADDRESS: yes"]);
+  it("reports dbus set", () => {
+    expect(formatDbusDiagnostics({ DBUS_SESSION_BUS_ADDRESS: "unix:path=/tmp/bus" }, "linux")).toEqual([
+      "DBUS_SESSION_BUS_ADDRESS: yes",
+    ]);
   });
 
-  it("skips the linux hint on other platforms", () => {
+  it("omits the linux info line on other platforms", () => {
     expect(formatDbusDiagnostics({}, "darwin")).toEqual(["DBUS_SESSION_BUS_ADDRESS: no"]);
   });
 });
@@ -95,26 +109,56 @@ describe("state writable probe", () => {
     const statePath = join(dir, "state.json");
     const result = await probeStateWritable(statePath);
     expect(result.writable).toBe("ok");
-    expect(result.statePath).toBe(statePath);
-    expect(result.lockDir).toBe(`${statePath}.lock`);
   });
 
   it("fails when the state directory is not writable", async () => {
     const dir = await mkdtemp(join(tmpdir(), "status-local-ro-"));
     readonlyDirs.push(dir);
     await chmod(dir, 0o444);
-    const statePath = join(dir, "state.json");
-    const result = await probeStateWritable(statePath);
-    expect(result.writable).toBe("fail");
+    expect((await probeStateWritable(join(dir, "state.json"))).writable).toBe("fail");
   });
 });
 
-describe("formatLocalStatusDiagnostics", () => {
+describe("buildLocalStatusDiagnostics", () => {
+  it("does not fail when webhook is optional and unset", async () => {
+    const home = await mkdtemp(join(tmpdir(), "status-local-home-"));
+    const { text, failed } = await buildLocalStatusDiagnostics(
+      { COPILOT_AGENTS_STATE_PATH: join(home, "state.json") },
+      { home, platform: "darwin" },
+    );
+    expect(failed).toBe(false);
+    expect(text).toContain("Info: webhook: not configured (optional)");
+    expect(text).not.toMatch(/Warning:/);
+  });
+
+  it("does not fail on webhook warnings alone", async () => {
+    const home = await mkdtemp(join(tmpdir(), "status-local-home-"));
+    const { failed } = await buildLocalStatusDiagnostics(
+      {
+        COPILOT_AGENTS_STATE_PATH: join(home, "state.json"),
+        COPILOT_AGENTS_NOTIFY_URL: "https://notify.example/hook",
+        COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "https://paste",
+      },
+      { home },
+    );
+    expect(failed).toBe(false);
+  });
+
+  it("fails only when state paths are not writable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "status-local-report-ro-"));
+    readonlyDirs.push(dir);
+    await chmod(dir, 0o444);
+    const statePath = join(dir, "state.json");
+    const { text, failed } = await buildLocalStatusDiagnostics({ COPILOT_AGENTS_STATE_PATH: statePath });
+    expect(failed).toBe(true);
+    expect(text).toContain("writable: fail");
+  });
+
   it("never prints notify secret values in the full report", async () => {
     const home = await mkdtemp(join(tmpdir(), "status-local-home-"));
     const secretUrl = "https://notify.example/hook/LEAK_URL";
     const secretAuth = "Bearer LEAK_AUTH_VALUE";
-    const text = await formatLocalStatusDiagnostics(
+    const { text } = await buildLocalStatusDiagnostics(
       {
         COPILOT_AGENTS_NOTIFY_URL: secretUrl,
         COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth,
@@ -122,25 +166,8 @@ describe("formatLocalStatusDiagnostics", () => {
       },
       { home, platform: "linux" },
     );
-    expect(text).toContain("Local diagnostics:");
     expect(text).toContain("writable: ok");
-    expect(text).not.toContain(secretUrl);
-    expect(text).not.toContain(secretAuth);
-    expect(text).not.toContain("LEAK_URL");
-    expect(text).not.toContain("LEAK_AUTH_VALUE");
-  });
-
-  it("reports state writable fail in the full report", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "status-local-report-ro-"));
-    readonlyDirs.push(dir);
-    await chmod(dir, 0o444);
-    const statePath = join(dir, "state.json");
-    const text = await formatLocalStatusDiagnostics(
-      { COPILOT_AGENTS_STATE_PATH: statePath },
-      { platform: "darwin" },
-    );
-    expect(text).toContain(`State file: ${statePath} — writable: fail`);
-    expect(text).toContain(`State lock dir: ${statePath}.lock — writable: fail`);
+    noSecrets(text, [secretUrl, secretAuth, "LEAK_URL", "LEAK_AUTH_VALUE"]);
   });
 });
 

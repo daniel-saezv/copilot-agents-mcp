@@ -25,7 +25,7 @@ import { createGitHubClient } from "./github.ts";
 import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
 import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
-import { formatLocalStatusDiagnostics } from "./status-local.ts";
+import { buildLocalStatusDiagnostics } from "./status-local.ts";
 import { defaultStatePath } from "./state.ts";
 import { deliverNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
@@ -265,8 +265,9 @@ async function status(): Promise<void> {
     appName: app?.name ?? null,
     appNotInstalled: app?.empty === true,
   });
-  const local = await formatLocalStatusDiagnostics(process.env);
-  console.log(`${credential}\n\n${local}`);
+  const local = await buildLocalStatusDiagnostics(process.env);
+  console.log(`${credential}\n\n${local.text}`);
+  if (local.failed) process.exitCode = 1;
 }
 
 function invokedDirectly(): boolean {

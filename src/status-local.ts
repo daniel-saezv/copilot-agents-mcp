@@ -6,6 +6,11 @@ import { NOTIFY_AUTHORIZATION_ENV, NOTIFY_URL_ENV } from "./notify.ts";
 
 export type WritableProbe = "ok" | "fail";
 
+export type LocalStatusDiagnostics = {
+  text: string;
+  failed: boolean;
+};
+
 export function stateLockDir(statePath: string): string {
   return `${statePath}.lock`;
 }
@@ -32,16 +37,31 @@ export function notifyAuthorizationWarnings(authorization: string): string[] {
 }
 
 export function formatNotifyEnvDiagnostics(env: NodeJS.ProcessEnv): string[] {
+  const urlSet = envFlagSet(env, NOTIFY_URL_ENV);
+  const authSet = envFlagSet(env, NOTIFY_AUTHORIZATION_ENV);
+
+  if (!urlSet && !authSet) {
+    return ["  Info: webhook: not configured (optional)"];
+  }
+
   const lines = [
-    `${NOTIFY_URL_ENV}: ${envFlagSet(env, NOTIFY_URL_ENV) ? "yes" : "no"}`,
-    `${NOTIFY_AUTHORIZATION_ENV}: ${envFlagSet(env, NOTIFY_AUTHORIZATION_ENV) ? "yes" : "no"}`,
+    `${NOTIFY_URL_ENV}: ${urlSet ? "yes" : "no"}`,
+    `${NOTIFY_AUTHORIZATION_ENV}: ${authSet ? "yes" : "no"}`,
   ];
+
+  if (urlSet !== authSet) {
+    const present = urlSet ? NOTIFY_URL_ENV : NOTIFY_AUTHORIZATION_ENV;
+    const missing = urlSet ? NOTIFY_AUTHORIZATION_ENV : NOTIFY_URL_ENV;
+    lines.push(`  Warning: ${present} is set but ${missing} is not; configure both or neither.`);
+  }
+
   const auth = env[NOTIFY_AUTHORIZATION_ENV];
   if (typeof auth === "string" && auth.trim()) {
     for (const warning of notifyAuthorizationWarnings(auth)) {
       lines.push(`  Warning: ${warning}`);
     }
   }
+
   return lines;
 }
 
@@ -49,7 +69,9 @@ export function formatDbusDiagnostics(env: NodeJS.ProcessEnv, platform: NodeJS.P
   const set = envFlagSet(env, "DBUS_SESSION_BUS_ADDRESS");
   const lines = [`DBUS_SESSION_BUS_ADDRESS: ${set ? "yes" : "no"}`];
   if (!set && platform === "linux") {
-    lines.push("  Hint: Without a session D-Bus, GitHub App login may fail; set DBUS_SESSION_BUS_ADDRESS or use GITHUB_PERSONAL_ACCESS_TOKEN.");
+    lines.push(
+      "  Info: Without a session D-Bus, GitHub App login may fail; set DBUS_SESSION_BUS_ADDRESS or use GITHUB_PERSONAL_ACCESS_TOKEN.",
+    );
   }
   return lines;
 }
@@ -72,10 +94,10 @@ export async function probeStateWritable(statePath: string): Promise<{ statePath
   }
 }
 
-export async function formatLocalStatusDiagnostics(
+export async function buildLocalStatusDiagnostics(
   env: NodeJS.ProcessEnv,
   options?: { home?: string; platform?: NodeJS.Platform },
-): Promise<string> {
+): Promise<LocalStatusDiagnostics> {
   const statePath = defaultStatePath(env, options?.home);
   const state = await probeStateWritable(statePath);
   const platform = options?.platform ?? process.platform;
@@ -86,5 +108,5 @@ export async function formatLocalStatusDiagnostics(
     ...formatNotifyEnvDiagnostics(env),
     ...formatDbusDiagnostics(env, platform),
   ];
-  return lines.join("\n");
+  return { text: lines.join("\n"), failed: state.writable === "fail" };
 }
