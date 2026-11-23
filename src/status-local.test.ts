@@ -22,6 +22,16 @@ afterEach(async () => {
 function noSecrets(text: string, secrets: string[]): void {
   for (const secret of secrets) {
     expect(text).not.toContain(secret);
+    if (secret.startsWith("Bearer ")) {
+      expect(text).not.toContain(secret.slice("Bearer ".length));
+    }
+    try {
+      const parsed = new URL(secret);
+      expect(text).not.toContain(parsed.host);
+      expect(text).not.toContain(parsed.pathname);
+    } catch {
+      // not a URL
+    }
   }
 }
 
@@ -31,8 +41,8 @@ describe("notify env diagnostics", () => {
   });
 
   it("reports valid webhook config without warnings", () => {
-    const secretUrl = "https://notify.example/hook/SECRET_URL_TOKEN";
-    const secretAuth = "Bearer SECRET_AUTH_KEY_XYZ";
+    const secretUrl = "https://notify-host-7xkq99.example/webhook/segment-xy99";
+    const secretAuth = "Bearer key-part-7xkq99-xy99";
     const lines = formatNotifyEnvDiagnostics({
       COPILOT_AGENTS_NOTIFY_URL: secretUrl,
       COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth,
@@ -41,24 +51,24 @@ describe("notify env diagnostics", () => {
       "COPILOT_AGENTS_NOTIFY_URL: yes",
       "COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes",
     ]);
-    noSecrets(lines.join("\n"), [secretUrl, secretAuth, "SECRET_URL_TOKEN", "SECRET_AUTH_KEY_XYZ"]);
+    noSecrets(lines.join("\n"), [secretUrl, secretAuth]);
   });
 
   it("warns when only the notify URL is set", () => {
-    const secretUrl = "https://notify.example/ONLY_URL";
+    const secretUrl = "https://only-url-7xkq.example/hook/only99";
     const lines = formatNotifyEnvDiagnostics({ COPILOT_AGENTS_NOTIFY_URL: secretUrl });
     expect(lines[0]).toBe("COPILOT_AGENTS_NOTIFY_URL: yes");
     expect(lines[1]).toBe("COPILOT_AGENTS_NOTIFY_AUTHORIZATION: no");
     expect(lines[2]).toMatch(/Warning:.*COPILOT_AGENTS_NOTIFY_URL is set but COPILOT_AGENTS_NOTIFY_AUTHORIZATION is not/);
-    noSecrets(lines.join("\n"), [secretUrl, "ONLY_URL"]);
+    noSecrets(lines.join("\n"), [secretUrl]);
   });
 
   it("warns when only authorization is set", () => {
-    const secretAuth = "Bearer ONLY_AUTH";
+    const secretAuth = "Bearer only-auth-7xkq99";
     const lines = formatNotifyEnvDiagnostics({ COPILOT_AGENTS_NOTIFY_AUTHORIZATION: secretAuth });
     expect(lines[1]).toBe("COPILOT_AGENTS_NOTIFY_AUTHORIZATION: yes");
     expect(lines.some((line) => line.includes("Warning:") && line.includes("COPILOT_AGENTS_NOTIFY_AUTHORIZATION is set"))).toBe(true);
-    noSecrets(lines.join("\n"), [secretAuth, "ONLY_AUTH"]);
+    noSecrets(lines.join("\n"), [secretAuth]);
   });
 
   it("warns when authorization looks like a URL", () => {
@@ -156,8 +166,8 @@ describe("buildLocalStatusDiagnostics", () => {
 
   it("never prints notify secret values in the full report", async () => {
     const home = await mkdtemp(join(tmpdir(), "status-local-home-"));
-    const secretUrl = "https://notify.example/hook/LEAK_URL";
-    const secretAuth = "Bearer LEAK_AUTH_VALUE";
+    const secretUrl = "https://leak-host-7xkq.example/hook/leak99";
+    const secretAuth = "Bearer leak-auth-7xkq99";
     const { text } = await buildLocalStatusDiagnostics(
       {
         COPILOT_AGENTS_NOTIFY_URL: secretUrl,
@@ -167,7 +177,7 @@ describe("buildLocalStatusDiagnostics", () => {
       { home, platform: "linux" },
     );
     expect(text).toContain("writable: ok");
-    noSecrets(text, [secretUrl, secretAuth, "LEAK_URL", "LEAK_AUTH_VALUE"]);
+    noSecrets(text, [secretUrl, secretAuth]);
   });
 });
 
