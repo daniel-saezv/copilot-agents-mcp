@@ -415,7 +415,7 @@ describe("tools", () => {
     });
     const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(ok.isError).toBeUndefined();
-    const body = JSON.parse(textOf(ok)) as { pull_request: unknown; usage: unknown; branch: unknown; resolved_model: string };
+    const body = JSON.parse(textOf(ok)) as { pr_url?: string; usage: unknown; branch: unknown; resolved_model: string };
     expect(body.pr_url).toBe("https://github.com/octocat/hello-world/pull/7");
     expect(body.usage).toEqual({ type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 });
     expect(body.resolved_model).toBe("claude-sonnet-4.6");
