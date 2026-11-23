@@ -3,17 +3,18 @@ import { ignoredTokenWarning, readActiveToken } from "./auth.ts";
 import { githubApiBase, parseArgs, supportsNode } from "./cli.ts";
 
 describe("cli", () => {
-  it("starts over stdio and only opens HTTP with the flag", () => {
-    expect(parseArgs([], {})).toMatchObject({ command: "serve", http: false });
-    expect(parseArgs(["--http"], {})).toMatchObject({ command: "serve", http: true, port: 3333 });
-    expect(parseArgs(["--http", "--port", "4010"], {})).toMatchObject({ port: 4010 });
-    expect(parseArgs(["watch"], {})).toEqual({ command: "watch" });
-    expect(parseArgs(["login"], {})).toEqual({ command: "login" });
-    expect(parseArgs(["logout"], {})).toEqual({ command: "logout" });
-    expect(parseArgs(["auth", "status"], {})).toEqual({ command: "status" });
-    expect(parseArgs(["--version"], {})).toEqual({ command: "version" });
-    expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
-    expect(() => parseArgs(["login", "--http"], {})).toThrow(/does not accept/);
+  it("serves over stdio by default", () => {
+    expect(parseArgs([])).toEqual({ command: "serve" });
+    expect(parseArgs(["watch"])).toEqual({ command: "watch" });
+    expect(parseArgs(["login"])).toEqual({ command: "login" });
+    expect(parseArgs(["logout"])).toEqual({ command: "logout" });
+    expect(parseArgs(["auth", "status"])).toEqual({ command: "status" });
+    expect(parseArgs(["--version"])).toEqual({ command: "version" });
+    expect(() => parseArgs(["auth"])).toThrow(/auth status/);
+    expect(() => parseArgs(["login", "--http"])).toThrow(/does not accept/);
+    expect(() => parseArgs(["--http"])).toThrow(/Unknown argument/);
+    expect(() => parseArgs(["--toolsets", "copilot_models"])).toThrow(/Unknown argument/);
+    expect(() => parseArgs(["--read-only"])).toThrow(/Unknown argument/);
   });
 
   it("requires https for GitHub base URL unless loopback", () => {
@@ -49,16 +50,5 @@ describe("cli", () => {
     expect(warning).not.toContain("from-hub");
     expect(ignoredTokenWarning({ GITHUB_PERSONAL_ACCESS_TOKEN: "from-pat", GH_TOKEN: "from-gh" })).toBeNull();
     expect(ignoredTokenWarning({})).toBeNull();
-  });
-
-  it("takes toolsets from flags or the environment", () => {
-    expect(parseArgs(["--toolsets", "copilot_models", "--read-only"], {})).toMatchObject({
-      selection: { toolsets: ["copilot_models"], readOnly: true, features: [] },
-    });
-    expect(parseArgs([], { GITHUB_TOOLSETS: "copilot_tasks", GITHUB_READ_ONLY: "true" })).toMatchObject({
-      selection: { toolsets: ["copilot_tasks"], readOnly: true },
-    });
-    expect(() => parseArgs(["--features", "agent_automations", "--toolsets", "copilot_automations"], {})).not.toThrow();
-    expect(() => parseArgs(["--toolsets", "copilot_automations"], {})).toThrow(/agent_automations/);
   });
 });

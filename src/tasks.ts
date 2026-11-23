@@ -73,9 +73,7 @@ export function aggregateNextCheckAfter(tasks: TrackedTask[], now = Date.now()):
   return first ? resolveNextCheckAfter(first, now) : undefined;
 }
 
-export function freshnessMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.COPILOT_AGENTS_FRESHNESS_MS?.trim();
-  if (raw && /^\d+$/.test(raw)) return Number(raw);
+export function freshnessMs(): number {
   return DEFAULT_FRESHNESS_MS;
 }
 

@@ -13,7 +13,6 @@ const expectedTools = [
   "abort_agent_task",
   "create_agent_task",
   "get_agent_task",
-  "get_agent_task_events",
   "list_agent_tasks",
   "list_copilot_models",
   "steer_agent_task",

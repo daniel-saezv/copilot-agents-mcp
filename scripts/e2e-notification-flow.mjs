@@ -129,7 +129,6 @@ try {
     COPILOT_AGENTS_GITHUB_API_BASE_URL: github.base,
     COPILOT_AGENTS_STATE_PATH: statePath,
     COPILOT_AGENTS_NOTIFY_URL: webhook.url,
-    COPILOT_AGENTS_POLL_INTERVAL_MS: "200",
     PATH: pathWithNotify,
   };
 
@@ -176,7 +175,6 @@ try {
       GITHUB_PERSONAL_ACCESS_TOKEN: "e2e-token",
       COPILOT_AGENTS_GITHUB_API_BASE_URL: failGithub.base,
       COPILOT_AGENTS_STATE_PATH: failState,
-      COPILOT_AGENTS_POLL_INTERVAL_MS: "200",
       PATH: "/nonexistent",
     };
     const failClient = await connectMcp(failEnv);

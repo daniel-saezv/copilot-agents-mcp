@@ -38,9 +38,9 @@ Node.js 26.13.1 (the package requires `>=26`) and npm 11.20.0. In development, N
 
 ### Structure
 
-- `src/cli.ts` starts stdio, HTTP, `watch`, `login`, `logout`, and `auth status`.
-- `src/server.ts` registers tools. `src/http.ts` listens on `127.0.0.1`. `src/selection.ts` applies toolsets and `X-MCP-*` headers.
-- `src/github.ts` calls the agent tasks API with `X-GitHub-Api-Version: 2026-03-10` and validates responses against the official OpenAPI. `steerTask`, `abortTask`, and `getTaskEvents` use `https://api.github.com/cmc_internal/api/agents`, with `Accept: application/json` and without that header. A 401 with a GitHub App session refreshes the token and retries once. A 403 for permissions states which permission is missing.
+- `src/cli.ts` starts stdio MCP, `watch`, `login`, `logout`, and `auth status`.
+- `src/server.ts` registers six tools and MCP `instructions`. `src/selection.ts` lists tool names only (no CLI or HTTP filtering).
+- `src/github.ts` calls the agent tasks API with `X-GitHub-Api-Version: 2026-03-10` and validates responses against the official OpenAPI. `steerTask` and `abortTask` use `https://api.github.com/cmc_internal/api/agents`, with `Accept: application/json` and without that header. A 401 with a GitHub App session refreshes the token and retries once. A 403 for permissions states which permission is missing.
 - `src/auth.ts` runs device flow, stores the session in the keyring, and refreshes the access token. `src/keyring.ts` opens `@napi-rs/keyring` with service `copilot-agents-mcp:github.com` and, on Linux, the `secret-service` backend.
 - `src/swe-models.ts` validates and reads `GET /agents/swe/models`. The base URL comes from GraphQL and is not hard-coded. `policy` and `policy.state` are optional in tool output when upstream omits them. `token_prices` is required unless the model includes `billing.multiplier`.
 - `src/state.ts`, `src/watch.ts`, and `src/notify.ts` keep local state and notify once per turn. After an accepted steer they store `session_count` and the timestamp, restart the watcher, and the notification includes `session_id`.
@@ -58,10 +58,9 @@ npm audit --audit-level=low
 npm run build
 node src/cli.ts
 node dist/cli.js --help
-node src/cli.ts --http --port 3333
 ```
 
-`bash scripts/setup` was run twice in a row on Node.js 26.13.1 and exited 0 both times. It runs `npm ci`, and `prepare` compiles `dist/`. An earlier test pass left 24 tests in 5 files. After experimental redirect, `npm test` left 45 tests in 5 files. With a GitHub App session the count rose; on Node.js 26.13.1, `npm test` leaves 75 tests in 7 files. `npm run typecheck` and `npm run lint` exited 0. `npm run licenses` accepted 94 production packages. `npm audit --audit-level=low` found 0 vulnerabilities. `npm run build` exited 0, `node dist/cli.js --help` printed help, and `node src/cli.ts --version` printed `0.0.1`. `node scripts/pack-smoke.mjs` printed `--version 0.0.1` and the 6 tools from `tools/list`.
+`bash scripts/setup` was run twice in a row on Node.js 26.13.1 and exited 0 both times. It runs `npm ci`, and `prepare` compiles `dist/`. `npm test`, `npm run typecheck`, and `npm run lint` exited 0 after shrinking the surface (stdio-only, six tools, webhook-only notifications). `npm run licenses` accepted production packages. `npm audit --audit-level=low` found 0 vulnerabilities. `npm run build` exited 0; `node dist/cli.js --help` printed help. `node scripts/pack-smoke.mjs` lists exactly six tools from `tools/list`.
 
 ### Stack-specific practices
 
@@ -82,6 +81,6 @@ The branch protection API returned 403, so required checks are not recorded here
 
 `.cursor/environment.json` only calls `bash scripts/setup`. There is no `start`: the default server stays on stdio.
 
-To test: `npm test`, `npm run typecheck`, and `npm run lint`. To list tools, run `node src/cli.ts` over stdio or `node src/cli.ts --http --port 3333` and point the client at `http://127.0.0.1:3333/mcp`.
+To test: `npm test`, `npm run typecheck`, and `npm run lint`. To list tools, run `node src/cli.ts` over stdio (MCP client or `node scripts/pack-smoke.mjs`).
 
 Secrets you can add in Cursor, with no values here: `GITHUB_PERSONAL_ACCESS_TOKEN` (needed to create a task, read a task, or list models without `login`; not needed for CI or `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` is optional and not a secret: when unset, the client ID embedded in the code is used. `COPILOT_AGENTS_GITHUB_API_BASE_URL` overrides `https://api.github.com` for local fakes and E2E.

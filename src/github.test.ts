@@ -234,38 +234,6 @@ describe("internal task API", () => {
     await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.not.toThrow(/Install the app/);
   });
 
-  it("gets an events page and preserves an empty timestamp", async () => {
-    const body = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
-      events: Array<{ type: string; timestamp?: string }>;
-      total: number;
-    };
-    let seen: { url: string; init: RequestInit | undefined } | undefined;
-    const client = createGitHubClient({
-      token,
-      internalBaseUrl: internalBase,
-      fetch: mockFetch((url, init) => {
-        seen = { url, init };
-        return new Response(JSON.stringify(body), { status: 200 });
-      }),
-    });
-    const page = await client.getTaskEvents("task-1", 2, 2);
-    expect(seen?.url).toBe(`${internalBase}/tasks/task-1/events?per_page=2&page=2`);
-    expect(seen?.init?.method).toBe("GET");
-    const headers = new Headers(seen?.init?.headers);
-    expect(headers.get("accept")).toBe("application/json");
-    expect(headers.get("authorization")).toBe("Bearer test-token");
-    expect(headers.get("content-type")).toBeNull();
-    expect(headers.get("x-github-api-version")).toBeNull();
-    expect(page.total).toBe(4);
-    expect(page.events.map((event) => event.type)).toEqual([
-      "session.requested",
-      "user.message",
-      "tool.execution_start",
-      "assistant.usage",
-    ]);
-    expect(page.events[0]?.timestamp).toBe("0001-01-01T00:00:00Z");
-  });
-
   it("reads a pull request by number with the public API version", async () => {
     let seen = "";
     const client = createGitHubClient({
