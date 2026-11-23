@@ -36,8 +36,8 @@
   "annotations": {
     "title": "Abort task",
     "readOnlyHint": false,
-    "destructiveHint": false,
-    "idempotentHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true,
     "openWorldHint": true
   },
   "execution": {

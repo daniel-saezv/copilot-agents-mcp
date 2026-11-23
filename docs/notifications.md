@@ -1,6 +1,6 @@
 # Notifications
 
-Delivery is **at-least-once**; `get_agent_task.notified` only reflects local watcher bookkeeping, not a wake signal for your agent.
+Delivery is **at-least-once**; `get_agent_task.delivery` (`not_configured` | `pending` | `delivered` | `failed`) reflects local watcher bookkeeping, not a wake signal for your agent. v0.1.0 replaced the `notified` boolean and `notification` block on create with `delivery` and `follow_up`.
 
 Completion notices **do not** come back over MCP. The detached watcher polls GitHub and, when a task reaches a final state, delivers JSON through a desktop toast (`notify-send`, `osascript`, or PowerShell) and/or an HTTP POST. MCP clients must not poll `get_agent_task` in a loop waiting for that signal.
 

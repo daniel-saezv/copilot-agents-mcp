@@ -1,12 +1,51 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { failureMessage, modelUnavailableMessage, NO_SESSION_MESSAGE, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN, toolError, toolJson, ToolFailure } from "./errors.ts";
+import {
+  CodedToolFailure,
+  failureMessage,
+  failureToError,
+  modelUnavailableMessage,
+  NO_SESSION_MESSAGE,
+  TASK_HAS_NO_PULL_REQUEST,
+  TASK_PULL_REQUEST_NOT_OPEN,
+  toolError,
+  toolJson,
+  ToolFailure,
+} from "./errors.ts";
 import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
-import { activeNotificationChannels, appendWatcherLog, createNextStep } from "./notify.ts";
-import { armSteer, fillPullRequest, headRefOf, initialTask, normalizeModel, observe, taskSessionCount, toNotice, withStateLock } from "./state.ts";
+import { shouldSpawnWatcher } from "./delivery.ts";
+import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
+import { activeNotificationChannels, appendWatcherLog } from "./notify.ts";
+import { compactGetTask } from "./task-present.ts";
+import { mapRawState } from "./task-status.ts";
+import {
+  filterTasks,
+  formatCheckAfterLocal,
+  freshnessMs,
+  listCounts,
+  listNextStep,
+  needsFetch,
+  OwnerValidationError,
+  pruneRegistry,
+  refreshTasks,
+  toListRow,
+  validateOwner,
+} from "./tasks.ts";
+import {
+  armSteer,
+  fillPullRequest,
+  headRefOf,
+  initialTask,
+  isFinalState,
+  normalizeModel,
+  observe,
+  taskSessionCount,
+  withStateLock,
+  type TrackedTask,
+} from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
 export function packageVersion(): string {
@@ -25,6 +64,8 @@ export type ServerDeps = {
   launchWatcher: () => void;
 };
 
+const OWNER_FIELD = "Stable name of the agent or bot launching the task (e.g. your own name). Several agents may share this server; pass the same owner every time and filter list_agent_tasks by it.";
+
 const createInput = z.object({
   repo: z.string().describe("Repository in owner/name form."),
   prompt: z.string().describe("Instructions for the agent."),
@@ -33,71 +74,53 @@ const createInput = z.object({
   head_ref: z.string().optional().describe("Existing branch. With base_ref, the agent commits to this branch."),
   custom_agent: z.string().optional().describe("Custom agent name without the extension."),
   create_pull_request: z.boolean().optional().describe("When true, the API creates a pull request."),
+  owner: z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).optional().describe(OWNER_FIELD),
 }).strict();
 
-const notificationOutput = z.object({
-  channels: z.array(z.enum(["system", "webhook"])),
-  watcher_started: z.boolean(),
+const followUpSchema = z.object({
+  mode: z.enum(["push", "user_push", "check_later"]),
+  channels: z.array(z.enum(["webhook", "system"])).optional(),
+  check_after: z.string(),
+  min_interval_s: z.number(),
+  check_with: z.literal("list_agent_tasks"),
 }).strict();
 
 const createOutput = z.object({
   task_id: z.string(),
   repo: z.string(),
-  state: z.string(),
+  owner: z.string().optional(),
+  status: z.enum(["working", "needs_input", "completed", "failed", "cancelled"]),
+  terminal: z.boolean(),
   requested_model: z.string(),
-  created_at: z.string().nullable(),
-  html_url: z.string().nullable(),
-  notification: notificationOutput,
+  html_url: z.string().optional(),
+  follow_up: followUpSchema,
   next_step: z.string(),
 }).strict();
 
 const SERVER_INSTRUCTIONS = [
-  "GitHub Copilot agent tasks run in the cloud and often take minutes.",
-  "create_agent_task returns right after the task is queued; do not wait on the tool or poll get_agent_task in a loop.",
-  "End your turn after create_agent_task; completion is signaled outside MCP (see notification.channels in the create response).",
-  "Call get_agent_task once later when the user asks or after you receive a completion signal.",
+  "Copilot cloud tasks take minutes. Tools never wait.",
+  "Pass a stable owner (your own name) to create_agent_task.",
+  "After creating, end your turn and follow next_step.",
+  "To check progress, call list_agent_tasks with your owner, once, no more often than every 5 minutes; stop checking when all_terminal is true.",
+  "Call get_agent_task for one task's full result.",
 ].join(" ");
 
-const CREATE_TASK_GUIDANCE = "Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task.";
-
-const artifactSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("pull"), id: z.number() }).strict(),
-  z.object({ type: z.literal("branch"), head_ref: z.string(), base_ref: z.string() }).strict(),
-]);
-
-const usageSchema = z.object({
-  type: z.enum(["ai_credits", "premium_requests"]),
-  amount: z.number().describe("Raw value from the API. ai_credits uses nano-units."),
-  amount_human: z.number().describe("ai_credits divided by 1e9. premium_requests is unchanged."),
-}).strict();
-
-const pullRequestSchema = z.object({
-  id: z.number().describe("Internal API ID, not the pull request number."),
-  number: z.number().nullable(),
-  html_url: z.string().nullable(),
-}).strict();
-
-const statusOutput = z.object({
-  task_id: z.string(),
-  repo: z.string(),
-  state: z.string(),
-  requested_model: z.string().nullable(),
-  resolved_model: z.string().nullable().describe("sessions[].model exactly as returned by the API."),
-  pull_request: pullRequestSchema.nullable(),
-  branch: z.object({ head_ref: z.string(), base_ref: z.string() }).strict().nullable(),
-  artifacts: z.array(artifactSchema),
-  error: z.string().nullable(),
-  usage: usageSchema.nullable(),
-  created_at: z.string().nullable(),
-  updated_at: z.string().nullable(),
-  completed_at: z.string().nullable(),
-  session_id: z.string().nullable().describe("ID of the task's latest session."),
-  notified: z.boolean().describe("True when the watcher recorded a successful completion notification."),
-}).strict();
+const CREATE_TASK_GUIDANCE =
+  "Returns immediately with task_id. The task keeps running in the cloud for minutes; the task_id stays valid while GitHub keeps the task. Follow next_step.";
 
 const getInput = z.object({
   task_id: z.string().describe("Task identifier."),
   repo: z.string().optional().describe("Repository in owner/name form. If omitted, use the saved repository or user endpoint."),
+  verbose: z.boolean().optional().describe("Include raw state, models, usage, and full error."),
+}).strict();
+
+const listInput = z.object({
+  owner: z.string().optional().describe(OWNER_FIELD),
+  task_ids: z.array(z.string()).max(50).optional(),
+  status: z.enum(["pending", "terminal", "all"]).optional(),
+  repo: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+  verbose: z.boolean().optional(),
 }).strict();
 
 const experimentalNotice = "[Experimental] Undocumented internal GitHub endpoint that can change without notice.";
@@ -129,11 +152,11 @@ const eventsInput = z.object({
 }).strict();
 
 const eventOutput = z.object({
-  id: z.string().nullable(),
-  timestamp: z.string().nullable(),
-  parentId: z.string().nullable(),
+  id: z.string().optional(),
+  timestamp: z.string().optional(),
+  parentId: z.string().optional(),
   type: z.string(),
-  data: z.unknown(),
+  data: z.unknown().optional(),
 }).strict();
 
 const eventsOutput = z.object({
@@ -158,17 +181,24 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       description: `Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. ${CREATE_TASK_GUIDANCE}`,
       inputSchema: createInput,
       outputSchema: createOutput,
-      annotations: annotations("POST", "Launch Copilot task"),
+      annotations: toolAnnotations("create_agent_task", "Launch Copilot task"),
     }, async (args) => run(() => createTask(args, deps)));
   }
   if (enabled.has("get_agent_task")) {
     server.registerTool("get_agent_task", {
       title: "Get task status",
-      description: "Read a GitHub Copilot agent task once.",
+      description: "Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks.",
       inputSchema: getInput,
-      outputSchema: statusOutput,
-      annotations: annotations("GET", "Get task status"),
+      annotations: toolAnnotations("get_agent_task", "Get task status"),
     }, async (args) => run(() => readTask(args, deps)));
+  }
+  if (enabled.has("list_agent_tasks")) {
+    server.registerTool("list_agent_tasks", {
+      title: "List tracked tasks",
+      description: "One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary.",
+      inputSchema: listInput,
+      annotations: toolAnnotations("list_agent_tasks", "List tracked tasks"),
+    }, async (args) => run(() => listAgentTasks(args, deps)));
   }
   if (enabled.has("steer_agent_task")) {
     server.registerTool("steer_agent_task", {
@@ -176,7 +206,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       description: `${experimentalNotice} Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request.`,
       inputSchema: steerInput,
       outputSchema: steerOutput,
-      annotations: annotations("POST", "Steer task"),
+      annotations: toolAnnotations("steer_agent_task", "Steer task"),
     }, async (args) => run(() => steerTask(args, deps)));
   }
   if (enabled.has("abort_agent_task")) {
@@ -185,7 +215,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       description: `${experimentalNotice} Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub.`,
       inputSchema: abortInput,
       outputSchema: abortOutput,
-      annotations: annotations("POST", "Abort task"),
+      annotations: toolAnnotations("abort_agent_task", "Abort task"),
     }, async (args) => run(() => abortTask(args, deps)));
   }
   if (enabled.has("get_agent_task_events")) {
@@ -194,7 +224,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       description: `${experimentalNotice} Read one page of task events (read-only).`,
       inputSchema: eventsInput,
       outputSchema: eventsOutput,
-      annotations: annotations("GET", "Get task events"),
+      annotations: toolAnnotations("get_agent_task_events", "Get task events"),
     }, async (args) => run(() => readEvents(args, deps)));
   }
   if (enabled.has("list_copilot_models")) {
@@ -203,18 +233,24 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       description: "Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present.",
       inputSchema: z.object({}).strict(),
       outputSchema: sweModelsResultSchema,
-      annotations: annotations("GET", "List Copilot models"),
+      annotations: toolAnnotations("list_copilot_models", "List Copilot models"),
     }, async () => run(() => deps.readModels()));
   }
   return server;
 }
 
-function annotations(method: "GET" | "POST", title: string) {
+function toolAnnotations(
+  name: (typeof TOOLS)[number]["name"] | "create_agent_task",
+  title: string,
+) {
+  const readOnly = name === "get_agent_task" || name === "list_agent_tasks" || name === "get_agent_task_events" || name === "list_copilot_models";
+  const destructive = name === "abort_agent_task";
+  const idempotent = readOnly || name === "abort_agent_task";
   return {
     title,
-    readOnlyHint: method === "GET",
-    destructiveHint: false,
-    idempotentHint: method === "GET",
+    readOnlyHint: readOnly,
+    destructiveHint: destructive,
+    idempotentHint: idempotent,
     openWorldHint: true,
   };
 }
@@ -223,7 +259,11 @@ async function run(action: () => Promise<object>) {
   try {
     return toolJson(await action() as Record<string, unknown>);
   } catch (error) {
-    return toolError(failureMessage(error));
+  if (error instanceof OwnerValidationError) {
+      return toolError(new CodedToolFailure("invalid_argument", error.message).toBody());
+    }
+    if (error instanceof CodedToolFailure) return toolError(error.toBody());
+    return toolError(failureToError(error));
   }
 }
 
@@ -231,15 +271,18 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   const repo = required(args.repo, "repo");
   const prompt = required(args.prompt, "prompt");
   const model = required(args.model, "model");
+  const taskOwner = args.owner !== undefined ? validateOwner(args.owner) : undefined;
   const parsed = parseRepo(repo);
   const blocked = await withStateLock(deps.statePath, (state) => {
     const key = normalizeModel(model);
     if (!state.models.rejected.includes(key)) return null;
     return modelUnavailableMessage(model, state.models.accepted);
   });
-  if (blocked) throw new ToolFailure(blocked);
+  if (blocked) throw new CodedToolFailure("model_unavailable", blocked);
   const token = deps.readToken();
-  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
+  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
+  const channels = activeNotificationChannels(process.platform, process.env);
+  const deliveryRecord = channels.length > 0 ? { status: "pending" as const } : null;
   const task = await deps.clientForToken(token).createTask({
     owner: parsed.owner,
     repo: parsed.repo,
@@ -250,6 +293,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     ...(args.custom_agent !== undefined ? { custom_agent: args.custom_agent } : {}),
     ...(args.create_pull_request !== undefined ? { create_pull_request: args.create_pull_request } : {}),
   });
+  const mapped = mapRawState(task.state);
   await withStateLock(deps.statePath, (state) => {
     state.tasks[task.id] = initialTask({
       id: task.id,
@@ -258,60 +302,180 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       state: task.state,
       createdAt: task.created_at ?? null,
       updatedAt: task.updated_at ?? null,
+      ...(taskOwner ? { owner: taskOwner } : {}),
+      deliveryRecord,
     });
   });
   let watcher_started = false;
-  try {
-    deps.launchWatcher();
-    watcher_started = true;
-  } catch (error) {
-    console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
+  if (shouldSpawnWatcher(channels)) {
+    try {
+      deps.launchWatcher();
+      watcher_started = true;
+    } catch (error) {
+      console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
+    }
   }
-  const channels = activeNotificationChannels(process.platform, process.env);
-  return {
+  const follow_up = followUpBlock(channels, watcher_started);
+  const planMode = follow_up.mode;
+  const next_step = createFollowUpNextStep(planMode, taskOwner, task.id, channels.length > 0 && !watcher_started);
+  const body: Record<string, unknown> = {
     task_id: task.id,
     repo,
-    state: task.state,
+    status: mapped.status,
+    terminal: mapped.terminal,
     requested_model: model,
-    created_at: task.created_at ?? null,
-    html_url: task.html_url ?? null,
-    notification: {
-      channels,
-      watcher_started,
-    },
-    next_step: createNextStep(channels),
+    follow_up,
+    next_step,
   };
+  if (taskOwner) body.owner = taskOwner;
+  if (task.html_url) body.html_url = task.html_url;
+  return body;
 }
 
 async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
+  const verbose = args.verbose === true;
   const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
   const repo = args.repo?.trim() || known?.repo || "";
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
-  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
+  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
   const client = deps.clientForToken(token);
-  const remote = await client.getTask({
-    taskId,
-    ...(parsed ? { owner: parsed.owner, repo: parsed.repo } : {}),
-  });
-  const tracked = await withStateLock(deps.statePath, (state) => {
-    return observe(state, remote, {
-      repo: repo || state.tasks[taskId]?.repo || "",
-      requestedModel: state.tasks[taskId]?.requested_model ?? known?.requested_model ?? null,
-    });
-  });
-  await fillPullRequest(
-    tracked,
-    (input) => client.findPullRequest(input),
-    (line) => appendWatcherLog(line),
-    headRefOf(remote, tracked),
-  );
+  const channels = activeNotificationChannels(process.platform, process.env);
+  const freshness = freshnessMs(process.env);
+  const checkAfter = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  let tracked: TrackedTask;
+  let cached = false;
+  if (known && mapRawState(known.state).terminal) {
+    tracked = known;
+    if (tracked.pull_request && tracked.pull_request.number === null && parsed) {
+      let headRef = tracked.branch?.head_ref;
+      if (!headRef) {
+        const remote = await client.getTask({
+          taskId,
+          owner: parsed.owner,
+          repo: parsed.repo,
+        });
+        headRef = headRefOf(remote, tracked);
+      }
+      await fillPullRequest(
+        tracked,
+        (input) => client.findPullRequest(input),
+        (line) => appendWatcherLog(line),
+        headRef,
+      );
+      await withStateLock(deps.statePath, (state) => {
+        const saved = state.tasks[tracked.task_id];
+        if (saved) {
+          saved.pull_request = tracked.pull_request;
+          saved.pr_title = tracked.pr_title ?? null;
+        }
+      });
+    }
+  } else if (known && !needsFetch(known, freshness)) {
+    tracked = known;
+    cached = true;
+  } else {
+    try {
+      const remote = await client.getTask({
+        taskId,
+        ...(parsed ? { owner: parsed.owner, repo: parsed.repo } : {}),
+      });
+      tracked = await withStateLock(deps.statePath, (state) => {
+        const row = observe(state, remote, {
+          repo: repo || state.tasks[taskId]?.repo || "",
+          requestedModel: state.tasks[taskId]?.requested_model ?? known?.requested_model ?? null,
+        });
+        row.last_fetched_at = new Date().toISOString();
+        return row;
+      });
+      if (mapRawState(tracked.state).terminal) {
+        await fillPullRequest(
+          tracked,
+          (input) => client.findPullRequest(input),
+          (line) => appendWatcherLog(line),
+          headRefOf(remote, tracked),
+        );
+        await withStateLock(deps.statePath, (state) => {
+          const saved = state.tasks[tracked.task_id];
+          if (saved) {
+            saved.pull_request = tracked.pull_request;
+            saved.pr_title = tracked.pr_title ?? null;
+          }
+        });
+      }
+    } catch (error) {
+      if (known) {
+        tracked = known;
+        return {
+          ...compactGetTask(tracked, channels, { verbose, checkAfter, cached: true }),
+          stale: true,
+          warnings: [`could not refresh 1 task: ${failureMessage(error)}`],
+        };
+      }
+      const message = failureMessage(error);
+      if (/HTTP 404|not found/i.test(message)) {
+        throw new CodedToolFailure("not_found", `Task ${taskId} was not found.`);
+      }
+      throw error;
+    }
+  }
+  return compactGetTask(tracked, channels, { verbose, checkAfter, cached });
+}
+
+async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps) {
+  const token = deps.readToken();
+  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
+  const client = deps.clientForToken(token);
+  const freshness = freshnessMs(process.env);
+  const now = Date.now();
+  const input = {
+    ...(args.owner !== undefined ? { owner: args.owner } : {}),
+    ...(args.task_ids ? { task_ids: args.task_ids } : {}),
+    ...(args.status ? { status: args.status } : {}),
+    ...(args.repo ? { repo: args.repo } : {}),
+    ...(args.limit !== undefined ? { limit: args.limit } : {}),
+    verbose: args.verbose,
+  };
+  let registryEmpty = false;
+  let matchedEmpty = false;
+  let warnings: string[] = [];
+  let filtered: TrackedTask[] = [];
   await withStateLock(deps.statePath, (state) => {
-    const saved = state.tasks[tracked.task_id];
-    if (saved) saved.pull_request = tracked.pull_request;
+    pruneRegistry(state, now);
+    registryEmpty = Object.keys(state.tasks).length === 0;
+    const result = filterTasks(state, input, now);
+    filtered = result.tasks;
+    warnings = result.warnings;
+    matchedEmpty = !registryEmpty && result.total_matched === 0;
   });
-  return toNotice(tracked);
+  const staleIds = new Set<string>();
+  const toRefresh = filtered.filter((task) => needsFetch(task, freshness, now)).map((task) => task.task_id);
+  if (toRefresh.length > 0) {
+    const { failures } = await refreshTasks(deps.statePath, client, toRefresh, freshness, (line) => appendWatcherLog(line));
+    for (const [id, reason] of failures) {
+      staleIds.add(id);
+      warnings.push(`could not refresh 1 task: ${reason}`);
+    }
+  }
+  const updated = await withStateLock(deps.statePath, (state) => filterTasks(state, input, now).tasks);
+  const counts = listCounts(updated);
+  const checkAfter = new Date(now + 5 * 60 * 1000).toISOString();
+  const checkLocal = formatCheckAfterLocal(checkAfter);
+  const rows = updated.map((task) => toListRow(task, {
+    stale: staleIds.has(task.task_id) ? true : undefined,
+    checkAfterLocal: checkLocal,
+  }));
+  const body: Record<string, unknown> = {
+    tasks: rows,
+    pending_count: counts.pending_count,
+    terminal_count: counts.terminal_count,
+    all_terminal: counts.all_terminal,
+    next_step: listNextStep(counts, matchedEmpty, registryEmpty, checkLocal),
+  };
+  if (!counts.all_terminal && counts.pending_count > 0) body.next_check_after = checkAfter;
+  if (warnings.length > 0) body.warnings = warnings;
+  return body;
 }
 
 async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
@@ -362,7 +526,18 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
 async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const token = deps.readToken();
-  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
+  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
+  const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
+  if (known && isFinalState(known.state)) {
+    const mapped = mapRawState(known.state);
+    return {
+      task_id: taskId,
+      accepted: false,
+      reason: "already finished",
+      status: mapped.status,
+      terminal: true,
+    };
+  }
   await deps.clientForToken(token).abortTask(taskId);
   return { task_id: taskId, accepted: true };
 }
@@ -382,13 +557,12 @@ async function readEvents(args: z.infer<typeof eventsInput>, deps: ServerDeps) {
 }
 
 function presentEvent(event: TaskEvent): z.infer<typeof eventOutput> {
-  return {
-    id: event.id ?? null,
-    timestamp: event.timestamp ?? null,
-    parentId: event.parentId ?? null,
-    type: event.type,
-    data: event.data ?? null,
-  };
+  const body: z.infer<typeof eventOutput> = { type: event.type };
+  if (event.id) body.id = event.id;
+  if (event.timestamp) body.timestamp = event.timestamp;
+  if (event.parentId) body.parentId = event.parentId;
+  if (event.data !== undefined) body.data = event.data;
+  return body;
 }
 
 function pullArtifact(task: AgentTask): { id: number; number: number | null } | null {
@@ -427,13 +601,13 @@ function repoFromTaskUrl(url: string | undefined): string | null {
 }
 
 function required(value: string, name: string): string {
-  if (!value.trim()) throw new ToolFailure(`missing required parameter: ${name}`);
+  if (!value.trim()) throw new CodedToolFailure("invalid_argument", `missing required parameter: ${name}`);
   return value.trim();
 }
 
 export function parseRepo(repo: string): { owner: string; repo: string } {
   const match = /^([^/\s]+)\/([^/\s]+)$/.exec(repo);
-  if (!match?.[1] || !match[2]) throw new ToolFailure("repo must use the owner/name form.");
+  if (!match?.[1] || !match[2]) throw new CodedToolFailure("invalid_argument", "repo must use the owner/name form.");
   return { owner: match[1], repo: match[2] };
 }
 

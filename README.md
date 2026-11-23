@@ -73,8 +73,9 @@ Add the copilot-agents MCP server with command npx and args -y copilot-agents-mc
 <!-- START AUTOMATED TOOLS -->
 | Tool | Toolset | Read-only | Description |
 | --- | --- | --- | --- |
-| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task. |
-| `get_agent_task` | copilot_tasks | yes | Read a GitHub Copilot agent task once. |
+| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. The task keeps running in the cloud for minutes; the task_id stays valid while GitHub keeps the task. Follow next_step. |
+| `get_agent_task` | copilot_tasks | yes | Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks. |
+| `list_agent_tasks` | copilot_tasks | yes | One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary. |
 | `steer_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request. |
 | `abort_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub. |
 | `get_agent_task_events` | copilot_tasks | yes | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Read one page of task events (read-only). |
@@ -92,6 +93,8 @@ npx -y copilot-agents-mcp watch
 ```
 
 The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/notifications.md).
+
+Several agents on one machine can share one MCP server process, state file, and GitHub token. The server cannot tell callers apart; pass a stable `owner` on `create_agent_task` and filter with `list_agent_tasks` — that is a labeling convention, not a security boundary.
 
 ## Release
 

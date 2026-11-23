@@ -65,8 +65,8 @@ describe("tools", () => {
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientTransport);
     const instructions = client.getInstructions();
-    expect(instructions).toContain("do not wait on the tool");
-    expect(instructions).toContain("get_agent_task");
+    expect(instructions).toContain("Tools never wait");
+    expect(instructions).toContain("list_agent_tasks");
     await client.close();
     await mcp.close();
   });
@@ -91,7 +91,7 @@ describe("tools", () => {
     expect(textOf(result)).toContain("timed out after 50 milliseconds");
   });
 
-  it("returns notification channels and responds immediately on create", async () => {
+  it("returns follow_up and responds immediately on create", async () => {
     const statePath = await tempPath();
     const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
     dirs.push(binDir);
@@ -134,14 +134,16 @@ describe("tools", () => {
       expect(performance.now() - started).toBeLessThan(1_000);
       expect(result.isError).toBeUndefined();
       const body = JSON.parse(textOf(result)) as {
-        notification: { channels: string[]; watcher_started: boolean };
+        follow_up: { mode: string; channels?: string[]; check_with: string };
         next_step: string;
+        status: string;
       };
-      expect(body.notification.channels).toContain("system");
-      expect(body.notification.channels).toContain("webhook");
-      expect(body.notification.watcher_started).toBe(true);
+      expect(body.follow_up.mode).toBe("push");
+      expect(body.follow_up.channels).toContain("webhook");
+      expect(body.follow_up.check_with).toBe("list_agent_tasks");
+      expect(body.status).toBe("working");
       expect(body.next_step).toContain("Task queued");
-      expect(body.next_step).toContain("webhook");
+      expect(body.next_step).toContain("POSTed");
     } finally {
       if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
       else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
@@ -169,15 +171,26 @@ describe("tools", () => {
     expect(tools.map((tool) => tool.name)).toEqual(TOOLS.map((tool) => tool.name));
     for (const tool of tools) {
       const meta = TOOLS.find((item) => item.name === tool.name);
-      expect(tool.annotations?.readOnlyHint).toBe(meta?.method === "GET");
-      expect(tool.annotations?.destructiveHint).toBe(false);
-      expect(tool.annotations?.idempotentHint).toBe(meta?.method === "GET");
+      const readOnly = meta?.method === "GET";
+      const destructive = tool.name === "abort_agent_task";
+      const idempotent = readOnly || tool.name === "abort_agent_task";
+      if (tool.name === "create_agent_task") {
+        expect(tool.annotations?.idempotentHint).toBe(false);
+      } else if (tool.name === "steer_agent_task") {
+        expect(tool.annotations?.idempotentHint).toBe(false);
+        expect(tool.annotations?.destructiveHint).toBe(false);
+      } else {
+        expect(tool.annotations?.idempotentHint).toBe(idempotent);
+        expect(tool.annotations?.destructiveHint).toBe(destructive);
+      }
+      expect(tool.annotations?.readOnlyHint).toBe(readOnly);
       expect(tool.annotations?.openWorldHint).toBe(true);
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
     expect(TOOLS).toEqual([
       { name: "create_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "get_agent_task", toolset: "copilot_tasks", method: "GET" },
+      { name: "list_agent_tasks", toolset: "copilot_tasks", method: "GET" },
       { name: "steer_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "abort_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "get_agent_task_events", toolset: "copilot_tasks", method: "GET" },
@@ -204,8 +217,9 @@ describe("tools", () => {
     const statePath = await tempPath();
     const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("No GitHub session is available");
-    expect(textOf(result)).toContain("npx copilot-agents-mcp login");
+    const body = JSON.parse(textOf(result)) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("not_authenticated");
+    expect(body.error.message).toContain("npx copilot-agents-mcp login");
   });
 
   it("blocks an already rejected model without calling the API", async () => {
@@ -245,11 +259,19 @@ describe("tools", () => {
     });
     expect(called).toBe(false);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("Accepted models observed: grok-4.7, mai-code-2");
+    const err = JSON.parse(textOf(result)) as { error: { code: string; message: string } };
+    expect(err.error.code).toBe("model_unavailable");
+    expect(err.error.message).toContain("Accepted models observed: grok-4.7, mai-code-2");
   });
 
   it("launches any model, stores it, and starts the watcher", async () => {
     const statePath = await tempPath();
+    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
+    dirs.push(binDir);
+  const notifySend = join(binDir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`;
     let launched = 0;
     let body: unknown;
     const result = await callTool(statePath, {
@@ -287,6 +309,8 @@ describe("tools", () => {
     expect(body).toMatchObject({ model: "freeform-model", owner: "octocat", repo: "hello-world", base_ref: "main" });
     expect(launched).toBe(1);
     expect((await readState(statePath)).tasks["task-1"]?.requested_model).toBe("freeform-model");
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
   });
 
   it("shows a delayed model rejection when reading status", async () => {
@@ -342,7 +366,7 @@ describe("tools", () => {
       async getTaskEvents() {
         throw new Error("no");
       },
-    }, "get_agent_task", { task_id: "task-1" });
+    }, "get_agent_task", { task_id: "task-1", verbose: true });
     expect(textOf(result)).toContain("The model \\\"claude-sonnet-4.6\\\" is not available");
     expect(textOf(result)).toContain("mai-code-2");
   });
@@ -375,9 +399,9 @@ describe("tools", () => {
       token: "test-token",
       fetch: taskFetch(example, () => new Response(JSON.stringify({ message: "no" }), { status: 502 })),
     });
-    const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id });
+    const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id, verbose: true });
     expect(broken.isError).toBeUndefined();
-    expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42, number: null, html_url: null });
+    expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42 });
     const urls: string[] = [];
     const client = createGitHubClient({
       token: "test-token",
@@ -388,10 +412,10 @@ describe("tools", () => {
         ]), { status: 200 });
       }),
     });
-    const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(ok.isError).toBeUndefined();
     const body = JSON.parse(textOf(ok)) as { pull_request: unknown; usage: unknown; branch: unknown; resolved_model: string };
-    expect(body.pull_request).toEqual({ id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" });
+    expect(body.pull_request).toEqual({ number: 7, url: "https://github.com/octocat/hello-world/pull/7" });
     expect(body.usage).toEqual({ type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 });
     expect(body.resolved_model).toBe("claude-sonnet-4.6");
     expect(urls.some((url) => url.includes("head=octocat%3Acopilot%2Ffix-1"))).toBe(true);
@@ -430,13 +454,12 @@ describe("tools", () => {
         return new Response("[]", { status: 200 });
       }),
     });
-    const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(result.isError).toBeUndefined();
     expect(pulls).toBe(0);
     expect(JSON.parse(textOf(result)).pull_request).toEqual({
-      id: 42,
       number: 7,
-      html_url: "https://github.com/octocat/hello-world/pull/7",
+      url: "https://github.com/octocat/hello-world/pull/7",
     });
   });
 
@@ -468,10 +491,11 @@ describe("tools", () => {
   });
 
   it("does not publish write tools in read-only mode", () => {
-    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
+    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
     expect(selectToolNames({ exclude: [], readOnly: false, features: [], toolsets: ["copilot_models"] })).toEqual(["list_copilot_models"]);
     expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual([
       "create_agent_task",
+      "list_agent_tasks",
       "steer_agent_task",
       "abort_agent_task",
       "get_agent_task_events",
@@ -583,6 +607,7 @@ describe("experimental task steering", () => {
         },
       },
       statePath,
+      channels: ["system"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
         return { channels: ["system"] as const };
@@ -601,6 +626,7 @@ describe("experimental task steering", () => {
     await runWatcher({
       client: unusedClient(),
       statePath,
+      channels: ["system"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
         return { channels: ["system"] as const };
@@ -627,7 +653,7 @@ describe("experimental task steering", () => {
           ],
         };
       },
-    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo" });
+    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo", verbose: true });
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result)).session_id).toBe("session-reciente");
     expect((await readState(statePath)).tasks["task-1"]?.session_id).toBe("session-reciente");
@@ -707,7 +733,7 @@ describe("local HTTP", () => {
     expect(http.host).toBe("127.0.0.1");
     try {
       const readonly = await listOverHttp(http.url, { "X-MCP-Readonly": "true" });
-      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
+      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
       const models = await listOverHttp(`${http.url}/x/copilot_models`, { "X-MCP-Toolsets": "copilot_models" });
       expect(models.map((tool) => tool.name)).toEqual(["list_copilot_models"]);
       const denied = await fetch(http.url, {
