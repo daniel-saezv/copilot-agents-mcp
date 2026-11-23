@@ -4,105 +4,133 @@
 
 # copilot-agents-mcp
 
-`copilot-agents-mcp` is a local Model Context Protocol (MCP) server for launching and managing GitHub Copilot cloud agent tasks.
-It runs on your machine over stdio or local HTTP. Requires Node.js 26 or later.
+Local [Model Context Protocol](https://modelcontextprotocol.io/) server for launching and managing GitHub Copilot **cloud agent** tasks. It speaks MCP over **stdio only** and runs on your machine (Node.js **26+**).
 
 ```mermaid
 flowchart LR
   C[MCP client] -->|stdio| M[copilot-agents-mcp]
   M -->|GitHub App device flow or PAT| A[GitHub authentication]
-  M -->|GitHub Copilot cloud agent tasks API| G[GitHub]
+  M -->|Agent tasks API| G[GitHub]
   M --> N[Local state and watcher]
-  N -->|system notification and optional POST| U[Notification receiver]
+  N -->|optional POST webhook| W[Your receiver]
 ```
 
-## Install
+## Requirements
 
-**Requirement:** Node.js 26 or later.
+- **Node.js 26** or later (`engines.node` in `package.json`).
+- GitHub credentials: GitHub App **login** (preferred) or `GITHUB_PERSONAL_ACCESS_TOKEN`.
 
-The published package is [`copilot-agents-mcp`](https://www.npmjs.com/package/copilot-agents-mcp) on npm (`copilot-agents-mcp` on your `PATH` when installed).
-
-### Sign in with the GitHub App (preferred)
+## Authentication
 
 ```bash
-npx -y copilot-agents-mcp login
-npx -y copilot-agents-mcp auth status
+npx -y github:daniel-saezv/copilot-agents-mcp login
+npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-Complete the device flow in your browser. `auth status` reports the active credential and does not print tokens. See [authentication](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/authentication.md) and [permissions](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/permissions.md).
+Complete the device flow in the browser. `auth status` shows the active credential without printing tokens. Alternatively set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP server process environment (never commit tokens in project config).
 
-### Alternative: personal access token
+Optional: `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, `COPILOT_AGENTS_GITHUB_API_BASE_URL` (GitHub Enterprise).
 
-Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the environment of the MCP server process: export it in the shell that starts the client, or set it only in **user-level** (not project) client configuration. Never put tokens in project files such as `.cursor/mcp.json` or `.vscode/mcp.json` that may be committed. Prefer GitHub App `login` when the system keyring is available.
+## Environment variables
 
-### MCP configuration
-
-Use this stdio server entry everywhere:
-
-```json
-{
-  "command": "npx",
-  "args": ["-y", "copilot-agents-mcp"]
-}
-```
-
-| Client | Where to put it |
+| Variable | Purpose |
 | --- | --- |
-| **Visual Studio Code** | `.vscode/mcp.json` → `servers.copilot-agents` with `"type": "stdio"` plus the fields above (no tokens in the repo copy) |
-| **Claude Desktop** | User-level `claude_desktop_config.json` → `mcpServers.copilot-agents` |
-| **Claude Code** | `claude mcp add --transport stdio copilot-agents -- npx -y copilot-agents-mcp`. For a PAT, add `-e GITHUB_PERSONAL_ACCESS_TOKEN=…` (stored in your private `~/.claude.json`) |
-| **Cursor** | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project; no tokens) |
-| **Grok Bot** | Add a local stdio MCP server with the command and args above. |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | PAT; takes precedence over keyring session |
+| `COPILOT_AGENTS_NOTIFY_URL` | Webhook URL; watcher POSTs JSON when a task finishes |
+| `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` | Sent verbatim as the `Authorization` header on that POST (e.g. `Bearer <routine-key>`) |
+| `COPILOT_AGENTS_STATE_PATH` | Isolated state file (default `~/.copilot-agents-mcp/state.json`) |
+| `COPILOT_AGENTS_LOG` | Optional watcher log file |
+| `COPILOT_AGENTS_GITHUB_API_BASE_URL` | Enterprise API base |
 
-Local HTTP (optional):
-
-```bash
-npx -y copilot-agents-mcp --http --port 3333
-```
-
-The endpoint is `http://127.0.0.1:3333/mcp`.
-
-You can also ask your agent (Cursor, Claude Code, Grok Bot, etc.) to wire it up. Example prompt:
-
-```text
-Add the copilot-agents MCP server with command npx and args -y copilot-agents-mcp. Prefer GitHub App login over a PAT.
-```
+Watcher poll interval and task freshness are **fixed internally** (15s poll, 60s freshness).
 
 ## Tools
 
 <!-- START AUTOMATED TOOLS -->
-| Tool | Toolset | Read-only | Description |
-| --- | --- | --- | --- |
-| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step. |
-| `get_agent_task` | copilot_tasks | yes | Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks. |
-| `list_agent_tasks` | copilot_tasks | yes | One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary. |
-| `steer_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request. |
-| `abort_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub. |
-| `get_agent_task_events` | copilot_tasks | yes | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Read one page of task events (read-only). |
-| `list_copilot_models` | copilot_models | yes | Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present. |
+| Tool | Read-only | Description |
+| --- | --- | --- |
+| `create_agent_task` | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step. |
+| `get_agent_task` | yes | Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks. |
+| `list_agent_tasks` | yes | One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary. |
+| `steer_agent_task` | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request. |
+| `abort_agent_task` | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub. |
+| `list_copilot_models` | yes | Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present. |
 <!-- END AUTOMATED TOOLS -->
 
-See [the tool reference](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/tools.md) for all input and output fields.
+After `create_agent_task`, end your turn. The server returns `follow_up` and `next_step`: either wake on a webhook or schedule `list_agent_tasks` (not before `check_after`).
+
+## Client setup
+
+Run the same stdio command everywhere:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+}
+```
+
+### (a) Grok Bot
+
+1. Add a **local stdio MCP server** with the command and args above.
+2. Optional: set `COPILOT_AGENTS_STATE_PATH` in the server environment so this bot does not share state with other agents.
+3. **Webhook routine (recommended):** In Grok Bot, create a **Routine** with a **Webhook** trigger and copy its URL and key.
+4. In the MCP server env, set `COPILOT_AGENTS_NOTIFY_URL` to that URL and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to `Bearer <routine-key>` (include `Bearer ` exactly once).
+5. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
+
+### (b) Claude Code and Claude Desktop
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport stdio copilot-agents -- npx -y github:daniel-saezv/copilot-agents-mcp
+```
+
+For a PAT: add `-e GITHUB_PERSONAL_ACCESS_TOKEN=…` (stored in your private `~/.claude.json`).
+
+**Claude Desktop:** user-level `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
+
+### (c) Cursor
+
+`~/.cursor/mcp.json` (global) or project `.cursor/mcp.json` (no secrets in committed project files):
+
+```json
+{
+  "mcpServers": {
+    "copilot-agents": {
+      "command": "npx",
+      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
+    }
+  }
+}
+```
+
+### (d) Generic `npx` / any MCP client
+
+Point stdio transport at `npx -y github:daniel-saezv/copilot-agents-mcp`. Pass auth and notification env vars in the client’s server environment.
 
 ## Watch tasks
 
-`create_agent_task` starts a detached watcher. You can also start it directly:
-
 ```bash
-npx -y copilot-agents-mcp watch
+npx -y github:daniel-saezv/copilot-agents-mcp watch
 ```
 
-The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/notifications.md).
+`create_agent_task` also starts a detached watcher when `COPILOT_AGENTS_NOTIFY_URL` is set. The watcher polls pending tasks, updates local state under a directory lock, and POSTs completion notices once per terminal state.
 
-Several agents on one machine can share one MCP server process, state file, and GitHub token. The server cannot tell callers apart; pass a stable `owner` on `create_agent_task` and filter with `list_agent_tasks` — that is a labeling convention, not a security boundary.
+Several agents can share one server; pass a stable `owner` on create and filter with `list_agent_tasks` (labeling convention, not a security boundary).
 
-Compact task results include `session_url` (Copilot agent session page) and `pr_url` when GitHub already returned them — no extra API calls.
-
-## Release
-
-Push a tag `vMAJOR.MINOR.PATCH`. The release workflow checks that the tag (without the leading `v`) matches `version` in `package.json`, then runs typecheck, lint, tests, build, and a package smoke test on Node 26. The `publish` job stages the version on npm with `npm stage publish --provenance --access public` using [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers/) (no npm tokens). The maintainer (Gamusino) approves each staged release on [npmjs.com](https://www.npmjs.com/) with 2FA before it becomes the live version.
-
-## Test and build
+## Develop
 
 ```bash
 bash scripts/setup
@@ -110,11 +138,10 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
-node scripts/pack-smoke.mjs
 ```
 
-Agent development instructions remain in [AGENTS.md](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/AGENTS.md).
+See [AGENTS.md](AGENTS.md) for agent maintenance notes.
 
 ## License
 
-[MIT](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/LICENSE)
+[MIT](LICENSE)

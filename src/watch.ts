@@ -103,7 +103,6 @@ async function notifyFinal(
       await withStateLock(options.statePath, (state) => {
         const task = state.tasks[taskId];
         if (!task || !readyToNotify(task)) return;
-        task.delivery = { status: "failed", reason };
         task.delivery_record = { status: "failed", reason };
       });
       continue;
@@ -111,7 +110,6 @@ async function notifyFinal(
     await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
       if (!task || !readyToNotify(task)) return;
-      task.delivery = null;
       task.delivery_record = { status: "delivered", delivered_via: delivered.channels.join(",") };
       if (task.steer?.turn_seen) task.steer = { ...task.steer, notified: true };
       task.notified_at = new Date().toISOString();
@@ -125,7 +123,7 @@ function shouldPoll(task: TrackedTask): boolean {
 }
 
 function readyToNotify(task: TrackedTask): boolean {
-  if (task.delivery_record?.status === "failed" || task.delivery?.status === "failed") return false;
+  if (task.delivery_record?.status === "failed") return false;
   if (!isFinalState(task.state)) return false;
   if (task.steer && task.steer.notified !== true) return task.steer.turn_seen;
   return !task.notified_at;

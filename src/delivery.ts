@@ -11,7 +11,7 @@ export function deliveryForTask(
   activeChannels: NotifyChannel[],
 ): DeliveryField {
   if (task.notified_at || task.delivery_record?.status === "delivered") return "delivered";
-  if (task.delivery_record?.status === "failed" || task.delivery?.status === "failed") return "failed";
+  if (task.delivery_record?.status === "failed") return "failed";
   if (activeChannels.length === 0) return "not_configured";
   return "pending";
 }

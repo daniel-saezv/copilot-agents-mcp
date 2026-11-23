@@ -267,7 +267,7 @@ function header(init: RequestInit | undefined, name: string): string | null {
 }
 
 async function callListModels(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {
-  const mcp = buildServer({ exclude: [], readOnly: false, features: [] }, {
+  const mcp = buildServer({
     statePath: "/tmp/unused-swe-models.json",
     clientForToken: () => ({
       async createTask() {
@@ -286,9 +286,6 @@ async function callListModels(fetchImpl: (url: string, init?: RequestInit) => Pr
         throw new Error("no");
       },
       async abortTask() {
-        throw new Error("no");
-      },
-      async getTaskEvents() {
         throw new Error("no");
       },
     }),
@@ -310,7 +307,7 @@ async function callListModels(fetchImpl: (url: string, init?: RequestInit) => Pr
 }
 
 async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {
-  const mcp = buildServer({ exclude: [], readOnly: false, features: [] }, {
+  const mcp = buildServer({
     statePath: "/tmp/unused-swe-models.json",
     clientForToken: () => ({
       async createTask() {
@@ -329,9 +326,6 @@ async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise
         throw new Error("no");
       },
       async abortTask() {
-        throw new Error("no");
-      },
-      async getTaskEvents() {
         throw new Error("no");
       },
     }),

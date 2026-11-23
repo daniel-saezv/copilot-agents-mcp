@@ -22,20 +22,20 @@ import {
   type StoredCredential,
 } from "./auth.ts";
 import { createGitHubClient } from "./github.ts";
-import { startHttpServer } from "./http.ts";
 import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
-import { assertSelection, splitList, type Selection } from "./selection.ts";
 import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
 import { defaultStatePath } from "./state.ts";
 import { deliverNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 
-export type ServeCommand = { command: "serve"; http: false; selection: Selection } | { command: "serve"; http: true; port: number; selection: Selection };
+export const WATCH_POLL_INTERVAL_MS = 15_000;
+
+export type ServeCommand = { command: "serve" };
 export type WatchCommand = { command: "watch" };
 export type CliCommand = ServeCommand | WatchCommand | { command: "login" } | { command: "logout" } | { command: "status" } | { command: "version" };
 
-export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
+export function parseArgs(argv: string[]): CliCommand {
   const args = [...argv];
   if (args.includes("--version")) return { command: "version" };
   if (args[0] === "watch") {
@@ -54,76 +54,13 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
     if (args[1] !== "status" || args.length !== 2) throw new Error("Use `auth status`.");
     return { command: "status" };
   }
-  let http = false;
-  let port: number | undefined;
-  let toolsets: string[] | undefined;
-  let tools: string[] | undefined;
-  let exclude: string[] | undefined;
-  let readOnly = false;
-  let features: string[] | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (!arg) continue;
     if (arg === "--help" || arg === "-h") throw new Help();
-    if (arg === "--http") {
-      http = true;
-      continue;
-    }
-    if (arg === "--read-only") {
-      readOnly = true;
-      continue;
-    }
-    const value = valueOf(arg, args, index);
-    if (value.consumed) index += 1;
-    if (value.name === "--port") {
-      port = Number(value.text);
-      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
-      continue;
-    }
-    if (value.name === "--toolsets") {
-      toolsets = splitList(value.text);
-      continue;
-    }
-    if (value.name === "--tools") {
-      tools = splitList(value.text);
-      continue;
-    }
-    if (value.name === "--exclude-tools") {
-      exclude = splitList(value.text);
-      continue;
-    }
-    if (value.name === "--features") {
-      features = splitList(value.text);
-      continue;
-    }
     throw new Error(`Unknown argument: ${arg}`);
   }
-  const selection: Selection = {
-    exclude: exclude ?? (env.GITHUB_EXCLUDE_TOOLS ? splitList(env.GITHUB_EXCLUDE_TOOLS) : []),
-    readOnly: readOnly || /^(1|true)$/i.test(env.GITHUB_READ_ONLY ?? ""),
-    features: features ?? [],
-  };
-  if (toolsets) selection.toolsets = toolsets;
-  else if (env.GITHUB_TOOLSETS) selection.toolsets = splitList(env.GITHUB_TOOLSETS);
-  if (tools) selection.tools = tools;
-  else if (env.GITHUB_TOOLS) selection.tools = splitList(env.GITHUB_TOOLS);
-  assertSelection(selection);
-  if (http) return { command: "serve", http: true, port: port ?? 3333, selection };
-  if (port !== undefined) throw new Error("--port can only be used with --http.");
-  return { command: "serve", http: false, selection };
-}
-
-function valueOf(arg: string, args: string[], index: number): { name: string | undefined; text: string; consumed: boolean } {
-  const names = ["--port", "--toolsets", "--tools", "--exclude-tools", "--features"];
-  for (const name of names) {
-    if (arg === name) {
-      const text = args[index + 1];
-      if (!text || text.startsWith("--")) throw new Error(`Missing value for ${name}.`);
-      return { name, text, consumed: true };
-    }
-    if (arg.startsWith(`${name}=`)) return { name, text: arg.slice(name.length + 1), consumed: false };
-  }
-  return { name: undefined, text: "", consumed: false };
+  return { command: "serve" };
 }
 
 class Help extends Error {
@@ -139,8 +76,6 @@ function helpText(): string {
     "  MCP server over stdio.",
     "copilot-agents-mcp --version",
     "  Print the version from package.json.",
-    "copilot-agents-mcp --http [--port 3333]",
-    "  MCP server over HTTP on 127.0.0.1.",
     "copilot-agents-mcp watch",
     "  Watch pending tasks and notify once when they finish.",
     "copilot-agents-mcp login",
@@ -150,9 +85,7 @@ function helpText(): string {
     "copilot-agents-mcp auth status",
     "  Show which credential is active without showing the token.",
     "",
-    "Options: --toolsets, --tools, --exclude-tools, --read-only, --features",
     "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
-    "GITHUB_TOOLSETS, GITHUB_TOOLS, GITHUB_EXCLUDE_TOOLS, GITHUB_READ_ONLY,",
     "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH,",
     "COPILOT_AGENTS_GITHUB_API_BASE_URL",
   ].join("\n");
@@ -176,7 +109,7 @@ function githubClient(token: string, env: NodeJS.ProcessEnv, session: AppSession
   });
 }
 
-async function serve(command: ServeCommand): Promise<void> {
+async function serve(): Promise<void> {
   warnIgnored(process.env);
   warnGithubApiBase(process.env);
   const statePath = defaultStatePath();
@@ -194,13 +127,8 @@ async function serve(command: ServeCommand): Promise<void> {
     },
     launchWatcher: defaultLaunchWatcher,
   };
-  if (!command.http) {
-    const mcp = buildServer(command.selection, deps);
-    await mcp.connect(new StdioServerTransport());
-    return;
-  }
-  const http = await startHttpServer({ port: command.port, selection: command.selection, deps });
-  console.error(`copilot-agents-mcp listening at ${http.url}`);
+  const mcp = buildServer(deps);
+  await mcp.connect(new StdioServerTransport());
 }
 
 async function watch(): Promise<void> {
@@ -219,12 +147,11 @@ async function watch(): Promise<void> {
   const acquired = await acquireWatcher(lock);
   if (!acquired) return;
   try {
-    const interval = Number(process.env.COPILOT_AGENTS_POLL_INTERVAL_MS ?? "15000");
     await runWatcher({
       client: githubClient(token, process.env, session),
       statePath,
       deliver: (notice) => deliverNotice(notice),
-      intervalMs: Number.isFinite(interval) && interval >= 0 ? interval : 15_000,
+      intervalMs: WATCH_POLL_INTERVAL_MS,
     });
   } finally {
     await releaseWatcher(lock);
@@ -243,13 +170,13 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const command = parseArgs(process.argv.slice(2), process.env);
+    const command = parseArgs(process.argv.slice(2));
     if (command.command === "watch") await watch();
     else if (command.command === "login") await login();
     else if (command.command === "logout") await logout();
     else if (command.command === "status") await status();
     else if (command.command === "version") console.log(packageVersion());
-    else await serve(command);
+    else await serve();
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Error.");
     process.exitCode = error instanceof Help ? 0 : 1;

@@ -194,12 +194,6 @@ describe("v0.1.0 follow_up", () => {
     expect(block.check_after).toBe("2026-11-23T20:10:00.000Z");
   });
 
-  it("owner substitution in user_push", () => {
-    const checkAfter = "2026-11-23T21:00:00.000Z";
-    const text = createFollowUpNextStep("user_push", "thrall", "abc", false, checkAfter);
-    expect(text).toContain('owner="thrall"');
-  });
-
   it("task_ids fallback", () => {
     const checkAfter = "2026-11-23T21:00:00.000Z";
     const text = createFollowUpNextStep("check_later", undefined, "abc", false, checkAfter);
@@ -313,9 +307,6 @@ export function unusedClient(): GitHubClient {
       throw new Error("no");
     },
     async abortTask() {
-      throw new Error("no");
-    },
-    async getTaskEvents() {
       throw new Error("no");
     },
   };

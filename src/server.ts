@@ -14,9 +14,9 @@ import {
   toolJson,
   ToolFailure,
 } from "./errors.ts";
-import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
+import type { AgentTask, GitHubClient } from "./github.ts";
 import { presentSweModelsResult, sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
-import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
+import { TOOLS, toolNames } from "./selection.ts";
 import { deliveryForTask, shouldSpawnWatcher } from "./delivery.ts";
 import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
 import { activeNotificationChannels, appendWatcherLog } from "./notify.ts";
@@ -82,8 +82,8 @@ const createInput = z.object({
 }).strict();
 
 const followUpSchema = z.object({
-  mode: z.enum(["push", "user_push", "check_later"]),
-  channels: z.array(z.enum(["webhook", "system"])).optional(),
+  mode: z.enum(["push", "check_later"]),
+  channels: z.array(z.enum(["webhook"])).optional(),
   check_after: z.string(),
   min_interval_s: z.number(),
   check_with: z.literal("list_agent_tasks"),
@@ -105,10 +105,12 @@ const createOutput = z.object({
 
 const SERVER_INSTRUCTIONS = [
   "Copilot cloud tasks take minutes. Tools never wait.",
-  "Always pass owner=<your agent name> to create_agent_task so scheduled list_agent_tasks checks see only your tasks.",
-  "After creating, end your turn and follow next_step (first list check not before follow_up.check_after).",
-  "To check progress, call list_agent_tasks with your owner, once, no more often than every 5 minutes; stop checking when all_terminal is true.",
-  "Call get_agent_task for one task's full result.",
+  "Always pass owner=<your agent name> to create_agent_task so list_agent_tasks with that owner shows only your tasks.",
+  "After create_agent_task, end your turn and follow next_step; do not poll in a loop.",
+  "First list check not before follow_up.check_after; call list_agent_tasks with your owner at most every follow_up.min_interval_s seconds until all_terminal is true.",
+  "get_agent_task returns one task's full result (once, not in a loop).",
+  "steer_agent_task sends a user message to a running task with an open pull request; abort_agent_task requests cancellation (experimental GitHub endpoints).",
+  "With COPILOT_AGENTS_NOTIFY_URL set, the watcher POSTs JSON when a task reaches a terminal state—wake on that webhook and call get_agent_task once. Without it, follow the check_later schedule in next_step.",
 ].join(" ");
 
 const CREATE_TASK_GUIDANCE =
@@ -154,30 +156,8 @@ const abortOutput = z.object({
   terminal: z.boolean().optional(),
 }).strict();
 
-const eventsInput = z.object({
-  task_id: z.string().describe("Task identifier."),
-  page: z.number().int().positive().describe("Page, starting at 1."),
-  per_page: z.number().int().positive().describe("Events per page."),
-}).strict();
-
-const eventOutput = z.object({
-  id: z.string().optional(),
-  timestamp: z.string().optional(),
-  parentId: z.string().optional(),
-  type: z.string(),
-  data: z.unknown().optional(),
-}).strict();
-
-const eventsOutput = z.object({
-  task_id: z.string(),
-  page: z.number(),
-  per_page: z.number(),
-  total: z.number(),
-  events: z.array(eventOutput),
-}).strict();
-
-export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
-  const enabled = new Set(selectToolNames(selection));
+export function buildServer(deps: ServerDeps): McpServer {
+  const enabled = new Set(toolNames());
   const server = new McpServer({
     name: "copilot-agents-mcp",
     version: packageVersion(),
@@ -227,15 +207,6 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       annotations: toolAnnotations("abort_agent_task", "Abort task"),
     }, async (args) => run(() => abortTask(args, deps)));
   }
-  if (enabled.has("get_agent_task_events")) {
-    server.registerTool("get_agent_task_events", {
-      title: "Get task events",
-      description: `${experimentalNotice} Read one page of task events (read-only).`,
-      inputSchema: eventsInput,
-      outputSchema: eventsOutput,
-      annotations: toolAnnotations("get_agent_task_events", "Get task events"),
-    }, async (args) => run(() => readEvents(args, deps)));
-  }
   if (enabled.has("list_copilot_models")) {
     server.registerTool("list_copilot_models", {
       title: "List Copilot models",
@@ -252,7 +223,7 @@ function toolAnnotations(
   name: (typeof TOOLS)[number]["name"] | "create_agent_task",
   title: string,
 ) {
-  const readOnly = name === "get_agent_task" || name === "list_agent_tasks" || name === "get_agent_task_events" || name === "list_copilot_models";
+  const readOnly = name === "get_agent_task" || name === "list_agent_tasks" || name === "list_copilot_models";
   const destructive = name === "abort_agent_task";
   const idempotent = readOnly || name === "abort_agent_task";
   return {
@@ -377,7 +348,7 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
   const channels = activeNotificationChannels(process.platform, process.env);
-  const freshness = freshnessMs(process.env);
+  const freshness = freshnessMs();
   const now = Date.now();
   if (!token) {
     if (known && mapRawState(known.state).terminal) {
@@ -472,7 +443,7 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
 
 async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps) {
   const token = deps.readToken();
-  const freshness = freshnessMs(process.env);
+  const freshness = freshnessMs();
   const now = Date.now();
   const input = {
     ...(args.owner !== undefined ? { owner: args.owner } : {}),
@@ -657,29 +628,6 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
     status: mapped.status,
     terminal: mapped.terminal,
   };
-}
-
-async function readEvents(args: z.infer<typeof eventsInput>, deps: ServerDeps) {
-  const taskId = required(args.task_id, "task_id");
-  const token = deps.readToken();
-  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
-  const page = await deps.clientForToken(token).getTaskEvents(taskId, args.page, args.per_page);
-  return {
-    task_id: taskId,
-    page: args.page,
-    per_page: args.per_page,
-    total: page.total,
-    events: page.events.map(presentEvent),
-  };
-}
-
-function presentEvent(event: TaskEvent): z.infer<typeof eventOutput> {
-  const body: z.infer<typeof eventOutput> = { type: event.type };
-  if (event.id) body.id = event.id;
-  if (event.timestamp) body.timestamp = event.timestamp;
-  if (event.parentId) body.parentId = event.parentId;
-  if (event.data !== undefined) body.data = event.data;
-  return body;
 }
 
 function pullArtifact(task: AgentTask): { id: number; number: number | null } | null {

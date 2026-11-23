@@ -5,13 +5,12 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodedToolFailure, GitHubError, ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
 import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
-import { startHttpServer } from "./http.ts";
-import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
+import { parseArgs } from "./cli.ts";
+import { TOOL_NAMES, TOOLS } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
 import type { SweModelsResult } from "./swe-models.ts";
 import { defaultStatePath, initialTask, readState, withStateLock } from "./state.ts";
@@ -30,10 +29,8 @@ async function tempPath(): Promise<string> {
   return join(dir, "state.json");
 }
 
-const baseSelection: Selection = { exclude: [], readOnly: false, features: [] };
-
-async function listedTools(selection: Selection, deps: ServerDeps) {
-  const mcp = buildServer(selection, deps);
+async function listedTools(deps: ServerDeps) {
+  const mcp = buildServer(deps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcp.connect(serverTransport);
   const client = new Client({ name: "test", version: "0.0.0" });
@@ -59,16 +56,36 @@ function deps(statePath: string, client: GitHubClient, launchWatcher: () => void
 describe("tools", () => {
   it("publishes server instructions on initialize", async () => {
     const statePath = await tempPath();
-    const mcp = buildServer(baseSelection, deps(statePath, unusedClient(), () => {}));
+    const mcp = buildServer(deps(statePath, unusedClient(), () => {}));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverTransport);
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientTransport);
-    const instructions = client.getInstructions();
+    const instructions = client.getInstructions() ?? "";
+    expect(instructions.length).toBeGreaterThan(0);
+    expect(instructions.length).toBeLessThan(4096);
     expect(instructions).toContain("Tools never wait");
     expect(instructions).toContain("list_agent_tasks");
+    expect(instructions).toContain("COPILOT_AGENTS_NOTIFY_URL");
     await client.close();
     await mcp.close();
+  });
+
+  it("registers exactly the six supported tools", async () => {
+    const statePath = await tempPath();
+    const tools = await listedTools(deps(statePath, unusedClient(), () => {}));
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(tools.some((tool) => tool.name === "get_agent_task_events")).toBe(false);
+  });
+
+  it("rejects removed CLI flags", () => {
+    for (const arg of ["--http", "--port", "3333", "--toolsets", "copilot_tasks", "--read-only", "--features", "agent_automations"]) {
+      if (arg === "3333") {
+        expect(() => parseArgs(["--port", arg])).toThrow(/Unknown argument/);
+      } else {
+        expect(() => parseArgs([arg])).toThrow(/Unknown argument/);
+      }
+    }
   });
 
   it("surfaces GitHub timeouts from create_agent_task", async () => {
@@ -122,9 +139,6 @@ describe("tools", () => {
         async abortTask() {
           throw new Error("no");
         },
-        async getTaskEvents() {
-          throw new Error("no");
-        },
       };
       const result = await callTool(statePath, slow, "create_agent_task", {
         repo: "octocat/hello-world",
@@ -158,7 +172,7 @@ describe("tools", () => {
   it("advertises the package.json version", async () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
     const statePath = await tempPath();
-    const mcp = buildServer(baseSelection, deps(statePath, unusedClient(), () => {}));
+    const mcp = buildServer(deps(statePath, unusedClient(), () => {}));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverTransport);
     const client = new Client({ name: "test", version: "0.0.0" });
@@ -170,7 +184,7 @@ describe("tools", () => {
 
   it("sets readOnlyHint by method and publishes the schema", async () => {
     const statePath = await tempPath();
-    const tools = await listedTools(baseSelection, deps(statePath, unusedClient(), () => {}));
+    const tools = await listedTools(deps(statePath, unusedClient(), () => {}));
     expect(tools.map((tool) => tool.name)).toEqual(TOOLS.map((tool) => tool.name));
     for (const tool of tools) {
       const meta = TOOLS.find((item) => item.name === tool.name);
@@ -191,13 +205,12 @@ describe("tools", () => {
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
     expect(TOOLS).toEqual([
-      { name: "create_agent_task", toolset: "copilot_tasks", method: "POST" },
-      { name: "get_agent_task", toolset: "copilot_tasks", method: "GET" },
-      { name: "list_agent_tasks", toolset: "copilot_tasks", method: "GET" },
-      { name: "steer_agent_task", toolset: "copilot_tasks", method: "POST" },
-      { name: "abort_agent_task", toolset: "copilot_tasks", method: "POST" },
-      { name: "get_agent_task_events", toolset: "copilot_tasks", method: "GET" },
-      { name: "list_copilot_models", toolset: "copilot_models", method: "GET" },
+      { name: "create_agent_task", method: "POST" },
+      { name: "get_agent_task", method: "GET" },
+      { name: "list_agent_tasks", method: "GET" },
+      { name: "steer_agent_task", method: "POST" },
+      { name: "abort_agent_task", method: "POST" },
+      { name: "list_copilot_models", method: "GET" },
     ]);
     const dir = fileURLToPath(new URL("./__toolsnaps__/", import.meta.url));
     await mkdir(dir, { recursive: true });
@@ -253,9 +266,6 @@ describe("tools", () => {
       async abortTask() {
         throw new Error("no");
       },
-      async getTaskEvents() {
-        throw new Error("no");
-      },
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
@@ -270,12 +280,8 @@ describe("tools", () => {
 
   it("launches any model, stores it, and starts the watcher", async () => {
     const statePath = await tempPath();
-    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
-    dirs.push(binDir);
-  const notifySend = join(binDir, "notify-send");
-    await writeFile(notifySend, "#!/bin/sh\n");
-    const previousPath = process.env.PATH;
-    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`;
+    const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
     let launched = 0;
     let body: unknown;
     const result = await callTool(statePath, {
@@ -298,9 +304,6 @@ describe("tools", () => {
       async abortTask() {
         throw new Error("no");
       },
-      async getTaskEvents() {
-        throw new Error("no");
-      },
     }, "create_agent_task", {
       repo: "octocat/hello-world",
       prompt: "hola",
@@ -313,8 +316,8 @@ describe("tools", () => {
     expect(body).toMatchObject({ model: "freeform-model", owner: "octocat", repo: "hello-world", base_ref: "main" });
     expect(launched).toBe(1);
     expect((await readState(statePath)).tasks["task-1"]?.requested_model).toBe("freeform-model");
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
+    if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
+    else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
   });
 
   it("shows a delayed model rejection when reading status", async () => {
@@ -365,9 +368,6 @@ describe("tools", () => {
         throw new Error("no");
       },
       async abortTask() {
-        throw new Error("no");
-      },
-      async getTaskEvents() {
         throw new Error("no");
       },
     }, "get_agent_task", { task_id: "task-1", verbose: true });
@@ -492,18 +492,6 @@ describe("tools", () => {
     expect(textOf(bad)).not.toContain("test-model-a");
   });
 
-  it("does not publish write tools in read-only mode", () => {
-    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
-    expect(selectToolNames({ exclude: [], readOnly: false, features: [], toolsets: ["copilot_models"] })).toEqual(["list_copilot_models"]);
-    expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual([
-      "create_agent_task",
-      "list_agent_tasks",
-      "steer_agent_task",
-      "abort_agent_task",
-      "get_agent_task_events",
-      "list_copilot_models",
-    ]);
-  });
 });
 
 describe("experimental task steering", () => {
@@ -617,10 +605,10 @@ describe("experimental task steering", () => {
         },
       },
       statePath,
-      channels: ["system"],
+      channels: ["webhook"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
-        return { channels: ["system"] as const };
+        return { channels: ["webhook"] as const };
       },
       intervalMs: 0,
       sleep: async () => {},
@@ -636,10 +624,10 @@ describe("experimental task steering", () => {
     await runWatcher({
       client: unusedClient(),
       statePath,
-      channels: ["system"],
+      channels: ["webhook"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
-        return { channels: ["system"] as const };
+        return { channels: ["webhook"] as const };
       },
       intervalMs: 0,
       sleep: async () => {},
@@ -700,22 +688,13 @@ describe("experimental task steering", () => {
     expect((await readState(watcherState)).models.accepted).toEqual(["synthetic-model"]);
   });
 
-  it("aborts the task and reads an events page", async () => {
+  it("aborts the task", async () => {
     const statePath = await tempPath();
-    const events = JSON.parse(readFileSync(new URL("../fixtures/internal/events.json", import.meta.url), "utf8")) as {
-      events: Array<{ type: string; timestamp?: string }>;
-      total: number;
-    };
     let aborted = 0;
-    let seen: { page: number; perPage: number } | undefined;
     const github: GitHubClient = {
       ...unusedClient(),
       async abortTask() {
         aborted += 1;
-      },
-      async getTaskEvents(_taskId, page, perPage) {
-        seen = { page, perPage };
-        return events;
       },
     };
     const abortedResult = await callTool(statePath, github, "abort_agent_task", { task_id: "task-1" });
@@ -727,13 +706,6 @@ describe("experimental task steering", () => {
       terminal: false,
     });
     expect(aborted).toBe(1);
-    const listed = await callTool(statePath, github, "get_agent_task_events", { task_id: "task-1", page: 2, per_page: 2 });
-    expect(listed.isError).toBeUndefined();
-    const body = JSON.parse(textOf(listed)) as { total: number; events: Array<{ type: string; timestamp: string | null }> };
-    expect(seen).toEqual({ page: 2, perPage: 2 });
-    expect(body.total).toBe(events.total);
-    expect(body.events.map((event) => event.type)).toEqual(events.events.map((event) => event.type));
-    expect(body.events.some((event) => event.timestamp === "0001-01-01T00:00:00Z")).toBe(true);
   });
 });
 
@@ -742,7 +714,6 @@ describe("MCP tool errors", () => {
     ["create_agent_task", { repo: "octocat/hello-world", prompt: "hi", model: "mai-code-2" }],
     ["abort_agent_task", { task_id: "task-1" }],
     ["steer_agent_task", { task_id: "task-1", content: "go" }],
-    ["get_agent_task_events", { task_id: "task-1", page: 1, per_page: 1 }],
     ["list_copilot_models", {}],
   ];
   for (const [name, args] of noAuthCases) {
@@ -1116,43 +1087,11 @@ describe("PR #18 review regressions", () => {
   });
 });
 
-describe("local HTTP", () => {
-  it("listens on 127.0.0.1 and applies X-MCP-* headers", async () => {
-    const statePath = await tempPath();
-    const http = await startHttpServer({
-      port: 0,
-      selection: baseSelection,
-      deps: deps(statePath, unusedClient(), () => {}),
-    });
-    expect(http.host).toBe("127.0.0.1");
-    try {
-      const readonly = await listOverHttp(http.url, { "X-MCP-Readonly": "true" });
-      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
-      const models = await listOverHttp(`${http.url}/x/copilot_models`, { "X-MCP-Toolsets": "copilot_models" });
-      expect(models.map((tool) => tool.name)).toEqual(["list_copilot_models"]);
-      const denied = await fetch(http.url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "x-mcp-toolsets": "nope",
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
-      });
-      expect(denied.status).toBe(400);
-      expect(await denied.text()).toContain("Unknown toolset");
-    } finally {
-      await http.close();
-    }
-  });
-});
-
 function renderTools(tools: Array<{ name: string; description?: string; annotations?: { readOnlyHint?: boolean } }>): string {
-  const lines = ["| Tool | Toolset | Read-only | Description |", "| --- | --- | --- | --- |"];
+  const lines = ["| Tool | Read-only | Description |", "| --- | --- | --- |"];
   for (const tool of tools) {
-    const meta = TOOLS.find((item) => item.name === tool.name);
     const readOnly = tool.annotations?.readOnlyHint ? "yes" : "no";
-    lines.push(`| \`${tool.name}\` | ${meta?.toolset ?? ""} | ${readOnly} | ${tool.description ?? ""} |`);
+    lines.push(`| \`${tool.name}\` | ${readOnly} | ${tool.description ?? ""} |`);
   }
   return lines.join("\n");
 }
@@ -1168,7 +1107,7 @@ async function callTool(
 ) {
   const serverDeps = deps(statePath, client, launchWatcher, readToken);
   if (readModels) serverDeps.readModels = readModels;
-  const mcp = buildServer(baseSelection, serverDeps);
+  const mcp = buildServer(serverDeps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcp.connect(serverTransport);
   const mcpClient = new Client({ name: "test", version: "0.0.0" });
@@ -1231,24 +1170,12 @@ async function withNotifyIsolation(
   run: () => Promise<void>,
 ): Promise<void> {
   const savedUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
-  const savedPath = process.env.PATH;
-  const emptyBin = await mkdtemp(join(tmpdir(), "copilot-empty-path-"));
-  dirs.push(emptyBin);
-  if (options.channels) {
-    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
-    if (savedPath) process.env.PATH = `${emptyBin}${delimiter}${savedPath}`;
-    else process.env.PATH = emptyBin;
-  } else {
-    process.env.COPILOT_AGENTS_NOTIFY_URL = "";
-    process.env.PATH = emptyBin;
-  }
+  process.env.COPILOT_AGENTS_NOTIFY_URL = options.channels ? "http://127.0.0.1:9/hook" : "";
   try {
     await run();
   } finally {
-    if (savedUrl === undefined) process.env.COPILOT_AGENTS_NOTIFY_URL = "";
+    if (savedUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
     else process.env.COPILOT_AGENTS_NOTIFY_URL = savedUrl;
-    if (savedPath === undefined) process.env.PATH = "";
-    else process.env.PATH = savedPath;
   }
 }
 
@@ -1272,9 +1199,6 @@ function unusedClient(): GitHubClient {
     async abortTask() {
       throw new Error("no");
     },
-    async getTaskEvents() {
-      throw new Error("no");
-    },
   };
 }
 
@@ -1286,11 +1210,3 @@ function taskFetch(example: AgentTask, pulls: (url: string) => Response): typeof
   }) as typeof fetch;
 }
 
-async function listOverHttp(url: string, headers: Record<string, string>) {
-  const client = new Client({ name: "test", version: "0.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } });
-  await client.connect(transport);
-  const result = await client.listTools();
-  await client.close();
-  return result.tools;
-}

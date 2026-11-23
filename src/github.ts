@@ -33,19 +33,6 @@ export type AgentTask = {
   artifacts?: AgentArtifact[];
 };
 
-export type TaskEvent = {
-  id?: string;
-  timestamp?: string;
-  parentId?: string | null;
-  type: string;
-  data?: unknown;
-};
-
-export type TaskEventsPage = {
-  events: TaskEvent[];
-  total: number;
-};
-
 export type CreateTaskInput = {
   owner: string;
   repo: string;
@@ -64,7 +51,6 @@ export interface GitHubClient {
   getPullRequest(input: { owner: string; repo: string; number: number }): Promise<{ number: number; state: string }>;
   steerTask(taskId: string, content: string): Promise<void>;
   abortTask(taskId: string): Promise<void>;
-  getTaskEvents(taskId: string, page: number, perPage: number): Promise<TaskEventsPage>;
 }
 
 const INTERNAL_AGENTS_BASE = "https://api.github.com/cmc_internal/api/agents";
@@ -259,24 +245,6 @@ export function createGitHubClient(options: {
         fetchTimeoutMs,
       });
     },
-    async getTaskEvents(taskId, page, perPage) {
-      if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) {
-        throw new GitHubError("page and per_page must be positive integers.");
-      }
-      const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
-      const parsed = await callGitHub({
-        token: options.token,
-        tokens,
-        fetchImpl,
-        baseUrl: internalBaseUrl,
-        path: `/tasks/${encodeURIComponent(taskId)}/events?${query.toString()}`,
-        method: "GET",
-        profile: "internal",
-        permission: "Agent tasks",
-        fetchTimeoutMs,
-      });
-      return parseTaskEvents(parsed);
-    },
   };
 }
 
@@ -383,27 +351,6 @@ function readPullState(parsed: unknown, number: number): { number: number; state
     throw new GitHubError(`Pull request ${number} has no state.`);
   }
   return { number, state: record.state };
-}
-
-function parseTaskEvents(parsed: unknown): TaskEventsPage {
-  if (!parsed || typeof parsed !== "object") throw new GitHubError("The events response is not an object.");
-  const record = parsed as Record<string, unknown>;
-  if (!Array.isArray(record.events) || typeof record.total !== "number") {
-    throw new GitHubError("The events response has no events and total.");
-  }
-  const events: TaskEvent[] = [];
-  for (const item of record.events) {
-    if (!item || typeof item !== "object") throw new GitHubError("An event is not an object.");
-    const event = item as Record<string, unknown>;
-    if (typeof event.type !== "string" || !event.type) throw new GitHubError("An event has no type.");
-    const parsedEvent: TaskEvent = { type: event.type };
-    if (typeof event.id === "string") parsedEvent.id = event.id;
-    if (typeof event.timestamp === "string") parsedEvent.timestamp = event.timestamp;
-    if (typeof event.parentId === "string" || event.parentId === null) parsedEvent.parentId = event.parentId;
-    if ("data" in event) parsedEvent.data = event.data;
-    events.push(parsedEvent);
-  }
-  return { events, total: record.total };
 }
 
 function matchPull(parsed: unknown, id: number): { number: number; html_url: string; title?: string } | null {

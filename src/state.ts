@@ -37,11 +37,6 @@ export type DeliveryRecord = {
   delivered_via?: string;
 };
 
-export type TaskDelivery = {
-  status: "failed";
-  reason: string;
-};
-
 export type TrackedTask = {
   task_id: string;
   repo: string;
@@ -58,7 +53,6 @@ export type TrackedTask = {
   updated_at: string | null;
   completed_at: string | null;
   notified_at: string | null;
-  delivery?: TaskDelivery | null;
   delivery_record?: DeliveryRecord | null;
   last_fetched_at?: string | null;
   check_after?: string | null;
@@ -118,7 +112,6 @@ export function taskSessionCount(task: AgentTask, fallback = 0): number {
 }
 
 export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
-  task.delivery = null;
   task.delivery_record = { status: "pending" };
   task.notified_at = null;
   task.last_fetched_at = null;
@@ -132,7 +125,7 @@ export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
 }
 
 export function awaitingSteer(task: TrackedTask): boolean {
-  if (task.delivery_record?.status === "failed" || task.delivery?.status === "failed") return false;
+  if (task.delivery_record?.status === "failed") return false;
   return Boolean(task.steer && task.steer.notified !== true);
 }
 
@@ -220,10 +213,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
     completed_at: completed?.completed_at ?? null,
     notified_at: existing?.notified_at ?? null,
     owner: existing?.owner,
-    delivery_record: existing?.delivery_record
-      ?? (existing?.delivery?.status === "failed"
-        ? { status: "failed" as const, reason: existing.delivery.reason }
-        : existing?.delivery_record ?? null),
+    delivery_record: existing?.delivery_record ?? null,
     last_fetched_at: existing?.last_fetched_at ?? null,
     check_after: existing?.check_after ?? null,
     pr_title: existing?.pr_title ?? null,

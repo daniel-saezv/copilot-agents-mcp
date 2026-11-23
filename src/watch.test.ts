@@ -1,19 +1,18 @@
-import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTask, GitHubClient } from "./github.ts";
 import { createGitHubClient } from "./github.ts";
-import { activeNotificationChannels, deliverNotice, notificationPlan, postNotice, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
+import { activeNotificationChannels, deliverNotice, postNotice, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { armSteer, emptyState, initialTask, presentUsage, readState, withStateLock, type StateFile, type TaskNotice } from "./state.ts";
 import { runWatcher } from "./watch.ts";
 
 type RunWatcherOptions = Parameters<typeof runWatcher>[0];
 
 function runWatcherTest(options: RunWatcherOptions) {
-  return runWatcher({ channels: ["system"], ...options });
+  return runWatcher({ channels: ["webhook"], ...options });
 }
 
 const dirs: string[] = [];
@@ -72,9 +71,6 @@ function client(
     async abortTask() {
       throw new Error("not called");
     },
-    async getTaskEvents() {
-      throw new Error("not called");
-    },
   };
 }
 
@@ -82,7 +78,7 @@ function remote(id: string, state: string, extra: Partial<AgentTask> = {}): Agen
   return { id, state, created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:01:00Z", ...extra };
 }
 
-function ackDelivery(channels: NotifyChannel[] = ["system"], handler?: (notice: TaskNotice) => void | Promise<void>) {
+function ackDelivery(channels: NotifyChannel[] = ["webhook"], handler?: (notice: TaskNotice) => void | Promise<void>) {
   return async (notice: TaskNotice): Promise<DeliveredNotice> => {
     await handler?.(notice);
     return { channels };
@@ -101,10 +97,10 @@ describe("watcher", () => {
     await runWatcherTest({
       client: github,
       statePath,
-      deliver: ackDelivery(["system"], (notice) => {
+      deliver: ackDelivery(["webhook"], (notice) => {
         notices.push(notice.state);
       }),
-      channels: ["system"],
+      channels: ["webhook"],
       intervalMs: 0,
       maxCycles: 1,
       sleep: async () => {},
@@ -114,7 +110,7 @@ describe("watcher", () => {
     await runWatcherTest({
       client: github,
       statePath,
-      deliver: ackDelivery(["system"], (notice) => {
+      deliver: ackDelivery(["webhook"], (notice) => {
         notices.push(notice.state);
       }),
       intervalMs: 0,
@@ -124,7 +120,7 @@ describe("watcher", () => {
     await runWatcherTest({
       client: github,
       statePath,
-      deliver: ackDelivery(["system"], (notice) => {
+      deliver: ackDelivery(["webhook"], (notice) => {
         notices.push(notice.state);
       }),
       intervalMs: 0,
@@ -138,7 +134,7 @@ describe("watcher", () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress"));
     const notices: Array<{ state: string; session_id: string | null }> = [];
-    const deliver = ackDelivery(["system"], (notice) => {
+    const deliver = ackDelivery(["webhook"], (notice) => {
       notices.push({ state: notice.state, session_id: notice.session_id });
     });
     const session = { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" };
@@ -207,7 +203,7 @@ describe("watcher", () => {
       armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
     });
     const notices: Array<string | null> = [];
-    const deliver = ackDelivery(["system"], (notice) => {
+    const deliver = ackDelivery(["webhook"], (notice) => {
       notices.push(notice.session_id);
     });
     await runWatcherTest({
@@ -261,7 +257,7 @@ describe("watcher", () => {
           updatedAt: "2026-11-22T00:01:00Z",
         }),
         steer: { at: "2026-11-22T00:10:00Z", session_count: 1, turn_seen: true, notified: false },
-        delivery: { status: "failed", reason: "all configured channels failed (system)" },
+        delivery_record: { status: "failed", reason: "all configured channels failed (webhook)" },
         notified_at: "2026-11-22T00:05:00Z",
       };
     });
@@ -291,7 +287,7 @@ describe("watcher", () => {
           updatedAt: "2026-11-22T00:01:00Z",
         }),
         steer: { at: "2026-11-22T00:10:00Z", session_count: 1, turn_seen: true, notified: false },
-        delivery: { status: "failed", reason: "all configured channels failed (system)" },
+        delivery_record: { status: "failed", reason: "all configured channels failed (webhook)" },
         notified_at: "2026-11-22T00:05:00Z",
       };
     });
@@ -318,46 +314,46 @@ describe("watcher", () => {
     });
     expect(notices).toEqual(["session-2"]);
     const saved = (await readState(statePath)).tasks["task-1"];
-    expect(saved?.delivery).toBeNull();
+    expect(saved?.delivery_record?.status).toBe("delivered");
     expect(saved?.steer?.notified).toBe(true);
   });
 
-  it("records failed delivery when the system notifier fails and no URL is set", async () => {
+  it("records failed delivery when webhook POST fails", async () => {
     const statePath = await tempState();
     const logPath = join(statePath, "../watch-fail.log");
-    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
-    dirs.push(binDir);
-    const notifySend = join(binDir, "notify-send");
-    await writeFile(notifySend, "#!/bin/sh\n");
-    await chmod(notifySend, 0o755);
     const previousLog = process.env.COPILOT_AGENTS_LOG;
-    const previousPath = process.env.PATH;
+    const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
     process.env.COPILOT_AGENTS_LOG = logPath;
-    process.env.PATH = binDir;
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
     await save(statePath, task("task-1", "in_progress"));
-    try {
+  try {
     await runWatcherTest({
       client: client([remote("task-1", "completed")]),
       statePath,
-      deliver: (notice) => deliverNotice(notice, { COPILOT_AGENTS_LOG: logPath, PATH: binDir }, fetch, spawnEnoent(), "linux"),
+      channels: ["webhook"],
+      deliver: (notice) => deliverNotice(
+        notice,
+        { COPILOT_AGENTS_LOG: logPath, COPILOT_AGENTS_NOTIFY_URL: "http://127.0.0.1:9/hook" },
+        async () => new Response("fail", { status: 500 }),
+      ),
       intervalMs: 0,
       sleep: async () => {},
     });
     } finally {
       if (previousLog === undefined) delete process.env.COPILOT_AGENTS_LOG;
       else process.env.COPILOT_AGENTS_LOG = previousLog;
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
+      if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
+      else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
     }
     const saved = await readState(statePath);
     expect(saved.tasks["task-1"]?.notified_at).toBeNull();
-    expect(saved.tasks["task-1"]?.delivery).toEqual({
+    expect(saved.tasks["task-1"]?.delivery_record).toEqual({
       status: "failed",
-      reason: "all configured channels failed (system)",
+      reason: "all configured channels failed (webhook)",
     });
     const log = await readFile(logPath, "utf8");
     expect(log).toContain("Notification delivery failed for task task-1");
-    expect(log).toContain("ENOENT notify-send");
+    expect(log).toContain("Could not POST the task notification");
   });
 
   it("stores a model rejection in state and in the notification", async () => {
@@ -374,7 +370,7 @@ describe("watcher", () => {
         }],
       })]),
       statePath,
-      deliver: ackDelivery(["system"], (notice) => {
+      deliver: ackDelivery(["webhook"], (notice) => {
         notices.push(notice.error);
       }),
       intervalMs: 0,
@@ -469,71 +465,23 @@ describe("watcher", () => {
   });
 });
 
-describe("system notification", () => {
-  it("omits system from active channels when notify-send is not on PATH", () => {
-    expect(activeNotificationChannels("linux", {
-      PATH: "/nonexistent",
-      COPILOT_AGENTS_NOTIFY_URL: "http://127.0.0.1/hook",
-    })).toEqual(["webhook"]);
-    expect(activeNotificationChannels("linux", { PATH: "/nonexistent" })).toEqual([]);
+describe("webhook notification", () => {
+  it("returns webhook when NOTIFY_URL is set", () => {
+    expect(activeNotificationChannels("linux", { COPILOT_AGENTS_NOTIFY_URL: "http://127.0.0.1/hook" })).toEqual(["webhook"]);
+    expect(activeNotificationChannels("linux", {})).toEqual([]);
   });
 
-  it("treats signal kill as system notification failure", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
-    dirs.push(dir);
-    const logPath = join(dir, "watch.log");
-    const notifySend = join(dir, "notify-send");
-    await writeFile(notifySend, "#!/bin/sh\n");
-    await chmod(notifySend, 0o755);
-    let spawnCalls = 0;
-    const spawnKill = ((...args: Parameters<ReturnType<typeof spawnExitNull>>) => {
-      spawnCalls += 1;
-      return spawnExitNull()(...args);
-    }) as ReturnType<typeof spawnExitNull>;
-    const delivered = await deliverNotice(sampleNotice(), {
-      COPILOT_AGENTS_LOG: logPath,
-      PATH: dir,
-    }, fetch, spawnKill, "linux");
-    expect(spawnCalls).toBe(1);
-    expect(delivered.channels).toEqual([]);
-    expect(await readFile(logPath, "utf8")).toContain("signal notify-send");
-  });
-
-  it("prepares Windows, macOS, and Linux notifications without the token", () => {
-    const env = { PATH: "/usr/bin", GITHUB_PERSONAL_ACCESS_TOKEN: "test-token", SystemRoot: "C:\\Windows" };
-    const windows = notificationPlan("win32", "Copilot completed", "octocat/hello-world", env);
-    const mac = notificationPlan("darwin", "Copilot completed", "octocat/hello-world", env);
-    const linux = notificationPlan("linux", "Copilot completed", "octocat/hello-world", env);
-    expect(windows?.command).toBe("powershell.exe");
-    expect(windows?.args).toContain("-Command");
-    expect(mac?.command).toBe("osascript");
-    expect(linux?.command).toBe("notify-send");
-    for (const plan of [windows, mac, linux]) {
-      expect(plan?.env.GITHUB_PERSONAL_ACCESS_TOKEN).toBeUndefined();
-      expect(JSON.stringify(plan)).not.toContain("test-token");
-      expect(plan?.env.COPILOT_AGENTS_NOTIFY_TITLE).toBe("Copilot completed");
-    }
-  });
-
-  it("logs ENOENT from notify-send and sends the POST", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
-    dirs.push(dir);
-    const logPath = join(dir, "watch.log");
-    const notifySend = join(dir, "notify-send");
-    await writeFile(notifySend, "#!/bin/sh\n");
-    await chmod(notifySend, 0o755);
+  it("POSTs JSON when the URL is configured", async () => {
     let posted = false;
     const delivered = await deliverNotice(sampleNotice(), {
-      COPILOT_AGENTS_LOG: logPath,
       COPILOT_AGENTS_NOTIFY_URL: "http://notification.example/hook",
-      PATH: dir,
+      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "Bearer routine-key",
     }, async () => {
       posted = true;
       return new Response(null, { status: 204 });
-    }, spawnEnoent(), "linux");
+    });
     expect(delivered.channels).toEqual(["webhook"]);
     expect(posted).toBe(true);
-    expect(await readFile(logPath, "utf8")).toContain("ENOENT notify-send");
   });
 });
 
@@ -569,7 +517,7 @@ describe("credits and pull request", () => {
     await runWatcherTest({
       client: github,
       statePath,
-      deliver: ackDelivery(["system"], (notice) => {
+      deliver: ackDelivery(["webhook"], (notice) => {
         notices.push(notice);
       }),
       intervalMs: 0,
@@ -605,7 +553,7 @@ describe("credits and pull request", () => {
           fetch: mockFetch(() => new Response(JSON.stringify({ message: "boom test-token" }), { status: 500 })),
         }),
         statePath,
-        deliver: ackDelivery(["system"], (notice) => {
+        deliver: ackDelivery(["webhook"], (notice) => {
           notices.push(notice);
         }),
         intervalMs: 0,
@@ -670,28 +618,6 @@ function sampleNotice(): TaskNotice {
     session_id: null,
     notified: false,
   };
-}
-
-function spawnExitNull(): typeof import("node:child_process").spawn {
-  const impl = () => {
-    const child = new EventEmitter();
-    setImmediate(() => child.emit("exit", null, "SIGKILL"));
-    return child;
-  };
-  return impl as unknown as typeof import("node:child_process").spawn;
-}
-
-function spawnEnoent(): typeof import("node:child_process").spawn {
-  const impl = () => {
-    const child = new EventEmitter();
-    setImmediate(() => {
-      const error = new Error("spawn notify-send ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      child.emit("error", error);
-    });
-    return child;
-  };
-  return impl as unknown as typeof import("node:child_process").spawn;
 }
 
 function mockFetch(handler: (url: string) => Response): typeof fetch {
