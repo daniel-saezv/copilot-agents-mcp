@@ -6,7 +6,7 @@
   "license": "MIT",
   "keywords": ["mcp", "github", "copilot", "agents"],
   "bin": {
-    "copilot-agents-mcp": "./dist/cli.js"
+    "copilot-agents-mcp": "dist/cli.js"
   },
   "main": "./dist/cli.js",
   "exports": {
