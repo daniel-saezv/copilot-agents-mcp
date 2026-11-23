@@ -15,7 +15,7 @@ import {
   ToolFailure,
 } from "./errors.ts";
 import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
-import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
+import { presentSweModelsResult, sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
 import { deliveryForTask, shouldSpawnWatcher } from "./delivery.ts";
 import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
@@ -241,7 +241,7 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
       inputSchema: z.object({}).strict(),
       outputSchema: sweModelsResultSchema,
       annotations: toolAnnotations("list_copilot_models", "List Copilot models"),
-    }, async () => run(() => deps.readModels()));
+    }, async () => run(async () => presentSweModelsResult(await deps.readModels())));
   }
   return server;
 }

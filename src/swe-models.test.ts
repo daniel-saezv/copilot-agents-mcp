@@ -115,9 +115,9 @@ describe("/agents/swe/models validator", () => {
     expect(() => validateSweModels({
       data: [tokenModel, { id: "test-model-d", name: "Incomplete", vendor: "Fictional", preview: false, policy: { state: "enabled" }, billing: {} }],
     })).toThrow(/missing data\[1\]\.billing\.token_prices/);
-    expect(() => validateSweModels({
-      data: [{ ...pricedWithoutPolicy, policy: {} }],
-    })).toThrow(/missing data\[0\]\.policy\.state/);
+    expect(validateSweModels({
+      data: [{ ...pricedWithoutPolicy, policy: { terms: "no state field" } }],
+    })[0]?.policy).toBeUndefined();
   });
 
   it("does not store a real endpoint URL or real models", () => {
@@ -192,15 +192,24 @@ describe("/agents/swe/models reader", () => {
     expect(result).not.toHaveProperty("structuredContent");
   });
 
-  it("returns isError when policy has no state", async () => {
-    const result = await toolError(async (url) => {
+  it("accepts models without policy.state through MCP output validation", async () => {
+    const withoutPolicy = { ...pricedWithoutPolicy };
+    const policyWithoutState = {
+      ...tokenModel,
+      id: "test-model-policy-empty",
+      policy: { terms: "without state" },
+    };
+    const result = await callListModels(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
-      return json({ data: [{ ...pricedWithoutPolicy, policy: { terms: "without state" } }] });
+      return json({ data: [withoutPolicy, policyWithoutState, tokenModel] });
     });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("HTTP 200");
-    expect(textOf(result)).toContain("missing data[0].policy.state");
-    expect(textOf(result)).not.toContain("test-model-c");
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { models: Array<{ id: string; policy?: { state?: string } }> };
+    const bare = body.models.find((m) => m.id === "test-model-c");
+    const partial = body.models.find((m) => m.id === "test-model-policy-empty");
+    expect(bare?.policy).toBeUndefined();
+    expect(partial?.policy).toBeUndefined();
+    expect(body.models.find((m) => m.id === "test-model-a")?.policy).toEqual({ state: "enabled" });
   });
 });
 
@@ -220,8 +229,8 @@ function expectSame(input: {
   expect(output.name).toBe(input.name);
   expect(output.vendor).toBe(input.vendor);
   expect(output.preview).toBe(input.preview);
-  if (input.policy) expect(output.policy).toEqual({ state: input.policy.state });
-  else expect(output.policy).toEqual({ state: null });
+  if (input.policy?.state) expect(output.policy).toEqual({ state: input.policy.state });
+  else expect(output.policy).toBeUndefined();
   if (input.billing.token_prices) expect(output.billing.token_prices).toEqual(input.billing.token_prices);
   else expect(output.billing.token_prices).toBeUndefined();
   if (input.billing.promo) expect(output.billing.promo).toEqual(input.billing.promo);
@@ -237,6 +246,49 @@ function json(body: unknown): Response {
 function header(init: RequestInit | undefined, name: string): string | null {
   const headers = new Headers(init?.headers);
   return headers.get(name);
+}
+
+async function callListModels(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {
+  const mcp = buildServer({ exclude: [], readOnly: false, features: [] }, {
+    statePath: "/tmp/unused-swe-models.json",
+    clientForToken: () => ({
+      async createTask() {
+        throw new Error("no");
+      },
+      async getTask() {
+        throw new Error("no");
+      },
+      async findPullRequest() {
+        return null;
+      },
+      async getPullRequest() {
+        throw new Error("no");
+      },
+      async steerTask() {
+        throw new Error("no");
+      },
+      async abortTask() {
+        throw new Error("no");
+      },
+      async getTaskEvents() {
+        throw new Error("no");
+      },
+    }),
+    readToken: () => "test-secret",
+    launchWatcher: () => {},
+    readModels: () => readSweModels({
+      token: "test-secret",
+      fetchImpl: (input, init) => fetchImpl(String(input), init),
+    }),
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await mcp.connect(serverTransport);
+  const client = new Client({ name: "test", version: "0.0.0" });
+  await client.connect(clientTransport);
+  const result = await client.callTool({ name: "list_copilot_models", arguments: {} });
+  await client.close();
+  await mcp.close();
+  return result;
 }
 
 async function toolError(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {

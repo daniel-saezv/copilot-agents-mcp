@@ -100,7 +100,7 @@ Output:
 - `models[]`: array of objects with:
   - `id`, `name`, `vendor`: strings.
   - `preview`: boolean.
-  - `policy.state`: string or null.
+  - `policy.state`: string when upstream provides it; `policy` omitted otherwise.
   - `billing.token_prices`: optional `{ input_price, output_price, cache_price, batch_size }`.
   - `billing.multiplier`: optional number.
   - `billing.promo`: optional `{ discount_percent, ends_at, message }`.
