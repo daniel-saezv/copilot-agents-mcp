@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitHubClient } from "./github.ts";
 import { CodedToolFailure } from "./errors.ts";
-import { buildSummary, mapRawState } from "./task-status.ts";
+import { buildSummary, DOCUMENTED_TASK_STATES, mapRawState, unknownStateWarning } from "./task-status.ts";
 import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
 import { deliveryForTask } from "./delivery.ts";
 import {
@@ -32,9 +32,16 @@ async function stateFile(): Promise<string> {
 }
 
 describe("v0.1.0 status mapping", () => {
+  it("maps every documented OpenAPI task state", () => {
+    for (const raw of DOCUMENTED_TASK_STATES) {
+      expect(mapRawState(raw).status).toBeTruthy();
+    }
+  });
+
   const cases: Array<[string, ReturnType<typeof mapRawState>]> = [
-    ["working", { status: "working", terminal: false }],
     ["queued", { status: "working", terminal: false }],
+    ["in_progress", { status: "working", terminal: false }],
+    ["waiting_for_user", { status: "needs_input", terminal: false }],
     ["idle", { status: "completed", terminal: true }],
     ["completed", { status: "completed", terminal: true }],
     ["failed", { status: "failed", terminal: true }],
@@ -54,34 +61,61 @@ describe("v0.1.0 status mapping", () => {
 describe("v0.1.0 owners and list filters", () => {
   it("list counts use the full filtered set, not only the page", async () => {
     const path = await stateFile();
-    const recent = new Date().toISOString();
-    const slightlyOlder = new Date(Date.now() - 60_000).toISOString();
+    const newest = new Date().toISOString();
+    const middle = new Date(Date.now() - 60_000).toISOString();
+    const oldestPending = new Date(Date.now() - 3_600_000).toISOString();
     await withStateLock(path, (state) => {
-      for (let i = 0; i < 3; i++) {
-        state.tasks[`idle-${i}`] = {
-          ...initialTask({
-            id: `idle-${i}`,
-            repo: "o/r",
-            requestedModel: "m",
-            state: "idle",
-            createdAt: slightlyOlder,
-            updatedAt: slightlyOlder,
-          }),
-          completed_at: slightlyOlder,
-        };
-      }
+      state.tasks["idle-new"] = {
+        ...initialTask({
+          id: "idle-new",
+          repo: "o/r",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: newest,
+        }),
+        completed_at: newest,
+      };
+      state.tasks["idle-mid"] = {
+        ...initialTask({
+          id: "idle-mid",
+          repo: "o/r",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: middle,
+        }),
+        completed_at: middle,
+      };
       state.tasks.run = initialTask({
         id: "run",
         repo: "o/r",
         requestedModel: "m",
-        state: "working",
-        createdAt: recent,
-        updatedAt: recent,
+        state: "in_progress",
+        createdAt: oldestPending,
+        updatedAt: oldestPending,
       });
     });
-    const { matched, tasks } = filterTasks(await readState(path), { limit: 2 });
-    expect(tasks).toHaveLength(2);
+    const { matched, tasks } = filterTasks(await readState(path), { limit: 1 });
+    expect(tasks.map((t) => t.task_id)).toEqual(["idle-new"]);
     expect(listCounts(matched)).toMatchObject({ pending_count: 1, all_terminal: false });
+  });
+
+  it("waiting_for_user counts as pending, not terminal", async () => {
+    const path = await stateFile();
+    await withStateLock(path, (state) => {
+      state.tasks.wait = initialTask({
+        id: "wait",
+        repo: "o/r",
+        requestedModel: "m",
+        state: "waiting_for_user",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const matched = filterTasks(await readState(path), {}).matched;
+    expect(listCounts(matched)).toMatchObject({ pending_count: 1, terminal_count: 0, all_terminal: false });
+    expect(mapRawState("waiting_for_user")).toEqual({ status: "needs_input", terminal: false });
   });
 
   it("rejects limit above the cap", async () => {
@@ -93,7 +127,7 @@ describe("v0.1.0 owners and list filters", () => {
   it("counts per owner", async () => {
     const path = await stateFile();
     await withStateLock(path, (state) => {
-      state.tasks.a = { ...initialTask({ id: "a", repo: "o/r", requestedModel: "m", state: "working", createdAt: null, updatedAt: null, owner: "Alice" }), owner: "alice" };
+      state.tasks.a = { ...initialTask({ id: "a", repo: "o/r", requestedModel: "m", state: "in_progress", createdAt: null, updatedAt: null, owner: "Alice" }), owner: "alice" };
       state.tasks.b = { ...initialTask({ id: "b", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null, owner: "bob" }), owner: "bob" };
     });
     const state = await readState(path);
@@ -106,8 +140,8 @@ describe("v0.1.0 owners and list filters", () => {
   it("intersects owner and task_ids", async () => {
     const path = await stateFile();
     await withStateLock(path, (state) => {
-      state.tasks.a = { ...initialTask({ id: "a", repo: "o/r", requestedModel: "m", state: "working", createdAt: null, updatedAt: null }), owner: "thrall" };
-      state.tasks.b = { ...initialTask({ id: "b", repo: "o/r", requestedModel: "m", state: "working", createdAt: null, updatedAt: null }), owner: "other" };
+      state.tasks.a = { ...initialTask({ id: "a", repo: "o/r", requestedModel: "m", state: "in_progress", createdAt: null, updatedAt: null }), owner: "thrall" };
+      state.tasks.b = { ...initialTask({ id: "b", repo: "o/r", requestedModel: "m", state: "in_progress", createdAt: null, updatedAt: null }), owner: "other" };
     });
     const state = await readState(path);
     const rows = filterTasks(state, { owner: "thrall", task_ids: ["a", "b"] });
@@ -181,7 +215,7 @@ describe("v0.1.0 cache and retention", () => {
 
   it("cache hit skips fetch", () => {
     const task: TrackedTask = {
-      ...initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "working", createdAt: null, updatedAt: null }),
+      ...initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "in_progress", createdAt: null, updatedAt: null }),
       last_fetched_at: new Date().toISOString(),
     };
     expect(needsFetch(task, freshnessMs())).toBe(false);
@@ -295,5 +329,10 @@ describe("v0.1.0 unknown upstream state", () => {
     });
     expect(buildSummary(task)).toContain("unknown state");
     expect(buildSummary(task)).toContain("mystery_upstream");
+  });
+
+  it("exposes a warning string", () => {
+    expect(unknownStateWarning("mystery_upstream")).toContain("mystery_upstream");
+    expect(unknownStateWarning("queued")).toBeUndefined();
   });
 });

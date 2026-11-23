@@ -731,43 +731,105 @@ describe("experimental task steering", () => {
 describe("PR #18 review regressions", () => {
   it("list_agent_tasks counts pending tasks beyond the page limit", async () => {
     const statePath = await tempPath();
-    const recent = new Date().toISOString();
-    const slightlyOlder = new Date(Date.now() - 60_000).toISOString();
+    const newest = new Date().toISOString();
+    const middle = new Date(Date.now() - 60_000).toISOString();
+    const oldestPending = new Date(Date.now() - 3_600_000).toISOString();
     await withStateLock(statePath, (state) => {
-      for (let i = 0; i < 3; i++) {
-        state.tasks[`idle-${i}`] = {
-          ...initialTask({
-            id: `idle-${i}`,
-            repo: "octocat/hello-world",
-            requestedModel: "m",
-            state: "idle",
-            createdAt: slightlyOlder,
-            updatedAt: slightlyOlder,
-          }),
-          completed_at: slightlyOlder,
-        };
-      }
+      state.tasks["idle-new"] = {
+        ...initialTask({
+          id: "idle-new",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: newest,
+        }),
+        completed_at: newest,
+      };
+      state.tasks["idle-mid"] = {
+        ...initialTask({
+          id: "idle-mid",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: middle,
+        }),
+        completed_at: middle,
+      };
       state.tasks.run = initialTask({
         id: "run",
         repo: "octocat/hello-world",
         requestedModel: "m",
-        state: "working",
-        createdAt: recent,
-        updatedAt: recent,
+        state: "in_progress",
+        createdAt: oldestPending,
+        updatedAt: oldestPending,
       });
     });
     const github: GitHubClient = {
       ...unusedClient(),
       async getTask() {
-        return { id: "run", state: "working", updated_at: recent };
+        return { id: "run", state: "in_progress", updated_at: oldestPending };
       },
     };
-    const result = await callTool(statePath, github, "list_agent_tasks", { limit: 2 });
+    const result = await callTool(statePath, github, "list_agent_tasks", { limit: 1 });
     expect(result.isError).toBeUndefined();
-    const body = JSON.parse(textOf(result)) as { all_terminal: boolean; pending_count: number; tasks: unknown[] };
+    const body = JSON.parse(textOf(result)) as {
+      all_terminal: boolean;
+      pending_count: number;
+      tasks: Array<{ task_id: string }>;
+      next_check_after?: string;
+    };
     expect(body.all_terminal).toBe(false);
     expect(body.pending_count).toBe(1);
-    expect(body.tasks).toHaveLength(2);
+    expect(body.tasks).toHaveLength(1);
+    expect(body.tasks[0]?.task_id).toBe("idle-new");
+    expect(body.next_check_after).toBeDefined();
+  });
+
+  it("get_agent_task refetches after steering a terminal task", async () => {
+    const statePath = await tempPath();
+    const cachedAt = new Date().toISOString();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: "2026-11-22T00:00:00Z",
+          updatedAt: "2026-11-22T01:00:00Z",
+          htmlUrl: "https://github.com/octocat/hello-world/copilot/tasks/task-1",
+        }),
+        pull_request: { id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" },
+        completed_at: "2026-11-22T01:00:00Z",
+        last_fetched_at: cachedAt,
+      };
+    });
+    let gets = 0;
+    const base = steerClient({
+      task: taskWithPull(7),
+      pull: { number: 7, state: "open" },
+    });
+    const client: GitHubClient = {
+      ...base,
+      async getTask() {
+        gets += 1;
+        return {
+          ...taskWithPull(7),
+          state: gets <= 1 ? "idle" : "in_progress",
+          updated_at: new Date().toISOString(),
+        };
+      },
+    };
+    const steered = await callTool(statePath, client, "steer_agent_task", { task_id: "task-1", content: "continue" });
+    expect(steered.isError).toBeUndefined();
+    const got = await callTool(statePath, client, "get_agent_task", { task_id: "task-1", repo: "octocat/hello-world" });
+    expect(got.isError).toBeUndefined();
+    const body = JSON.parse(textOf(got)) as { terminal: boolean; status: string };
+    expect(body.terminal).toBe(false);
+    expect(body.status).toBe("working");
+    expect(gets).toBeGreaterThanOrEqual(2);
   });
 
   it("abort_agent_task on a finished task validates against the output schema", async () => {
@@ -809,7 +871,7 @@ describe("PR #18 review regressions", () => {
           id: "task-1",
           repo: "octocat/hello-world",
           requestedModel: "m",
-          state: "working",
+          state: "in_progress",
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         }),

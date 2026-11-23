@@ -1,5 +1,5 @@
 import type { TrackedTask } from "./state.ts";
-import { appendUrlHints, prUrl, sessionUrl } from "./task-urls.ts";
+import { githubPageUrl } from "./task-urls.ts";
 
 export type TaskStatusName = "working" | "needs_input" | "completed" | "failed" | "cancelled";
 
@@ -8,26 +8,44 @@ export type MappedStatus = {
   terminal: boolean;
 };
 
-const RAW_TO_STATUS: Record<string, MappedStatus> = {
+export const DOCUMENTED_TASK_STATES = [
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+  "idle",
+  "waiting_for_user",
+  "timed_out",
+  "cancelled",
+] as const;
+
+const RAW_TO_STATUS: Record<(typeof DOCUMENTED_TASK_STATES)[number], MappedStatus> = {
   queued: { status: "working", terminal: false },
-  working: { status: "working", terminal: false },
-  running: { status: "working", terminal: false },
   in_progress: { status: "working", terminal: false },
-  needs_input: { status: "needs_input", terminal: false },
   completed: { status: "completed", terminal: true },
-  idle: { status: "completed", terminal: true },
   failed: { status: "failed", terminal: true },
+  idle: { status: "completed", terminal: true },
+  waiting_for_user: { status: "needs_input", terminal: false },
   timed_out: { status: "failed", terminal: true },
   cancelled: { status: "cancelled", terminal: true },
 };
 
 export function isKnownRawState(rawState: string): boolean {
-  return Object.prototype.hasOwnProperty.call(RAW_TO_STATUS, rawState.trim().toLowerCase());
+  const normalized = rawState.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(RAW_TO_STATUS, normalized);
 }
 
 export function mapRawState(rawState: string): MappedStatus {
   const normalized = rawState.trim().toLowerCase();
-  return RAW_TO_STATUS[normalized] ?? { status: "failed", terminal: true };
+  if (Object.prototype.hasOwnProperty.call(RAW_TO_STATUS, normalized)) {
+    return RAW_TO_STATUS[normalized as keyof typeof RAW_TO_STATUS];
+  }
+  return { status: "failed", terminal: true };
+}
+
+export function unknownStateWarning(rawState: string): string | undefined {
+  if (isKnownRawState(rawState)) return undefined;
+  return `Unknown GitHub task state "${sanitizeLine(rawState, 80)}"; treated as failed.`;
 }
 
 export function isMappedTerminal(status: TaskStatusName): boolean {
@@ -51,46 +69,42 @@ export function durationLabel(task: Pick<TrackedTask, "created_at" | "completed_
 
 export type SummaryContext = {
   checkAfter?: string;
-  checkAfterLocal?: string;
 };
 
 export function buildSummary(task: TrackedTask, context: SummaryContext = {}): string {
   const mapped = mapRawState(task.state);
   const dur = durationLabel(task);
-  const session = sessionUrl(task);
-  const prLink = prUrl(task);
-  const withHints = (base: string) => appendUrlHints(base, session, prLink);
   if (mapped.status === "working") {
-    if (context.checkAfterLocal) return withHints(`Working for ${dur}. Check again after ${context.checkAfterLocal}.`);
-    return withHints(`Working for ${dur}.`);
+    if (context.checkAfter) return `Working for ${dur}. Check again after ${context.checkAfter}.`;
+    return `Working for ${dur}.`;
   }
   if (mapped.status === "needs_input") {
     const line = task.error ? sanitizeLine(task.error, 120) : "agent";
-    return withHints(`Waiting for input: ${line}.`);
+    return `Waiting for input: ${line}.`;
   }
   if (mapped.status === "completed") {
     const pr = task.pull_request;
     if (pr?.number !== null && pr?.number !== undefined) {
       const prTitle = resolvePullTitle(task);
-      if (prTitle) return withHints(`Completed in ${dur}: opened PR #${pr.number} '${sanitizeLine(prTitle, 60)}'.`);
-      return withHints(`Completed in ${dur}: opened PR #${pr.number}.`);
+      if (prTitle) return `Completed in ${dur}: opened PR #${pr.number} '${sanitizeLine(prTitle, 60)}'.`;
+      return `Completed in ${dur}: opened PR #${pr.number}.`;
     }
     if (pr && pr.number === null) {
-      return withHints(`Completed in ${dur}: opened a pull request (number not resolved yet).`);
+      return `Completed in ${dur}: opened a pull request (number not resolved yet).`;
     }
     const head = task.branch?.head_ref;
-    if (head) return withHints(`Completed in ${dur} on branch ${sanitizeLine(head, 40)}.`);
-    return withHints(`Completed in ${dur}; no changes.`);
+    if (head) return `Completed in ${dur} on branch ${sanitizeLine(head, 40)}.`;
+    return `Completed in ${dur}; no changes.`;
   }
   if (mapped.status === "failed") {
     if (!isKnownRawState(task.state)) {
-      return withHints(`Failed: unknown state ${sanitizeLine(task.state, 80)}.`);
+      return `Failed: unknown state ${sanitizeLine(task.state, 80)}.`;
     }
-    if (task.state === "timed_out") return withHints(`Failed: timed out after ${dur}.`);
+    if (task.state === "timed_out") return `Failed: timed out after ${dur}.`;
     const line = task.error ? sanitizeLine(task.error, 100) : "unknown error";
-    return withHints(`Failed after ${dur}: ${line}.`);
+    return `Failed after ${dur}: ${line}.`;
   }
-  return withHints(`Cancelled after ${dur}.`);
+  return `Cancelled after ${dur}.`;
 }
 
 function resolvePullTitle(task: TrackedTask): string | null {
@@ -100,7 +114,8 @@ function resolvePullTitle(task: TrackedTask): string | null {
 export function pullRequestView(task: TrackedTask): { number?: number; url?: string; id?: number } | undefined {
   const pr = task.pull_request;
   if (!pr) return undefined;
-  if (pr.number !== null && pr.html_url) return { number: pr.number, url: pr.html_url };
+  const page = pr.html_url ? githubPageUrl(pr.html_url) : undefined;
+  if (pr.number !== null && page) return { number: pr.number, url: page };
   if (pr.number !== null) return { number: pr.number };
   return { id: pr.id };
 }

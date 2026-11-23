@@ -8,7 +8,7 @@ To wake an autonomous agent, set `COPILOT_AGENTS_NOTIFY_URL` to an inbound webho
 
 The watcher starts after `create_agent_task` and after an accepted steer **only when at least one notification channel is configured** (desktop notifier or `COPILOT_AGENTS_NOTIFY_URL`). With no channels, steer and create still work; delivery stays `not_configured` and no watcher is spawned.
 
-Statuses exposed to MCP tools map known GitHub task states. Any unknown upstream `state` string is treated as terminal `failed`; summaries include `unknown state <raw>`.
+Statuses exposed to MCP tools map the GitHub task `state` enum (`queued`, `in_progress`, `waiting_for_user`, `completed`, `idle`, `failed`, `timed_out`, `cancelled`). `waiting_for_user` maps to `needs_input` (non-terminal). Any other upstream string is treated as terminal `failed` with a `warning` field and summary `unknown state <raw>`.
 
 The watcher starts after `create_agent_task` and after an accepted steer when channels exist. You can also run it directly:
 

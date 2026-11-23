@@ -1,8 +1,7 @@
 import type { NotifyChannel } from "./notify.ts";
 import { deliveryForTask } from "./delivery.ts";
-import { buildSummary, mapRawState, pullRequestView } from "./task-status.ts";
+import { buildSummary, durationLabel, mapRawState, pullRequestView, unknownStateWarning } from "./task-status.ts";
 import type { TrackedTask, Usage } from "./state.ts";
-import { formatCheckAfterLocal } from "./tasks.ts";
 import { prUrl, sessionUrl } from "./task-urls.ts";
 
 const ERROR_VERBOSE_MAX = 2048;
@@ -20,8 +19,7 @@ export function compactGetTask(
 ): Record<string, unknown> {
   const mapped = mapRawState(task.state);
   const delivery = deliveryForTask(task, channels);
-  const checkLocal = options?.checkAfter ? formatCheckAfterLocal(options.checkAfter) : undefined;
-  const summary = buildSummary(task, { checkAfterLocal: checkLocal });
+  const summary = buildSummary(task, { checkAfter: options?.checkAfter });
   const body: Record<string, unknown> = {
     task_id: task.task_id,
     repo: task.repo,
@@ -30,6 +28,8 @@ export function compactGetTask(
     summary,
     delivery,
   };
+  const warning = unknownStateWarning(task.state);
+  if (warning) body.warning = warning;
   if (task.owner) body.owner = task.owner;
   const session = sessionUrl(task);
   if (session) body.session_url = session;
@@ -39,7 +39,8 @@ export function compactGetTask(
   if (pr && options?.verbose) body.pull_request = pr;
   if (task.completed_at) body.completed_at = task.completed_at;
   if (!mapped.terminal && options?.checkAfter) {
-    body.next_step = `Still working (${buildSummary(task).match(/for (\d+m)/)?.[1] ?? "a while"}). End your turn; check again after ${formatCheckAfterLocal(options.checkAfter)}.`;
+    const dur = durationLabel(task);
+    body.next_step = `Still working (${dur}). End your turn; check again after ${options.checkAfter}.`;
   } else if (mapped.terminal && mapped.status === "completed" && task.pull_request?.number) {
     body.next_step = `PR #${task.pull_request.number} is open for review.`;
   }

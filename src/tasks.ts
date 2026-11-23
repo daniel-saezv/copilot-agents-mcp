@@ -1,5 +1,5 @@
 import type { GitHubClient } from "./github.ts";
-import { buildSummary, mapRawState, type MappedStatus } from "./task-status.ts";
+import { buildSummary, mapRawState, unknownStateWarning, type MappedStatus } from "./task-status.ts";
 import { prUrl, sessionUrl } from "./task-urls.ts";
 import {
   fillPullRequest,
@@ -42,6 +42,7 @@ export type ListTaskRow = {
   updated_at?: string;
   stale?: true;
   cached?: true;
+  warning?: string;
 };
 
 export function freshnessMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -162,16 +163,18 @@ export function formatCheckAfterLocal(iso: string): string {
   }
 }
 
-export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached?: boolean; checkAfterLocal?: string }): ListTaskRow {
+export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached?: boolean; checkAfter?: string }): ListTaskRow {
   const mapped = mapRawState(task.state);
   const row: ListTaskRow = {
     task_id: task.task_id,
     repo: task.repo,
     status: mapped.status,
     terminal: mapped.terminal,
-    summary: buildSummary(task, { checkAfterLocal: options?.checkAfterLocal }),
+    summary: buildSummary(task, { checkAfter: options?.checkAfter }),
     updated_at: task.updated_at ?? undefined,
   };
+  const warning = unknownStateWarning(task.state);
+  if (warning) row.warning = warning;
   if (task.owner) row.owner = task.owner;
   const session = sessionUrl(task);
   if (session) row.session_url = session;

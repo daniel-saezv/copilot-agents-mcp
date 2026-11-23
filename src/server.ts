@@ -21,9 +21,9 @@ import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
 import { activeNotificationChannels, appendWatcherLog } from "./notify.ts";
 import { compactGetTask } from "./task-present.ts";
 import { mapRawState } from "./task-status.ts";
+import { resolveTaskPageUrl } from "./task-urls.ts";
 import {
   filterTasks,
-  formatCheckAfterLocal,
   freshnessMs,
   listCounts,
   listNextStep,
@@ -308,7 +308,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       updatedAt: task.updated_at ?? null,
       ...(taskOwner ? { owner: taskOwner } : {}),
       deliveryRecord,
-      htmlUrl: task.html_url ?? task.url ?? null,
+      htmlUrl: resolveTaskPageUrl(task) ?? null,
     });
   });
   let watcher_started = false;
@@ -320,7 +320,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
     }
   }
-  const session = task.html_url ?? task.url ?? undefined;
+  const session = resolveTaskPageUrl(task);
   const follow_up = followUpBlock(channels, watcher_started, Date.now(), session);
   const planMode = follow_up.mode;
   const next_step = createFollowUpNextStep(planMode, taskOwner, task.id, channels.length > 0 && !watcher_started);
@@ -352,9 +352,10 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const checkAfter = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   let tracked: TrackedTask;
   let cached = false;
-  if (known && mapRawState(known.state).terminal) {
+  if (known && !needsFetch(known, freshness)) {
     tracked = known;
-    if (tracked.pull_request && tracked.pull_request.number === null && parsed) {
+    cached = true;
+    if (mapRawState(tracked.state).terminal && tracked.pull_request && tracked.pull_request.number === null && parsed) {
       let headRef = tracked.branch?.head_ref;
       if (!headRef) {
         const remote = await client.getTask({
@@ -378,9 +379,6 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
         }
       });
     }
-  } else if (known && !needsFetch(known, freshness)) {
-    tracked = known;
-    cached = true;
   } else {
     try {
       const remote = await client.getTask({
@@ -470,10 +468,9 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
   });
   const counts = listCounts(updated.matched);
   const checkAfter = new Date(now + 5 * 60 * 1000).toISOString();
-  const checkLocal = formatCheckAfterLocal(checkAfter);
   const rows = updated.page.map((task) => toListRow(task, {
     stale: staleIds.has(task.task_id) ? true : undefined,
-    checkAfterLocal: checkLocal,
+    checkAfter,
   }));
   const body: Record<string, unknown> = {
     tasks: rows,

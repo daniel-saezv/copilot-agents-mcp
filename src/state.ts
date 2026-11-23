@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
+import { resolveTaskPageUrl } from "./task-urls.ts";
 
 export const MODEL_PREFIX = "sweagent-capi:";
 export const FINAL_STATES = new Set(["completed", "failed", "timed_out", "cancelled", "idle"]);
@@ -224,7 +225,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
         : existing?.delivery_record ?? null),
     last_fetched_at: existing?.last_fetched_at ?? null,
     pr_title: existing?.pr_title ?? null,
-    html_url: task.html_url ?? task.url ?? existing?.html_url ?? null,
+    html_url: resolveTaskPageUrl(task) ?? existing?.html_url ?? null,
     session_id: latestSessionId(sessions) ?? existing?.session_id ?? null,
     steer,
   };
