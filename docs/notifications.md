@@ -11,3 +11,5 @@ Without a webhook URL, `create_agent_task` returns `follow_up.mode: check_later`
 ## Watcher
 
 `create_agent_task` starts a detached watcher when a notify URL is configured. You can also run `copilot-agents-mcp watch`. Poll interval is fixed at 15 seconds.
+
+State files from pre-release builds that still have legacy `delivery: { status: "failed" }` and no `notified_at` may trigger one extra notification after you upgrade; there is no migration because that shape never shipped in a release.

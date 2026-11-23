@@ -41,6 +41,7 @@ Optional: `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, `COPILOT_AGENTS_GITHUB_API_BASE
 | `COPILOT_AGENTS_STATE_PATH` | Isolated state file (default `~/.copilot-agents-mcp/state.json`) |
 | `COPILOT_AGENTS_LOG` | Optional watcher log file |
 | `COPILOT_AGENTS_GITHUB_API_BASE_URL` | Enterprise API base |
+| `DBUS_SESSION_BUS_ADDRESS` | On headless Linux, points the OS keyring (`secret-service`) at the session bus (e.g. `unix:path=/tmp/xdg-runtime-box/bus` on a Grok Bot box). If unset and login fails, use `GITHUB_PERSONAL_ACCESS_TOKEN` instead |
 
 Watcher poll interval and task freshness are **fixed internally** (15s poll, 60s freshness).
 
@@ -74,9 +75,10 @@ Run the same stdio command everywhere:
 
 1. Add a **local stdio MCP server** with the command and args above.
 2. Optional: set `COPILOT_AGENTS_STATE_PATH` in the server environment so this bot does not share state with other agents.
-3. **Webhook routine (recommended):** In Grok Bot, create a **Routine** with a **Webhook** trigger and copy its URL and key.
-4. In the MCP server env, set `COPILOT_AGENTS_NOTIFY_URL` to that URL and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to `Bearer <routine-key>` (include `Bearer ` exactly once).
-5. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
+3. On headless Linux, set `DBUS_SESSION_BUS_ADDRESS` (for example `unix:path=/tmp/xdg-runtime-box/bus`) so GitHub App `login` can use the keyring; otherwise set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server env.
+4. **Webhook routine (recommended):** Create a **Routine** with a **Webhook** trigger in the Grok Bot UI. The **human who owns the routine** copies the routine’s webhook URL and Authorization key from the routine panel into the MCP server’s masked secret fields (`COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`). The bot cannot read those values itself.
+5. Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to `Bearer <routine-key>` (include the `Bearer ` prefix exactly once).
+6. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
 
 ### (b) Claude Code and Claude Desktop
 
