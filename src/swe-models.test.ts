@@ -118,6 +118,12 @@ describe("/agents/swe/models validator", () => {
     expect(validateSweModels({
       data: [{ ...pricedWithoutPolicy, policy: { terms: "no state field" } }],
     })[0]?.policy).toBeUndefined();
+    expect(validateSweModels({
+      data: [{ ...pricedWithoutPolicy, policy: {} }],
+    })[0]?.policy).toBeUndefined();
+    expect(validateSweModels({
+      data: [{ ...pricedWithoutPolicy, policy: { state: null } }],
+    })[0]?.policy).toBeUndefined();
   });
 
   it("does not store a real endpoint URL or real models", () => {
@@ -194,21 +200,33 @@ describe("/agents/swe/models reader", () => {
 
   it("accepts models without policy.state through MCP output validation", async () => {
     const withoutPolicy = { ...pricedWithoutPolicy };
+    const policyEmptyObject = {
+      ...pricedWithoutPolicy,
+      id: "test-model-policy-empty-object",
+      policy: {},
+    };
+    const policyNullState = {
+      ...pricedWithoutPolicy,
+      id: "test-model-policy-null-state",
+      policy: { state: null },
+    };
     const policyWithoutState = {
       ...tokenModel,
-      id: "test-model-policy-empty",
+      id: "test-model-policy-extra-fields",
       policy: { terms: "without state" },
     };
     const result = await callListModels(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
-      return json({ data: [withoutPolicy, policyWithoutState, tokenModel] });
+      return json({
+        data: [withoutPolicy, policyEmptyObject, policyNullState, policyWithoutState, tokenModel],
+      });
     });
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(textOf(result)) as { models: Array<{ id: string; policy?: { state?: string } }> };
-    const bare = body.models.find((m) => m.id === "test-model-c");
-    const partial = body.models.find((m) => m.id === "test-model-policy-empty");
-    expect(bare?.policy).toBeUndefined();
-    expect(partial?.policy).toBeUndefined();
+    expect(body.models.find((m) => m.id === "test-model-c")?.policy).toBeUndefined();
+    expect(body.models.find((m) => m.id === "test-model-policy-empty-object")?.policy).toBeUndefined();
+    expect(body.models.find((m) => m.id === "test-model-policy-null-state")?.policy).toBeUndefined();
+    expect(body.models.find((m) => m.id === "test-model-policy-extra-fields")?.policy).toBeUndefined();
     expect(body.models.find((m) => m.id === "test-model-a")?.policy).toEqual({ state: "enabled" });
   });
 });

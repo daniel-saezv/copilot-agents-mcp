@@ -243,6 +243,8 @@ function readPolicy(item: Record<string, unknown>, path: string): { state: strin
   }
   if (!isRecord(item.policy)) throw new ModelsError(`${path} is not an object`);
   if (!Object.prototype.hasOwnProperty.call(item.policy, "state")) return undefined;
+  const state = item.policy.state;
+  if (state === null || state === undefined) return undefined;
   return { state: readString(item.policy, "state", `${path}.state`) };
 }
 
