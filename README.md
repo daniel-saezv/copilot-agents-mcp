@@ -73,7 +73,7 @@ Add the copilot-agents MCP server with command npx and args -y copilot-agents-mc
 <!-- START AUTOMATED TOOLS -->
 | Tool | Toolset | Read-only | Description |
 | --- | --- | --- | --- |
-| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately; do not poll in a loop—end your turn and wait for notification.channels or a user prompt before calling get_agent_task. |
+| `create_agent_task` | copilot_tasks | no | Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task. |
 | `get_agent_task` | copilot_tasks | yes | Read a GitHub Copilot agent task once. |
 | `steer_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request. |
 | `abort_agent_task` | copilot_tasks | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub. |

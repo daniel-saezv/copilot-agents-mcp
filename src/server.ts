@@ -5,7 +5,7 @@ import { failureMessage, modelUnavailableMessage, NO_SESSION_MESSAGE, TASK_HAS_N
 import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
-import { activeNotificationChannels, appendWatcherLog } from "./notify.ts";
+import { activeNotificationChannels, appendWatcherLog, createNextStep } from "./notify.ts";
 import { armSteer, fillPullRequest, headRefOf, initialTask, normalizeModel, observe, taskSessionCount, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
@@ -48,6 +48,7 @@ const createOutput = z.object({
   created_at: z.string().nullable(),
   html_url: z.string().nullable(),
   notification: notificationOutput,
+  next_step: z.string(),
 }).strict();
 
 const SERVER_INSTRUCTIONS = [
@@ -57,7 +58,7 @@ const SERVER_INSTRUCTIONS = [
   "Call get_agent_task once later when the user asks or after you receive a completion signal.",
 ].join(" ");
 
-const CREATE_TASK_GUIDANCE = "Returns immediately; do not poll in a loop—end your turn and wait for notification.channels or a user prompt before calling get_agent_task.";
+const CREATE_TASK_GUIDANCE = "Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task.";
 
 const artifactSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("pull"), id: z.number() }).strict(),
@@ -266,6 +267,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   } catch (error) {
     console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
   }
+  const channels = activeNotificationChannels(process.platform, process.env);
   return {
     task_id: task.id,
     repo,
@@ -274,9 +276,10 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     created_at: task.created_at ?? null,
     html_url: task.html_url ?? null,
     notification: {
-      channels: activeNotificationChannels(process.platform, process.env),
+      channels,
       watcher_started,
     },
+    next_step: createNextStep(channels),
   };
 }
 

@@ -336,7 +336,19 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
     const message = error instanceof Error ? error.message : "network error";
     throw new GitHubError(redact(`Could not call the GitHub API: ${message}`, token));
   }
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+    }
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+    }
+    const message = error instanceof Error ? error.message : "network error";
+    throw new GitHubError(redact(`Could not read the GitHub API response: ${message}`, token));
+  }
   let parsed: unknown = null;
   if (text) {
     try {

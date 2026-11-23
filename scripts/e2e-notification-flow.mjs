@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,6 +112,12 @@ async function waitFor(predicate, label, timeoutMs = 15_000) {
   throw new Error(`Timed out waiting for ${label}.`);
 }
 
+const notifyBin = mkdtempSync(join(tmpdir(), "copilot-e2e-bin-"));
+const notifySend = join(notifyBin, "notify-send");
+writeFileSync(notifySend, "#!/bin/sh\n");
+chmodSync(notifySend, 0o755);
+const pathWithNotify = `${notifyBin}:${process.env.PATH ?? ""}`;
+
 const workDir = mkdtempSync(join(tmpdir(), "copilot-e2e-stdio-"));
 const github = await startFakeGitHub();
 const webhook = await startWebhook();
@@ -124,7 +130,7 @@ try {
     COPILOT_AGENTS_STATE_PATH: statePath,
     COPILOT_AGENTS_NOTIFY_URL: webhook.url,
     COPILOT_AGENTS_POLL_INTERVAL_MS: "200",
-    PATH: process.env.PATH ?? "/usr/bin",
+    PATH: pathWithNotify,
   };
 
   const { client } = await connectMcp(shared);

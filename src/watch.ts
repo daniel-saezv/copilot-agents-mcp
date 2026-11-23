@@ -124,7 +124,11 @@ function readyToNotify(task: TrackedTask): boolean {
 
 async function hasPending(statePath: string): Promise<boolean> {
   const state = await readState(statePath);
-  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || awaitingSteer(task) || readyToNotify(task));
+  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || steerPending(task) || readyToNotify(task));
+}
+
+function steerPending(task: TrackedTask): boolean {
+  return awaitingSteer(task);
 }
 
 export function watcherLockPath(statePath: string): string {

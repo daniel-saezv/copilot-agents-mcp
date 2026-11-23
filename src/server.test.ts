@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -93,8 +93,14 @@ describe("tools", () => {
 
   it("returns notification channels and responds immediately on create", async () => {
     const statePath = await tempPath();
+    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
+    dirs.push(binDir);
+    const notifySend = join(binDir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
     const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+    const previousPath = process.env.PATH;
     process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`;
     const started = performance.now();
     try {
       const slow: GitHubClient = {
@@ -129,13 +135,18 @@ describe("tools", () => {
       expect(result.isError).toBeUndefined();
       const body = JSON.parse(textOf(result)) as {
         notification: { channels: string[]; watcher_started: boolean };
+        next_step: string;
       };
       expect(body.notification.channels).toContain("system");
       expect(body.notification.channels).toContain("webhook");
       expect(body.notification.watcher_started).toBe(true);
+      expect(body.next_step).toContain("Task queued");
+      expect(body.next_step).toContain("webhook");
     } finally {
       if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
       else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
     }
   });
 

@@ -8,7 +8,7 @@ The MCP server also publishes **instructions** at initialize time: cloud tasks t
 
 ## `create_agent_task`
 
-Launch a GitHub Copilot cloud agent task. Returns immediately; do not poll in a loop—end the turn and wait for `notification.channels` or a user prompt before calling `get_agent_task`.
+Launch a GitHub Copilot cloud agent task. Returns immediately; do not poll in a loop—end the turn and wait for the completion notice (sent via `notification.channels`) or a user prompt before calling `get_agent_task`.
 
 Input:
 
@@ -22,7 +22,7 @@ Input:
 | `custom_agent` | string | no | Custom agent name without the extension. |
 | `create_pull_request` | boolean | no | When true, the API creates a pull request. |
 
-Output: `task_id`, `repo`, `state`, `requested_model`, nullable `created_at`, nullable `html_url`, and `notification` (`channels`: `system` and/or `webhook` in effect, plus `watcher_started`).
+Output: `task_id`, `repo`, `state`, `requested_model`, nullable `created_at`, nullable `html_url`, `notification` (`channels`: `system` and/or `webhook` in effect, plus `watcher_started`), and `next_step` (plain-text guidance for the client).
 
 The server blocks a model already recorded as rejected and lists accepted models observed so far.
 

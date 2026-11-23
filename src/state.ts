@@ -105,6 +105,7 @@ export function taskSessionCount(task: AgentTask, fallback = 0): number {
 }
 
 export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
+  task.delivery = null;
   task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
 }
 
@@ -115,6 +116,7 @@ export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
 }
 
 export function awaitingSteer(task: TrackedTask): boolean {
+  if (task.delivery?.status === "failed") return false;
   return Boolean(task.steer && task.steer.notified !== true);
 }
 
