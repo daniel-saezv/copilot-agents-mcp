@@ -160,7 +160,7 @@ export function redact(text: string, secret: string): string {
   return text.split(secret).join("[redacted]");
 }
 
-const TOKEN_SHAPE = /\b(?:github_pat_|gh[a-z]_)[A-Za-z0-9_]+\b/g;
+const TOKEN_SHAPE = /\b(?:github_pat_|gh[a-z]_)[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g;
 
 export function redactTokenShapes(text: string): string {
   return text.replace(TOKEN_SHAPE, "[redacted]");
