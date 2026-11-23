@@ -34,8 +34,17 @@ function assertNotifySecretsHidden(output: string, urlSecret: string, authSecret
   expect(output).not.toContain(url.pathname);
   const bearerTail = authSecret.slice("Bearer ".length);
   expect(output).not.toContain(bearerTail);
-  for (const secret of [urlSecret, authSecret]) {
-    for (const fragment of fragmentsOf(secret)) {
+  for (const marker of [
+    "notify-host-LEAK7",
+    "path-segment-XY99",
+    "key-part-SECRET88",
+    "SECRET88_abcd",
+    "LEAK99_not_for_output",
+  ]) {
+    expect(output).not.toContain(marker);
+  }
+  for (const secret of [urlSecret, authSecret, patSecret]) {
+    for (const fragment of fragmentsOf(secret, 10)) {
       expect(output).not.toContain(fragment);
     }
   }
