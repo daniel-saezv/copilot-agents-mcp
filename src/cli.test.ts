@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ignoredTokenWarning, readActiveToken } from "./auth.ts";
-import { parseArgs, supportsNode } from "./cli.ts";
+import { githubApiBase, parseArgs, supportsNode } from "./cli.ts";
 
 describe("cli", () => {
   it("starts over stdio and only opens HTTP with the flag", () => {
@@ -14,6 +14,14 @@ describe("cli", () => {
     expect(parseArgs(["--version"], {})).toEqual({ command: "version" });
     expect(() => parseArgs(["auth"], {})).toThrow(/auth status/);
     expect(() => parseArgs(["login", "--http"], {})).toThrow(/does not accept/);
+  });
+
+  it("requires https for GitHub base URL unless loopback", () => {
+    expect(() => githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://example.com" })).toThrow(/https/);
+    expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://127.0.0.1:4321/" })).toBe("http://127.0.0.1:4321");
+    expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://[::1]:4321/" })).toBe("http://[::1]:4321");
+    expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "https://api.github.com" })).toBe("https://api.github.com");
+    expect(() => githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "not-a-url" })).toThrow(/valid URL/);
   });
 
   it("requires Node.js 26", () => {

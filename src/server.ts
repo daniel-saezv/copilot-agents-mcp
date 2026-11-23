@@ -5,7 +5,7 @@ import { failureMessage, modelUnavailableMessage, NO_SESSION_MESSAGE, TASK_HAS_N
 import type { AgentTask, GitHubClient, TaskEvent } from "./github.ts";
 import { sweModelsResultSchema, type SweModelsResult } from "./swe-models.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
-import { appendWatcherLog } from "./notify.ts";
+import { activeNotificationChannels, appendWatcherLog, createNextStep } from "./notify.ts";
 import { armSteer, fillPullRequest, headRefOf, initialTask, normalizeModel, observe, taskSessionCount, toNotice, withStateLock } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
 
@@ -35,6 +35,11 @@ const createInput = z.object({
   create_pull_request: z.boolean().optional().describe("When true, the API creates a pull request."),
 }).strict();
 
+const notificationOutput = z.object({
+  channels: z.array(z.enum(["system", "webhook"])),
+  watcher_started: z.boolean(),
+}).strict();
+
 const createOutput = z.object({
   task_id: z.string(),
   repo: z.string(),
@@ -42,7 +47,18 @@ const createOutput = z.object({
   requested_model: z.string(),
   created_at: z.string().nullable(),
   html_url: z.string().nullable(),
+  notification: notificationOutput,
+  next_step: z.string(),
 }).strict();
+
+const SERVER_INSTRUCTIONS = [
+  "GitHub Copilot agent tasks run in the cloud and often take minutes.",
+  "create_agent_task returns right after the task is queued; do not wait on the tool or poll get_agent_task in a loop.",
+  "End your turn after create_agent_task; completion is signaled outside MCP (see notification.channels in the create response).",
+  "Call get_agent_task once later when the user asks or after you receive a completion signal.",
+].join(" ");
+
+const CREATE_TASK_GUIDANCE = "Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task.";
 
 const artifactSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("pull"), id: z.number() }).strict(),
@@ -76,6 +92,7 @@ const statusOutput = z.object({
   updated_at: z.string().nullable(),
   completed_at: z.string().nullable(),
   session_id: z.string().nullable().describe("ID of the task's latest session."),
+  notified: z.boolean().describe("True when the watcher recorded a successful completion notification."),
 }).strict();
 
 const getInput = z.object({
@@ -132,11 +149,13 @@ export function buildServer(selection: Selection, deps: ServerDeps): McpServer {
   const server = new McpServer({
     name: "copilot-agents-mcp",
     version: packageVersion(),
+  }, {
+    instructions: SERVER_INSTRUCTIONS,
   });
   if (enabled.has("create_agent_task")) {
     server.registerTool("create_agent_task", {
       title: "Launch Copilot task",
-      description: "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far.",
+      description: `Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. ${CREATE_TASK_GUIDANCE}`,
       inputSchema: createInput,
       outputSchema: createOutput,
       annotations: annotations("POST", "Launch Copilot task"),
@@ -241,11 +260,14 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
       updatedAt: task.updated_at ?? null,
     });
   });
+  let watcher_started = false;
   try {
     deps.launchWatcher();
+    watcher_started = true;
   } catch (error) {
     console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
   }
+  const channels = activeNotificationChannels(process.platform, process.env);
   return {
     task_id: task.id,
     repo,
@@ -253,6 +275,11 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     requested_model: model,
     created_at: task.created_at ?? null,
     html_url: task.html_url ?? null,
+    notification: {
+      channels,
+      watcher_started,
+    },
+    next_step: createNextStep(channels),
   };
 }
 

@@ -332,6 +332,45 @@ describe("app credential", () => {
   });
 });
 
+describe("timeouts", () => {
+  it("times out while reading the response body", async () => {
+    const example = fixture("get-task.response.json").example;
+    const client = createGitHubClient({
+      token,
+      fetchTimeoutMs: 50,
+      fetch: (async (_input, init) => ({
+        ok: true,
+        async text() {
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          });
+        },
+      })) as typeof fetch,
+    });
+    await expect(client.getTask({ taskId: (example as { id: string }).id })).rejects.toThrow(/timed out after 50 milliseconds/);
+  });
+
+  it("fails create_agent_task when the GitHub fetch never resolves", async () => {
+    const client = createGitHubClient({
+      token,
+      fetchTimeoutMs: 50,
+      fetch: (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }),
+    });
+    await expect(client.createTask({
+      owner: "octocat",
+      repo: "hello-world",
+      prompt: "x",
+      model: "mai-code-2",
+    })).rejects.toThrow(/timed out after 50 milliseconds/);
+  });
+});
+
 describe("formatApiError", () => {
   it("calculates the wait from x-ratelimit-reset", () => {
     const reset = String(Math.floor(Date.now() / 1000) + 30);

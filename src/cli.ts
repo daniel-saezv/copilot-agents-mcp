@@ -153,12 +153,45 @@ function helpText(): string {
     "Options: --toolsets, --tools, --exclude-tools, --read-only, --features",
     "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
     "GITHUB_TOOLSETS, GITHUB_TOOLS, GITHUB_EXCLUDE_TOOLS, GITHUB_READ_ONLY,",
-    "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH",
+    "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH,",
+    "COPILOT_AGENTS_GITHUB_API_BASE_URL",
   ].join("\n");
+}
+
+export function githubApiBase(env: NodeJS.ProcessEnv): string | undefined {
+  const raw = env.COPILOT_AGENTS_GITHUB_API_BASE_URL?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL is not a valid URL.");
+  }
+  const host = url.hostname;
+  const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  if (url.protocol !== "https:" && !loopback) {
+    throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL must use https unless the host is loopback.");
+  }
+  return raw.replace(/\/$/, "");
+}
+
+export function warnGithubApiBase(env: NodeJS.ProcessEnv): void {
+  const base = githubApiBase(env);
+  if (base) console.error(`Using COPILOT_AGENTS_GITHUB_API_BASE_URL=${base}`);
+}
+
+function githubClient(token: string, env: NodeJS.ProcessEnv, session: AppSession | null) {
+  const baseUrl = githubApiBase(env);
+  return createGitHubClient({
+    token,
+    tokens: session ?? undefined,
+    ...(baseUrl ? { baseUrl } : {}),
+  });
 }
 
 async function serve(command: ServeCommand): Promise<void> {
   warnIgnored(process.env);
+  warnGithubApiBase(process.env);
   const statePath = defaultStatePath();
   const pat = personalAccessToken(process.env);
   const session = pat ? null : await openAppSession(process.env, statePath);
@@ -166,7 +199,7 @@ async function serve(command: ServeCommand): Promise<void> {
   const deps = {
     statePath,
     readToken,
-    clientForToken: (token: string) => createGitHubClient({ token, tokens: session ?? undefined }),
+    clientForToken: (token: string) => githubClient(token, process.env, session),
     readModels: async () => {
       const token = readToken();
       if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
@@ -185,6 +218,7 @@ async function serve(command: ServeCommand): Promise<void> {
 
 async function watch(): Promise<void> {
   warnIgnored(process.env);
+  warnGithubApiBase(process.env);
   const statePath = defaultStatePath();
   const pat = personalAccessToken(process.env);
   const session = pat ? null : await openAppSession(process.env, statePath);
@@ -200,7 +234,7 @@ async function watch(): Promise<void> {
   try {
     const interval = Number(process.env.COPILOT_AGENTS_POLL_INTERVAL_MS ?? "15000");
     await runWatcher({
-      client: createGitHubClient({ token, tokens: session ?? undefined }),
+      client: githubClient(token, process.env, session),
       statePath,
       deliver: (notice) => deliverNotice(notice),
       intervalMs: Number.isFinite(interval) && interval >= 0 ? interval : 15_000,

@@ -1,5 +1,11 @@
 # Notifications
 
+Delivery is **at-least-once**; `get_agent_task.notified` only reflects local watcher bookkeeping, not a wake signal for your agent.
+
+Completion notices **do not** come back over MCP. The detached watcher polls GitHub and, when a task reaches a final state, delivers JSON through a desktop toast (`notify-send`, `osascript`, or PowerShell) and/or an HTTP POST. MCP clients must not poll `get_agent_task` in a loop waiting for that signal.
+
+To wake an autonomous agent, set `COPILOT_AGENTS_NOTIFY_URL` to an inbound webhook on the host that runs the agent (for example a small HTTP handler that posts a follow-up message into the agent session).
+
 The watcher starts after `create_agent_task` and after an accepted steer. You can also run it directly:
 
 ```bash
@@ -22,7 +28,7 @@ The watcher polls until a task reaches `completed`, `failed`, `timed_out`, `canc
 
 The watcher uses PowerShell on Windows, `osascript` on macOS, and `notify-send` on Linux. It never exposes the GitHub token to the spawned notification process.
 
-If the system notifier cannot start, the watcher logs the failure and continues. A configured notification POST still runs.
+If the system notifier cannot start or exits with an error, the watcher logs the failure and still tries a configured POST. If **no** channel succeeds, the task is marked with `delivery.status: "failed"` in local state, `notified_at` stays unset, and `get_agent_task` returns `notified: false`. The watcher does not retry forever.
 
 ## Notification POST
 

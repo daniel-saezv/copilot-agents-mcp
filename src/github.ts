@@ -145,17 +145,21 @@ export function assertSchema(validate: Validate, value: unknown, label: string):
   throw new GitHubError(`The GitHub response does not match the ${label} schema: ${details}`);
 }
 
+export const GITHUB_FETCH_TIMEOUT_MS = 30_000;
+
 export function createGitHubClient(options: {
   token: string;
   fetch?: typeof fetch;
   baseUrl?: string;
   internalBaseUrl?: string;
   tokens?: AccessTokenSource;
+  fetchTimeoutMs?: number;
 }): GitHubClient {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
   const internalBaseUrl = (options.internalBaseUrl ?? INTERNAL_AGENTS_BASE).replace(/\/$/, "");
   const tokens = options.tokens;
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? GITHUB_FETCH_TIMEOUT_MS;
   return {
     createTask(input) {
       const body: Record<string, unknown> = { prompt: input.prompt, model: input.model };
@@ -174,6 +178,7 @@ export function createGitHubClient(options: {
         validate: createResponse,
         label: "create task",
         permission: "Agent tasks",
+        fetchTimeoutMs,
       });
     },
     getTask(input) {
@@ -190,6 +195,7 @@ export function createGitHubClient(options: {
         validate: getResponse,
         label: "read task",
         permission: "Agent tasks",
+        fetchTimeoutMs,
       });
     },
     async findPullRequest(input) {
@@ -206,6 +212,7 @@ export function createGitHubClient(options: {
         path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls?${query.toString()}`,
         method: "GET",
         permission: "Pull requests",
+        fetchTimeoutMs,
       });
       return matchPull(parsed, input.id);
     },
@@ -218,6 +225,7 @@ export function createGitHubClient(options: {
         path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/pulls/${encodeURIComponent(String(input.number))}`,
         method: "GET",
         permission: "Pull requests",
+        fetchTimeoutMs,
       });
       return readPullState(parsed, input.number);
     },
@@ -233,6 +241,7 @@ export function createGitHubClient(options: {
         profile: "internal",
         acceptEmpty: true,
         permission: "Contents: write",
+        fetchTimeoutMs,
       });
     },
     async abortTask(taskId) {
@@ -247,6 +256,7 @@ export function createGitHubClient(options: {
         profile: "internal",
         acceptEmpty: true,
         permission: "Contents: write",
+        fetchTimeoutMs,
       });
     },
     async getTaskEvents(taskId, page, perPage) {
@@ -263,6 +273,7 @@ export function createGitHubClient(options: {
         method: "GET",
         profile: "internal",
         permission: "Agent tasks",
+        fetchTimeoutMs,
       });
       return parseTaskEvents(parsed);
     },
@@ -286,6 +297,7 @@ type GitHubCall = {
   profile?: "public" | "internal";
   acceptEmpty?: boolean;
   permission: GithubPermission;
+  fetchTimeoutMs?: number;
 };
 
 async function callGitHub(options: GitHubCall): Promise<unknown> {
@@ -307,6 +319,7 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
   };
   if (profile === "public") headers["x-github-api-version"] = API_VERSION;
   if (options.body) headers["content-type"] = "application/json";
+  const timeoutMs = options.fetchTimeoutMs ?? GITHUB_FETCH_TIMEOUT_MS;
   let response: Response;
   try {
     response = await options.fetchImpl(`${options.baseUrl}${options.path}`, {
@@ -314,12 +327,28 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
       redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+    }
     const message = error instanceof Error ? error.message : "network error";
     throw new GitHubError(redact(`Could not call the GitHub API: ${message}`, token));
   }
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+    }
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+    }
+    const message = error instanceof Error ? error.message : "network error";
+    throw new GitHubError(redact(`Could not read the GitHub API response: ${message}`, token));
+  }
   let parsed: unknown = null;
   if (text) {
     try {

@@ -1,10 +1,17 @@
 import { spawn, type SpawnOptions } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import type { TaskNotice } from "./state.ts";
 
 export const NOTIFY_URL_ENV = "COPILOT_AGENTS_NOTIFY_URL";
 export const NOTIFY_AUTHORIZATION_ENV = "COPILOT_AGENTS_NOTIFY_AUTHORIZATION";
+
+export type NotifyChannel = "system" | "webhook";
+
+export type DeliveredNotice = {
+  channels: NotifyChannel[];
+};
 
 const ENV_KEYS = ["PATH", "SystemRoot", "WINDIR", "PATHEXT", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "HOME"];
 
@@ -40,6 +47,27 @@ export type NotificationPlan = {
   env: NodeJS.ProcessEnv;
 };
 
+export function systemNotifierAvailable(platform: NodeJS.Platform, baseEnv: NodeJS.ProcessEnv): boolean {
+  const plan = notificationPlan(platform, "", "", baseEnv);
+  if (!plan) return false;
+  return commandOnPath(plan.command, baseEnv, platform);
+}
+
+export function activeNotificationChannels(platform: NodeJS.Platform, baseEnv: NodeJS.ProcessEnv): NotifyChannel[] {
+  const channels: NotifyChannel[] = [];
+  if (systemNotifierAvailable(platform, baseEnv)) channels.push("system");
+  if (baseEnv[NOTIFY_URL_ENV]?.trim()) channels.push("webhook");
+  return channels;
+}
+
+export function createNextStep(channels: NotifyChannel[]): string {
+  if (channels.length === 0) {
+    return "Task queued. Do not poll. End your turn; no notification channel is configured (set COPILOT_AGENTS_NOTIFY_URL). Call get_agent_task once later.";
+  }
+  const via = channels.length === 1 ? channels[0] ?? "system" : `${channels.slice(0, -1).join(", ")} and ${channels.at(-1) ?? ""}`;
+  return `Task queued. Do not poll. End your turn; you will be notified via ${via}. Call get_agent_task once later.`;
+}
+
 export function notificationPlan(platform: NodeJS.Platform, title: string, body: string, baseEnv: NodeJS.ProcessEnv): NotificationPlan | null {
   const env = publicEnv(baseEnv);
   env.COPILOT_AGENTS_NOTIFY_TITLE = title;
@@ -66,16 +94,29 @@ export async function notifySystem(notice: TaskNotice, spawnImpl: typeof spawn =
   const { title, body } = noticeText(notice);
   const plan = notificationPlan(platform, title, body, baseEnv);
   if (!plan) return;
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     let pending = true;
-    const done = (error?: unknown) => {
+    const fail = (message: string) => {
+      void appendWatcherLog(`Could not show the system notification: ${message}`, baseEnv).finally(() => {
+        reject(new Error(message));
+      });
+    };
+    const done = (error?: unknown, exitCode?: number | null) => {
       if (!pending) return;
       pending = false;
-      if (error === undefined) {
+      if (error === undefined && exitCode === 0) {
         resolve();
         return;
       }
-      void appendWatcherLog(`Could not show the system notification: ${notifyFailure(plan.command, error)}`, baseEnv).finally(resolve);
+      if (error === undefined && exitCode === null) {
+        fail(`signal ${plan.command}`);
+        return;
+      }
+      if (error !== undefined) {
+        fail(notifyFailure(plan.command, error));
+        return;
+      }
+      fail(`exit ${exitCode ?? "?"} ${plan.command}`);
     };
     let child: ReturnType<typeof spawn>;
     try {
@@ -85,7 +126,7 @@ export async function notifySystem(notice: TaskNotice, spawnImpl: typeof spawn =
       return;
     }
     child.on("error", (error) => done(error));
-    child.on("exit", () => done());
+    child.on("exit", (code) => done(undefined, code));
   });
 }
 
@@ -126,11 +167,41 @@ export async function deliverNotice(
   fetchImpl: typeof fetch = fetch,
   spawnImpl: typeof spawn = spawn,
   platform: NodeJS.Platform = process.platform,
-): Promise<void> {
-  await notifySystem(notice, spawnImpl, platform, env);
+): Promise<DeliveredNotice> {
+  const channels: NotifyChannel[] = [];
+  if (systemNotifierAvailable(platform, env)) {
+    try {
+      await notifySystem(notice, spawnImpl, platform, env);
+      channels.push("system");
+    } catch {
+      /* logged in notifySystem */
+    }
+  }
   const url = env[NOTIFY_URL_ENV]?.trim();
-  if (!url) return;
-  await postNotice(url, notice, env[NOTIFY_AUTHORIZATION_ENV]?.trim() || undefined, fetchImpl);
+  if (url) {
+    try {
+      await postNotice(url, notice, env[NOTIFY_AUTHORIZATION_ENV]?.trim() || undefined, fetchImpl);
+      channels.push("webhook");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "webhook delivery failed";
+      await appendWatcherLog(`Could not POST the task notification: ${message}`, env);
+    }
+  }
+  return { channels };
+}
+
+function commandOnPath(command: string, baseEnv: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") {
+    const systemRoot = baseEnv.SystemRoot ?? baseEnv.WINDIR ?? "C:\\Windows";
+    const candidate = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", command);
+    if (existsSync(candidate)) return true;
+  }
+  const pathList = baseEnv.PATH ?? "";
+  for (const dir of pathList.split(delimiter)) {
+    if (!dir) continue;
+    if (existsSync(join(dir, command))) return true;
+  }
+  return false;
 }
 
 function publicEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

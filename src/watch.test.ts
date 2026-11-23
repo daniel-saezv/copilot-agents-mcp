@@ -1,12 +1,12 @@
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTask, GitHubClient } from "./github.ts";
 import { createGitHubClient } from "./github.ts";
-import { deliverNotice, notificationPlan, postNotice } from "./notify.ts";
+import { activeNotificationChannels, deliverNotice, notificationPlan, postNotice, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { armSteer, emptyState, initialTask, presentUsage, readState, withStateLock, type StateFile, type TaskNotice } from "./state.ts";
 import { runWatcher } from "./watch.ts";
 
@@ -76,6 +76,13 @@ function remote(id: string, state: string, extra: Partial<AgentTask> = {}): Agen
   return { id, state, created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:01:00Z", ...extra };
 }
 
+function ackDelivery(channels: NotifyChannel[] = ["system"], handler?: (notice: TaskNotice) => void | Promise<void>) {
+  return async (notice: TaskNotice): Promise<DeliveredNotice> => {
+    await handler?.(notice);
+    return { channels };
+  };
+}
+
 describe("watcher", () => {
   it("treats idle as final and notifies once", async () => {
     const statePath = await tempState();
@@ -88,9 +95,9 @@ describe("watcher", () => {
     await runWatcher({
       client: github,
       statePath,
-      deliver: async (notice) => {
+      deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice.state);
-      },
+      }),
       intervalMs: 0,
       maxCycles: 1,
       sleep: async () => {},
@@ -100,9 +107,9 @@ describe("watcher", () => {
     await runWatcher({
       client: github,
       statePath,
-      deliver: async (notice) => {
+      deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice.state);
-      },
+      }),
       intervalMs: 0,
       sleep: async () => {},
     });
@@ -110,9 +117,9 @@ describe("watcher", () => {
     await runWatcher({
       client: github,
       statePath,
-      deliver: async (notice) => {
+      deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice.state);
-      },
+      }),
       intervalMs: 0,
       sleep: async () => {},
     });
@@ -124,9 +131,9 @@ describe("watcher", () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress"));
     const notices: Array<{ state: string; session_id: string | null }> = [];
-    const deliver = async (notice: TaskNotice) => {
+    const deliver = ackDelivery(["system"], (notice) => {
       notices.push({ state: notice.state, session_id: notice.session_id });
-    };
+    });
     const session = { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" };
     await runWatcher({
       client: client([remote("task-1", "idle", { session_count: 1, sessions: [session] })]),
@@ -193,9 +200,9 @@ describe("watcher", () => {
       armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
     });
     const notices: Array<string | null> = [];
-    const deliver = async (notice: TaskNotice) => {
+    const deliver = ackDelivery(["system"], (notice) => {
       notices.push(notice.session_id);
-    };
+    });
     await runWatcher({
       client: client([remote("task-1", "idle", {
         session_count: 1,
@@ -234,6 +241,118 @@ describe("watcher", () => {
     expect(notices).toEqual(["session-2"]);
   });
 
+  it("steered + failed delivery -> runWatcher returns", async () => {
+    const statePath = await tempState();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "grok-4.7",
+          state: "idle",
+          createdAt: "2026-11-22T00:00:00Z",
+          updatedAt: "2026-11-22T00:01:00Z",
+        }),
+        steer: { at: "2026-11-22T00:10:00Z", session_count: 1, turn_seen: true, notified: false },
+        delivery: { status: "failed", reason: "all configured channels failed (system)" },
+        notified_at: "2026-11-22T00:05:00Z",
+      };
+    });
+    let polls = 0;
+    await runWatcher({
+      client: client([]),
+      statePath,
+      deliver: async () => ({ channels: [] }),
+      intervalMs: 0,
+      sleep: async () => {
+        polls += 1;
+      },
+    });
+    expect(polls).toBe(0);
+  });
+
+  it("re-steer after failed delivery notifies", async () => {
+    const statePath = await tempState();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "grok-4.7",
+          state: "idle",
+          createdAt: "2026-11-22T00:00:00Z",
+          updatedAt: "2026-11-22T00:01:00Z",
+        }),
+        steer: { at: "2026-11-22T00:10:00Z", session_count: 1, turn_seen: true, notified: false },
+        delivery: { status: "failed", reason: "all configured channels failed (system)" },
+        notified_at: "2026-11-22T00:05:00Z",
+      };
+    });
+    await withStateLock(statePath, (state) => {
+      const saved = state.tasks["task-1"];
+      if (!saved) throw new Error("missing task");
+      armSteer(saved, 1, "2026-11-22T00:30:00Z");
+    });
+    const notices: Array<string | null> = [];
+    await runWatcher({
+      client: client([remote("task-1", "idle", {
+        session_count: 2,
+        sessions: [
+          { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" },
+          { id: "session-2", state: "idle", created_at: "2026-11-22T00:40:00Z" },
+        ],
+      })]),
+      statePath,
+      deliver: ackDelivery(["webhook"], (notice) => {
+        notices.push(notice.session_id);
+      }),
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    expect(notices).toEqual(["session-2"]);
+    const saved = (await readState(statePath)).tasks["task-1"];
+    expect(saved?.delivery).toBeNull();
+    expect(saved?.steer?.notified).toBe(true);
+  });
+
+  it("records failed delivery when the system notifier fails and no URL is set", async () => {
+    const statePath = await tempState();
+    const logPath = join(statePath, "../watch-fail.log");
+    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
+    dirs.push(binDir);
+    const notifySend = join(binDir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    await chmod(notifySend, 0o755);
+    const previousLog = process.env.COPILOT_AGENTS_LOG;
+    const previousPath = process.env.PATH;
+    process.env.COPILOT_AGENTS_LOG = logPath;
+    process.env.PATH = binDir;
+    await save(statePath, task("task-1", "in_progress"));
+    try {
+    await runWatcher({
+      client: client([remote("task-1", "completed")]),
+      statePath,
+      deliver: (notice) => deliverNotice(notice, { COPILOT_AGENTS_LOG: logPath, PATH: binDir }, fetch, spawnEnoent(), "linux"),
+      intervalMs: 0,
+      sleep: async () => {},
+    });
+    } finally {
+      if (previousLog === undefined) delete process.env.COPILOT_AGENTS_LOG;
+      else process.env.COPILOT_AGENTS_LOG = previousLog;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+    const saved = await readState(statePath);
+    expect(saved.tasks["task-1"]?.notified_at).toBeNull();
+    expect(saved.tasks["task-1"]?.delivery).toEqual({
+      status: "failed",
+      reason: "all configured channels failed (system)",
+    });
+    const log = await readFile(logPath, "utf8");
+    expect(log).toContain("Notification delivery failed for task task-1");
+    expect(log).toContain("ENOENT notify-send");
+  });
+
   it("stores a model rejection in state and in the notification", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "queued", "missing-model-123"));
@@ -248,9 +367,9 @@ describe("watcher", () => {
         }],
       })]),
       statePath,
-      deliver: async (notice) => {
+      deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice.error);
-      },
+      }),
       intervalMs: 0,
       sleep: async () => {},
     });
@@ -283,9 +402,9 @@ describe("watcher", () => {
     if (!address || typeof address === "string") throw new Error("no port");
     const url = `http://127.0.0.1:${address.port}/hook`;
     try {
-      const deliver = async (notice: Parameters<typeof postNotice>[1]) => {
+      const deliver = ackDelivery(["webhook"], async (notice) => {
         await postNotice(url, notice, "Bearer aviso");
-      };
+      });
       await runWatcher({
         client: client([remote("task-1", "in_progress")]),
         statePath,
@@ -344,6 +463,35 @@ describe("watcher", () => {
 });
 
 describe("system notification", () => {
+  it("omits system from active channels when notify-send is not on PATH", () => {
+    expect(activeNotificationChannels("linux", {
+      PATH: "/nonexistent",
+      COPILOT_AGENTS_NOTIFY_URL: "http://127.0.0.1/hook",
+    })).toEqual(["webhook"]);
+    expect(activeNotificationChannels("linux", { PATH: "/nonexistent" })).toEqual([]);
+  });
+
+  it("treats signal kill as system notification failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
+    dirs.push(dir);
+    const logPath = join(dir, "watch.log");
+    const notifySend = join(dir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    await chmod(notifySend, 0o755);
+    let spawnCalls = 0;
+    const spawnKill = ((...args: Parameters<ReturnType<typeof spawnExitNull>>) => {
+      spawnCalls += 1;
+      return spawnExitNull()(...args);
+    }) as ReturnType<typeof spawnExitNull>;
+    const delivered = await deliverNotice(sampleNotice(), {
+      COPILOT_AGENTS_LOG: logPath,
+      PATH: dir,
+    }, fetch, spawnKill, "linux");
+    expect(spawnCalls).toBe(1);
+    expect(delivered.channels).toEqual([]);
+    expect(await readFile(logPath, "utf8")).toContain("signal notify-send");
+  });
+
   it("prepares Windows, macOS, and Linux notifications without the token", () => {
     const env = { PATH: "/usr/bin", GITHUB_PERSONAL_ACCESS_TOKEN: "test-token", SystemRoot: "C:\\Windows" };
     const windows = notificationPlan("win32", "Copilot completed", "octocat/hello-world", env);
@@ -364,15 +512,19 @@ describe("system notification", () => {
     const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
     dirs.push(dir);
     const logPath = join(dir, "watch.log");
+    const notifySend = join(dir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    await chmod(notifySend, 0o755);
     let posted = false;
-    await deliverNotice(sampleNotice(), {
+    const delivered = await deliverNotice(sampleNotice(), {
       COPILOT_AGENTS_LOG: logPath,
       COPILOT_AGENTS_NOTIFY_URL: "http://notification.example/hook",
-      PATH: "/usr/bin",
+      PATH: dir,
     }, async () => {
       posted = true;
       return new Response(null, { status: 204 });
     }, spawnEnoent(), "linux");
+    expect(delivered.channels).toEqual(["webhook"]);
     expect(posted).toBe(true);
     expect(await readFile(logPath, "utf8")).toContain("ENOENT notify-send");
   });
@@ -410,9 +562,9 @@ describe("credits and pull request", () => {
     await runWatcher({
       client: github,
       statePath,
-      deliver: async (notice) => {
+      deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice);
-      },
+      }),
       intervalMs: 0,
       sleep: async () => {},
     });
@@ -446,9 +598,9 @@ describe("credits and pull request", () => {
           fetch: mockFetch(() => new Response(JSON.stringify({ message: "boom test-token" }), { status: 500 })),
         }),
         statePath,
-        deliver: async (notice) => {
+        deliver: ackDelivery(["system"], (notice) => {
           notices.push(notice);
-        },
+        }),
         intervalMs: 0,
         sleep: async () => {},
       });
@@ -509,7 +661,17 @@ function sampleNotice(): TaskNotice {
     updated_at: null,
     completed_at: null,
     session_id: null,
+    notified: false,
   };
+}
+
+function spawnExitNull(): typeof import("node:child_process").spawn {
+  const impl = () => {
+    const child = new EventEmitter();
+    setImmediate(() => child.emit("exit", null, "SIGKILL"));
+    return child;
+  };
+  return impl as unknown as typeof import("node:child_process").spawn;
 }
 
 function spawnEnoent(): typeof import("node:child_process").spawn {

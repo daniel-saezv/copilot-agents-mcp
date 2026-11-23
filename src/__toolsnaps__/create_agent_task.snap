@@ -1,7 +1,7 @@
 {
   "name": "create_agent_task",
   "title": "Launch Copilot task",
-  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far.",
+  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -68,6 +68,32 @@
           "string",
           "null"
         ]
+      },
+      "notification": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "system",
+                "webhook"
+              ]
+            }
+          },
+          "watcher_started": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channels",
+          "watcher_started"
+        ],
+        "additionalProperties": false
+      },
+      "next_step": {
+        "type": "string"
       }
     },
     "required": [
@@ -76,7 +102,9 @@
       "state",
       "requested_model",
       "created_at",
-      "html_url"
+      "html_url",
+      "notification",
+      "next_step"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#",
     "additionalProperties": false

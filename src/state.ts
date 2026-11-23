@@ -30,6 +30,11 @@ export type SteerWatch = {
   notified: boolean;
 };
 
+export type TaskDelivery = {
+  status: "failed";
+  reason: string;
+};
+
 export type TrackedTask = {
   task_id: string;
   repo: string;
@@ -45,6 +50,7 @@ export type TrackedTask = {
   updated_at: string | null;
   completed_at: string | null;
   notified_at: string | null;
+  delivery?: TaskDelivery | null;
   session_id?: string | null;
   steer?: SteerWatch | null;
 };
@@ -71,6 +77,7 @@ export type TaskStatus = {
   updated_at: string | null;
   completed_at: string | null;
   session_id: string | null;
+  notified: boolean;
 };
 
 export type TaskNotice = TaskStatus & { session_id: string | null };
@@ -98,6 +105,7 @@ export function taskSessionCount(task: AgentTask, fallback = 0): number {
 }
 
 export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
+  task.delivery = null;
   task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
 }
 
@@ -108,6 +116,7 @@ export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
 }
 
 export function awaitingSteer(task: TrackedTask): boolean {
+  if (task.delivery?.status === "failed") return false;
   return Boolean(task.steer && task.steer.notified !== true);
 }
 
@@ -127,6 +136,7 @@ export function toNotice(task: TrackedTask): TaskStatus {
     updated_at: task.updated_at,
     completed_at: task.completed_at,
     session_id: task.session_id ?? null,
+    notified: Boolean(task.notified_at),
   };
 }
 
