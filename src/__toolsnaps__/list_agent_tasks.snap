@@ -1,0 +1,52 @@
+{
+  "name": "list_agent_tasks",
+  "title": "List tracked tasks",
+  "description": "One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
+        "type": "string"
+      },
+      "task_ids": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "terminal",
+          "all"
+        ]
+      },
+      "repo": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 50
+      },
+      "verbose": {
+        "type": "boolean"
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "List tracked tasks",
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}

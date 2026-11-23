@@ -10,6 +10,12 @@ import { activeNotificationChannels, deliverNotice, notificationPlan, postNotice
 import { armSteer, emptyState, initialTask, presentUsage, readState, withStateLock, type StateFile, type TaskNotice } from "./state.ts";
 import { runWatcher } from "./watch.ts";
 
+type RunWatcherOptions = Parameters<typeof runWatcher>[0];
+
+function runWatcherTest(options: RunWatcherOptions) {
+  return runWatcher({ channels: ["system"], ...options });
+}
+
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -92,19 +98,20 @@ describe("watcher", () => {
       remote("task-1", "in_progress"),
       remote("task-1", "idle"),
     ]);
-    await runWatcher({
+    await runWatcherTest({
       client: github,
       statePath,
       deliver: ackDelivery(["system"], (notice) => {
         notices.push(notice.state);
       }),
+      channels: ["system"],
       intervalMs: 0,
       maxCycles: 1,
       sleep: async () => {},
     });
     expect(notices).toEqual([]);
     expect((await readState(statePath)).tasks["task-1"]?.state).toBe("in_progress");
-    await runWatcher({
+    await runWatcherTest({
       client: github,
       statePath,
       deliver: ackDelivery(["system"], (notice) => {
@@ -114,7 +121,7 @@ describe("watcher", () => {
       sleep: async () => {},
     });
     expect(notices).toEqual(["idle"]);
-    await runWatcher({
+    await runWatcherTest({
       client: github,
       statePath,
       deliver: ackDelivery(["system"], (notice) => {
@@ -135,7 +142,7 @@ describe("watcher", () => {
       notices.push({ state: notice.state, session_id: notice.session_id });
     });
     const session = { id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" };
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "idle", { session_count: 1, sessions: [session] })]),
       statePath,
       deliver,
@@ -148,7 +155,7 @@ describe("watcher", () => {
       if (!saved) throw new Error("missing task");
       armSteer(saved, 1, "2026-11-22T00:10:00.000Z");
     });
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "idle", { session_count: 1, sessions: [session] })]),
       statePath,
       deliver,
@@ -157,7 +164,7 @@ describe("watcher", () => {
       sleep: async () => {},
     });
     expect(notices).toHaveLength(1);
-    await runWatcher({
+    await runWatcherTest({
       client: client([
         remote("task-1", "in_progress", { session_count: 1, sessions: [{ ...session, state: "in_progress" }] }),
         remote("task-1", "idle", { session_count: 1, sessions: [{ ...session, completed_at: "2026-11-22T00:20:00Z" }] }),
@@ -172,7 +179,7 @@ describe("watcher", () => {
       { state: "idle", session_id: "session-1" },
       { state: "idle", session_id: "session-1" },
     ]);
-    await runWatcher({
+    await runWatcherTest({
       client: client([]),
       statePath,
       deliver,
@@ -203,7 +210,7 @@ describe("watcher", () => {
     const deliver = ackDelivery(["system"], (notice) => {
       notices.push(notice.session_id);
     });
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "idle", {
         session_count: 1,
         sessions: [{ id: "session-1", state: "idle", created_at: "2026-11-22T00:00:01Z" }],
@@ -215,7 +222,7 @@ describe("watcher", () => {
       sleep: async () => {},
     });
     expect(notices).toEqual([]);
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "idle", {
         session_count: 2,
         sessions: [
@@ -230,7 +237,7 @@ describe("watcher", () => {
       sleep: async () => {},
     });
     expect(notices).toEqual(["session-2"]);
-    await runWatcher({
+    await runWatcherTest({
       client: client([]),
       statePath,
       deliver,
@@ -259,7 +266,7 @@ describe("watcher", () => {
       };
     });
     let polls = 0;
-    await runWatcher({
+    await runWatcherTest({
       client: client([]),
       statePath,
       deliver: async () => ({ channels: [] }),
@@ -294,7 +301,7 @@ describe("watcher", () => {
       armSteer(saved, 1, "2026-11-22T00:30:00Z");
     });
     const notices: Array<string | null> = [];
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "idle", {
         session_count: 2,
         sessions: [
@@ -329,7 +336,7 @@ describe("watcher", () => {
     process.env.PATH = binDir;
     await save(statePath, task("task-1", "in_progress"));
     try {
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "completed")]),
       statePath,
       deliver: (notice) => deliverNotice(notice, { COPILOT_AGENTS_LOG: logPath, PATH: binDir }, fetch, spawnEnoent(), "linux"),
@@ -357,7 +364,7 @@ describe("watcher", () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "queued", "missing-model-123"));
     const notices: Array<string | null> = [];
-    await runWatcher({
+    await runWatcherTest({
       client: client([remote("task-1", "failed", {
         sessions: [{
           id: "session-1",
@@ -405,7 +412,7 @@ describe("watcher", () => {
       const deliver = ackDelivery(["webhook"], async (notice) => {
         await postNotice(url, notice, "Bearer aviso");
       });
-      await runWatcher({
+      await runWatcherTest({
         client: client([remote("task-1", "in_progress")]),
         statePath,
         deliver,
@@ -414,7 +421,7 @@ describe("watcher", () => {
         sleep: async () => {},
       });
       expect(received).toHaveLength(0);
-      await runWatcher({
+      await runWatcherTest({
         client: client([remote("task-1", "completed", {
           sessions: [{
             id: "session-1",
@@ -434,7 +441,7 @@ describe("watcher", () => {
         intervalMs: 0,
         sleep: async () => {},
       });
-      await runWatcher({
+      await runWatcherTest({
         client: client([]),
         statePath,
         deliver,
@@ -559,7 +566,7 @@ describe("credits and pull request", () => {
       }),
     });
     const notices: TaskNotice[] = [];
-    await runWatcher({
+    await runWatcherTest({
       client: github,
       statePath,
       deliver: ackDelivery(["system"], (notice) => {
@@ -592,7 +599,7 @@ describe("credits and pull request", () => {
     await writeFile(statePath, `${JSON.stringify(finishedState(), null, 2)}\n`);
     const notices: TaskNotice[] = [];
     try {
-      await runWatcher({
+      await runWatcherTest({
         client: createGitHubClient({
           token: "test-token",
           fetch: mockFetch(() => new Response(JSON.stringify({ message: "boom test-token" }), { status: 500 })),

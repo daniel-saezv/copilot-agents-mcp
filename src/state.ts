@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
+import { resolveTaskPageUrl } from "./task-urls.ts";
+import { mapRawState } from "./task-status.ts";
 
 export const MODEL_PREFIX = "sweagent-capi:";
-export const FINAL_STATES = new Set(["completed", "failed", "timed_out", "cancelled", "idle"]);
 
 export type Usage = {
   type: "ai_credits" | "premium_requests";
@@ -30,6 +31,12 @@ export type SteerWatch = {
   notified: boolean;
 };
 
+export type DeliveryRecord = {
+  status: "pending" | "delivered" | "failed";
+  reason?: string;
+  delivered_via?: string;
+};
+
 export type TaskDelivery = {
   status: "failed";
   reason: string;
@@ -38,6 +45,7 @@ export type TaskDelivery = {
 export type TrackedTask = {
   task_id: string;
   repo: string;
+  owner?: string;
   requested_model: string | null;
   state: string;
   resolved_model: string | null;
@@ -51,6 +59,11 @@ export type TrackedTask = {
   completed_at: string | null;
   notified_at: string | null;
   delivery?: TaskDelivery | null;
+  delivery_record?: DeliveryRecord | null;
+  last_fetched_at?: string | null;
+  check_after?: string | null;
+  pr_title?: string | null;
+  html_url?: string | null;
   session_id?: string | null;
   steer?: SteerWatch | null;
 };
@@ -95,7 +108,7 @@ export function normalizeModel(model: string): string {
 }
 
 export function isFinalState(state: string): boolean {
-  return FINAL_STATES.has(state);
+  return mapRawState(state).terminal;
 }
 
 export function taskSessionCount(task: AgentTask, fallback = 0): number {
@@ -106,6 +119,9 @@ export function taskSessionCount(task: AgentTask, fallback = 0): number {
 
 export function armSteer(task: TrackedTask, sessionCount: number, at: string): void {
   task.delivery = null;
+  task.delivery_record = { status: "pending" };
+  task.notified_at = null;
+  task.last_fetched_at = null;
   task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
 }
 
@@ -116,7 +132,7 @@ export function noteSteerTurn(steer: SteerWatch, task: AgentTask): void {
 }
 
 export function awaitingSteer(task: TrackedTask): boolean {
-  if (task.delivery?.status === "failed") return false;
+  if (task.delivery_record?.status === "failed" || task.delivery?.status === "failed") return false;
   return Boolean(task.steer && task.steer.notified !== true);
 }
 
@@ -203,6 +219,15 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
     updated_at: task.updated_at ?? null,
     completed_at: completed?.completed_at ?? null,
     notified_at: existing?.notified_at ?? null,
+    owner: existing?.owner,
+    delivery_record: existing?.delivery_record
+      ?? (existing?.delivery?.status === "failed"
+        ? { status: "failed" as const, reason: existing.delivery.reason }
+        : existing?.delivery_record ?? null),
+    last_fetched_at: existing?.last_fetched_at ?? null,
+    check_after: existing?.check_after ?? null,
+    pr_title: existing?.pr_title ?? null,
+    html_url: resolveTaskPageUrl(task) ?? existing?.html_url ?? null,
     session_id: latestSessionId(sessions) ?? existing?.session_id ?? null,
     steer,
   };
@@ -221,7 +246,7 @@ export function headRefOf(task: AgentTask, tracked: Pick<TrackedTask, "branch">)
 
 export async function fillPullRequest(
   task: TrackedTask,
-  lookup: (input: { owner: string; repo: string; id: number; headRef: string }) => Promise<{ number: number; html_url: string } | null>,
+  lookup: (input: { owner: string; repo: string; id: number; headRef: string }) => Promise<{ number: number; html_url: string; title?: string } | null>,
   log: (line: string) => void | Promise<void>,
   headRef = task.branch?.head_ref,
 ): Promise<void> {
@@ -248,6 +273,7 @@ export async function fillPullRequest(
     }
     pull.number = found.number;
     pull.html_url = found.html_url;
+    if (found.title) task.pr_title = found.title;
   } catch (error) {
     await log(`Could not resolve pull request ${pull.id} for ${task.task_id}: ${failureMessage(error)}`);
   }
@@ -295,10 +321,14 @@ export function initialTask(input: {
   state: string;
   createdAt: string | null;
   updatedAt: string | null;
+  owner?: string;
+  deliveryRecord?: DeliveryRecord | null;
+  htmlUrl?: string | null;
 }): TrackedTask {
   return {
     task_id: input.id,
     repo: input.repo,
+    ...(input.owner ? { owner: input.owner } : {}),
     requested_model: input.requestedModel,
     state: input.state,
     resolved_model: null,
@@ -311,6 +341,8 @@ export function initialTask(input: {
     updated_at: input.updatedAt,
     completed_at: null,
     notified_at: null,
+    delivery_record: input.deliveryRecord ?? null,
+    html_url: input.htmlUrl ?? null,
   };
 }
 

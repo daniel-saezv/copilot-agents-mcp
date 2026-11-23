@@ -140,20 +140,32 @@ try {
     repo: "octocat/hello-world",
     prompt: "e2e stdio demo",
     model: "mai-code-2",
+    owner: "e2e-agent",
   });
   const createMs = Math.round(performance.now() - started);
   const createBody = JSON.parse(textOf(created));
   log(`create_agent_task_ms: ${createMs}`);
-  log(`create_agent_task_notification_channels: ${createBody.notification.channels.join(", ")}`);
+  log(`create_follow_up_mode: ${createBody.follow_up?.mode ?? "missing"}`);
+  log(`create_follow_up_channels: ${(createBody.follow_up?.channels ?? []).join(", ") || "none"}`);
   if (createMs >= 1000) throw new Error(`create_agent_task took ${createMs} ms (limit 1000).`);
+  if (!createBody.follow_up?.check_with || createBody.follow_up.check_with !== "list_agent_tasks") {
+    throw new Error("create_agent_task follow_up.check_with must be list_agent_tasks.");
+  }
 
   await waitFor(() => webhook.posts.length === 1, "one webhook POST");
   log(`webhook_post_count: ${webhook.posts.length}`);
-  log(`webhook_post_state: ${webhook.posts[0]?.state ?? "missing"}`);
+  log(`webhook_post_status: ${webhook.posts[0]?.status ?? webhook.posts[0]?.state ?? "missing"}`);
 
   const status = await callTool(client, "get_agent_task", { task_id: taskId, repo: "octocat/hello-world" });
   const statusBody = JSON.parse(textOf(status));
-  log(`get_agent_task_notified_after_webhook: ${statusBody.notified}`);
+  log(`get_agent_task_delivery_after_webhook: ${statusBody.delivery}`);
+  log(`get_agent_task_status: ${statusBody.status}`);
+
+  const listed = await callTool(client, "list_agent_tasks", { owner: "e2e-agent" });
+  const listBody = JSON.parse(textOf(listed));
+  log(`list_agent_tasks_all_terminal: ${listBody.all_terminal}`);
+  log(`list_agent_tasks_count: ${listBody.tasks?.length ?? 0}`);
+  if (!listBody.all_terminal) throw new Error("Expected all_terminal after task completed.");
   await client.close();
 
   const failDir = mkdtempSync(join(tmpdir(), "copilot-e2e-fail-"));
@@ -176,11 +188,11 @@ try {
     await waitFor(async () => {
       const row = await callTool(failClient.client, "get_agent_task", { task_id: taskId, repo: "octocat/hello-world" });
       const body = JSON.parse(textOf(row));
-      return body.state === "completed" && body.notified === false;
-    }, "get_agent_task notified false after failed delivery");
+      return body.status === "completed" && body.delivery === "not_configured";
+    }, "get_agent_task delivery not_configured with zero channels");
     const failed = JSON.parse(textOf(await callTool(failClient.client, "get_agent_task", { task_id: taskId, repo: "octocat/hello-world" })));
-    log(`failed_delivery_get_agent_task_notified: ${failed.notified}`);
-    log(`failed_delivery_state: ${failed.state}`);
+    log(`zero_channel_delivery: ${failed.delivery}`);
+    log(`zero_channel_status: ${failed.status}`);
     await failClient.client.close();
     failGithub.server.close();
   } finally {

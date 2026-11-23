@@ -51,22 +51,13 @@
           "type": "object",
           "properties": {
             "id": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             },
             "timestamp": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             },
             "parentId": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             },
             "type": {
               "type": "string"
@@ -74,11 +65,7 @@
             "data": {}
           },
           "required": [
-            "id",
-            "timestamp",
-            "parentId",
-            "type",
-            "data"
+            "type"
           ],
           "additionalProperties": false
         }

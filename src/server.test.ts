@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
-import { ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CodedToolFailure, GitHubError, ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
 import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
@@ -65,8 +65,8 @@ describe("tools", () => {
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientTransport);
     const instructions = client.getInstructions();
-    expect(instructions).toContain("do not wait on the tool");
-    expect(instructions).toContain("get_agent_task");
+    expect(instructions).toContain("Tools never wait");
+    expect(instructions).toContain("list_agent_tasks");
     await client.close();
     await mcp.close();
   });
@@ -91,7 +91,7 @@ describe("tools", () => {
     expect(textOf(result)).toContain("timed out after 50 milliseconds");
   });
 
-  it("returns notification channels and responds immediately on create", async () => {
+  it("returns follow_up and responds immediately on create", async () => {
     const statePath = await tempPath();
     const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
     dirs.push(binDir);
@@ -134,14 +134,19 @@ describe("tools", () => {
       expect(performance.now() - started).toBeLessThan(1_000);
       expect(result.isError).toBeUndefined();
       const body = JSON.parse(textOf(result)) as {
-        notification: { channels: string[]; watcher_started: boolean };
+        follow_up: { mode: string; channels?: string[]; check_with: string };
         next_step: string;
+        status: string;
+        delivery: string;
       };
-      expect(body.notification.channels).toContain("system");
-      expect(body.notification.channels).toContain("webhook");
-      expect(body.notification.watcher_started).toBe(true);
+      expect(body.follow_up.mode).toBe("push");
+      expect(body.follow_up.channels).toContain("webhook");
+      expect(body.follow_up.check_with).toBe("list_agent_tasks");
+      expect(body.status).toBe("working");
+      expect(body.delivery).toBe("pending");
+      expect(body.follow_up).not.toHaveProperty("session_url");
       expect(body.next_step).toContain("Task queued");
-      expect(body.next_step).toContain("webhook");
+      expect(body.next_step).toContain("POSTed");
     } finally {
       if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
       else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
@@ -169,15 +174,26 @@ describe("tools", () => {
     expect(tools.map((tool) => tool.name)).toEqual(TOOLS.map((tool) => tool.name));
     for (const tool of tools) {
       const meta = TOOLS.find((item) => item.name === tool.name);
-      expect(tool.annotations?.readOnlyHint).toBe(meta?.method === "GET");
-      expect(tool.annotations?.destructiveHint).toBe(false);
-      expect(tool.annotations?.idempotentHint).toBe(meta?.method === "GET");
+      const readOnly = meta?.method === "GET";
+      const destructive = tool.name === "abort_agent_task";
+      const idempotent = readOnly || tool.name === "abort_agent_task";
+      if (tool.name === "create_agent_task") {
+        expect(tool.annotations?.idempotentHint).toBe(false);
+      } else if (tool.name === "steer_agent_task") {
+        expect(tool.annotations?.idempotentHint).toBe(false);
+        expect(tool.annotations?.destructiveHint).toBe(false);
+      } else {
+        expect(tool.annotations?.idempotentHint).toBe(idempotent);
+        expect(tool.annotations?.destructiveHint).toBe(destructive);
+      }
+      expect(tool.annotations?.readOnlyHint).toBe(readOnly);
       expect(tool.annotations?.openWorldHint).toBe(true);
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
     expect(TOOLS).toEqual([
       { name: "create_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "get_agent_task", toolset: "copilot_tasks", method: "GET" },
+      { name: "list_agent_tasks", toolset: "copilot_tasks", method: "GET" },
       { name: "steer_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "abort_agent_task", toolset: "copilot_tasks", method: "POST" },
       { name: "get_agent_task_events", toolset: "copilot_tasks", method: "GET" },
@@ -204,8 +220,10 @@ describe("tools", () => {
     const statePath = await tempPath();
     const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("No GitHub session is available");
-    expect(textOf(result)).toContain("npx copilot-agents-mcp login");
+    const body = JSON.parse(textOf(result)) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("not_authenticated");
+    expect(body.error.message).toContain("npx copilot-agents-mcp login");
+    expect(body.error.message).toContain("keyring");
   });
 
   it("blocks an already rejected model without calling the API", async () => {
@@ -245,11 +263,19 @@ describe("tools", () => {
     });
     expect(called).toBe(false);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("Accepted models observed: grok-4.7, mai-code-2");
+    const err = JSON.parse(textOf(result)) as { error: { code: string; message: string } };
+    expect(err.error.code).toBe("model_unavailable");
+    expect(err.error.message).toContain("Accepted models observed: grok-4.7, mai-code-2");
   });
 
   it("launches any model, stores it, and starts the watcher", async () => {
     const statePath = await tempPath();
+    const binDir = await mkdtemp(join(tmpdir(), "copilot-notify-bin-"));
+    dirs.push(binDir);
+  const notifySend = join(binDir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`;
     let launched = 0;
     let body: unknown;
     const result = await callTool(statePath, {
@@ -287,6 +313,8 @@ describe("tools", () => {
     expect(body).toMatchObject({ model: "freeform-model", owner: "octocat", repo: "hello-world", base_ref: "main" });
     expect(launched).toBe(1);
     expect((await readState(statePath)).tasks["task-1"]?.requested_model).toBe("freeform-model");
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
   });
 
   it("shows a delayed model rejection when reading status", async () => {
@@ -342,7 +370,7 @@ describe("tools", () => {
       async getTaskEvents() {
         throw new Error("no");
       },
-    }, "get_agent_task", { task_id: "task-1" });
+    }, "get_agent_task", { task_id: "task-1", verbose: true });
     expect(textOf(result)).toContain("The model \\\"claude-sonnet-4.6\\\" is not available");
     expect(textOf(result)).toContain("mai-code-2");
   });
@@ -375,9 +403,10 @@ describe("tools", () => {
       token: "test-token",
       fetch: taskFetch(example, () => new Response(JSON.stringify({ message: "no" }), { status: 502 })),
     });
-    const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id });
+    const broken = await callTool(statePath, failing, "get_agent_task", { task_id: example.id, verbose: true });
     expect(broken.isError).toBeUndefined();
-    expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42, number: null, html_url: null });
+    expect(JSON.parse(textOf(broken)).pull_request).toEqual({ id: 42 });
+    expect(JSON.parse(textOf(broken)).pr_url).toBeUndefined();
     const urls: string[] = [];
     const client = createGitHubClient({
       token: "test-token",
@@ -388,10 +417,10 @@ describe("tools", () => {
         ]), { status: 200 });
       }),
     });
-    const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    const ok = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(ok.isError).toBeUndefined();
-    const body = JSON.parse(textOf(ok)) as { pull_request: unknown; usage: unknown; branch: unknown; resolved_model: string };
-    expect(body.pull_request).toEqual({ id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" });
+    const body = JSON.parse(textOf(ok)) as { pr_url?: string; usage: unknown; branch: unknown; resolved_model: string };
+    expect(body.pr_url).toBe("https://github.com/octocat/hello-world/pull/7");
     expect(body.usage).toEqual({ type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 });
     expect(body.resolved_model).toBe("claude-sonnet-4.6");
     expect(urls.some((url) => url.includes("head=octocat%3Acopilot%2Ffix-1"))).toBe(true);
@@ -430,14 +459,10 @@ describe("tools", () => {
         return new Response("[]", { status: 200 });
       }),
     });
-    const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id });
+    const result = await callTool(statePath, client, "get_agent_task", { task_id: example.id, verbose: true });
     expect(result.isError).toBeUndefined();
     expect(pulls).toBe(0);
-    expect(JSON.parse(textOf(result)).pull_request).toEqual({
-      id: 42,
-      number: 7,
-      html_url: "https://github.com/octocat/hello-world/pull/7",
-    });
+    expect(JSON.parse(textOf(result)).pr_url).toBe("https://github.com/octocat/hello-world/pull/7");
   });
 
   it("returns read models and an error for an invalid format", async () => {
@@ -468,10 +493,11 @@ describe("tools", () => {
   });
 
   it("does not publish write tools in read-only mode", () => {
-    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
+    expect(selectToolNames({ ...baseSelection, readOnly: true })).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
     expect(selectToolNames({ exclude: [], readOnly: false, features: [], toolsets: ["copilot_models"] })).toEqual(["list_copilot_models"]);
     expect(selectToolNames({ exclude: ["get_agent_task"], readOnly: false, features: [] })).toEqual([
       "create_agent_task",
+      "list_agent_tasks",
       "steer_agent_task",
       "abort_agent_task",
       "get_agent_task_events",
@@ -528,19 +554,27 @@ describe("experimental task steering", () => {
     let launched = 0;
     let lookups = 0;
     let content = "";
-    const result = await callTool(statePath, steerClient({
-      task: taskWithPull(null),
-      pull: { number: 7, state: "open" },
-      onLookup() {
-        lookups += 1;
-      },
-      onSteer(value) {
-        steers += 1;
-        content = value;
-      },
-    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" }, () => {
-      launched += 1;
-    });
+    const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    let result;
+    try {
+      result = await callTool(statePath, steerClient({
+        task: taskWithPull(null),
+        pull: { number: 7, state: "open" },
+        onLookup() {
+          lookups += 1;
+        },
+        onSteer(value) {
+          steers += 1;
+          content = value;
+        },
+      }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" }, () => {
+        launched += 1;
+      });
+    } finally {
+      if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
+      else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
+    }
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result))).toEqual({ task_id: "task-1", accepted: true, session_count: 1 });
     expect(steers).toBe(1);
@@ -583,6 +617,7 @@ describe("experimental task steering", () => {
         },
       },
       statePath,
+      channels: ["system"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
         return { channels: ["system"] as const };
@@ -601,6 +636,7 @@ describe("experimental task steering", () => {
     await runWatcher({
       client: unusedClient(),
       statePath,
+      channels: ["system"],
       deliver: async (notice) => {
         notices.push(notice.session_id ?? "");
         return { channels: ["system"] as const };
@@ -627,7 +663,7 @@ describe("experimental task steering", () => {
           ],
         };
       },
-    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo" });
+    }, "get_agent_task", { task_id: "task-1", repo: "acme/demo", verbose: true });
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result)).session_id).toBe("session-reciente");
     expect((await readState(statePath)).tasks["task-1"]?.session_id).toBe("session-reciente");
@@ -684,7 +720,12 @@ describe("experimental task steering", () => {
     };
     const abortedResult = await callTool(statePath, github, "abort_agent_task", { task_id: "task-1" });
     expect(abortedResult.isError).toBeUndefined();
-    expect(JSON.parse(textOf(abortedResult))).toEqual({ task_id: "task-1", accepted: true });
+    expect(JSON.parse(textOf(abortedResult))).toEqual({
+      task_id: "task-1",
+      accepted: true,
+      status: "working",
+      terminal: false,
+    });
     expect(aborted).toBe(1);
     const listed = await callTool(statePath, github, "get_agent_task_events", { task_id: "task-1", page: 2, per_page: 2 });
     expect(listed.isError).toBeUndefined();
@@ -693,6 +734,385 @@ describe("experimental task steering", () => {
     expect(body.total).toBe(events.total);
     expect(body.events.map((event) => event.type)).toEqual(events.events.map((event) => event.type));
     expect(body.events.some((event) => event.timestamp === "0001-01-01T00:00:00Z")).toBe(true);
+  });
+});
+
+describe("MCP tool errors", () => {
+  const noAuthCases: Array<[string, Record<string, unknown>]> = [
+    ["create_agent_task", { repo: "octocat/hello-world", prompt: "hi", model: "mai-code-2" }],
+    ["abort_agent_task", { task_id: "task-1" }],
+    ["steer_agent_task", { task_id: "task-1", content: "go" }],
+    ["get_agent_task_events", { task_id: "task-1", page: 1, per_page: 1 }],
+    ["list_copilot_models", {}],
+  ];
+  for (const [name, args] of noAuthCases) {
+    it(`${name} returns coded error without structured output`, async () => {
+      const statePath = await tempPath();
+      const readModels = name === "list_copilot_models"
+        ? async () => {
+          throw new CodedToolFailure("not_authenticated", "No GitHub session is available.");
+        }
+        : undefined;
+      const result = await callTool(statePath, unusedClient(), name, args, () => {}, readModels, () => null);
+      expect(result.isError).toBe(true);
+      expect(result).not.toHaveProperty("structuredContent");
+      const body = JSON.parse(textOf(result)) as { error: { code: string } };
+      expect(body.error.code).toBe("not_authenticated");
+    });
+  }
+
+  it("list_agent_tasks returns terminal-only rows when unauthenticated", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks.done = initialTask({
+        id: "done",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const result = await callTool(statePath, unusedClient(), "list_agent_tasks", {}, () => {}, undefined, () => null);
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { stale: boolean; warnings: string[]; all_terminal: boolean };
+    expect(body.stale).toBe(true);
+    expect(body.warnings.some((line) => /session is available|stored data/i.test(line))).toBe(true);
+    expect(body.all_terminal).toBe(true);
+  });
+
+  it("get_agent_task returns not_found through MCP without structured output", async () => {
+    const statePath = await tempPath();
+    const client: GitHubClient = {
+      ...unusedClient(),
+      async getTask() {
+        throw new Error("GET https://api.github.com/agents/repos/octocat/hello-world/tasks/missing returned HTTP 404");
+      },
+    };
+    const result = await callTool(statePath, client, "get_agent_task", {
+      task_id: "missing",
+      repo: "octocat/hello-world",
+    });
+    expect(result.isError).toBe(true);
+    expect(result).not.toHaveProperty("structuredContent");
+    const body = JSON.parse(textOf(result)) as { error: { code: string } };
+    expect(body.error.code).toBe("not_found");
+  });
+
+  it("get_agent_task returns terminal cache when unauthenticated", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { terminal: boolean; stale: boolean; warnings: string[] };
+    expect(body.terminal).toBe(true);
+    expect(body.stale).toBe(true);
+    expect(body.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("PR #18 review regressions", () => {
+  it("list_agent_tasks counts pending tasks beyond the page limit", async () => {
+    const statePath = await tempPath();
+    const newest = new Date().toISOString();
+    const middle = new Date(Date.now() - 60_000).toISOString();
+    const oldestPending = new Date(Date.now() - 3_600_000).toISOString();
+    await withStateLock(statePath, (state) => {
+      state.tasks["idle-new"] = {
+        ...initialTask({
+          id: "idle-new",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: newest,
+        }),
+        completed_at: newest,
+      };
+      state.tasks["idle-mid"] = {
+        ...initialTask({
+          id: "idle-mid",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: middle,
+          updatedAt: middle,
+        }),
+        completed_at: middle,
+      };
+      state.tasks.run = initialTask({
+        id: "run",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "in_progress",
+        createdAt: oldestPending,
+        updatedAt: oldestPending,
+      });
+    });
+    const github: GitHubClient = {
+      ...unusedClient(),
+      async getTask() {
+        return { id: "run", state: "in_progress", updated_at: oldestPending };
+      },
+    };
+    const result = await callTool(statePath, github, "list_agent_tasks", { limit: 1 });
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as {
+      all_terminal: boolean;
+      pending_count: number;
+      tasks: Array<{ task_id: string }>;
+      next_check_after?: string;
+    };
+    expect(body.all_terminal).toBe(false);
+    expect(body.pending_count).toBe(1);
+    expect(body.tasks).toHaveLength(1);
+    expect(body.tasks[0]?.task_id).toBe("idle-new");
+    expect(body.next_check_after).toBeDefined();
+  });
+
+  it("get_agent_task refetches after steering a terminal task", async () => {
+    const statePath = await tempPath();
+    const cachedAt = new Date().toISOString();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "idle",
+          createdAt: "2026-11-22T00:00:00Z",
+          updatedAt: "2026-11-22T01:00:00Z",
+          htmlUrl: "https://github.com/octocat/hello-world/copilot/tasks/task-1",
+        }),
+        pull_request: { id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" },
+        completed_at: "2026-11-22T01:00:00Z",
+        last_fetched_at: cachedAt,
+      };
+    });
+    let gets = 0;
+    const base = steerClient({
+      task: taskWithPull(7),
+      pull: { number: 7, state: "open" },
+    });
+    const client: GitHubClient = {
+      ...base,
+      async getTask() {
+        gets += 1;
+        return {
+          ...taskWithPull(7),
+          state: gets <= 1 ? "idle" : "in_progress",
+          updated_at: new Date().toISOString(),
+        };
+      },
+    };
+    const steered = await callTool(statePath, client, "steer_agent_task", { task_id: "task-1", content: "continue" });
+    expect(steered.isError).toBeUndefined();
+    const got = await callTool(statePath, client, "get_agent_task", { task_id: "task-1", repo: "octocat/hello-world" });
+    expect(got.isError).toBeUndefined();
+    const body = JSON.parse(textOf(got)) as { terminal: boolean; status: string };
+    expect(body.terminal).toBe(false);
+    expect(body.status).toBe("working");
+    expect(gets).toBeGreaterThanOrEqual(2);
+  });
+
+  it("abort_agent_task refetches when upstream rejects abort for a finished task", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "in_progress",
+          createdAt: "2026-11-23T22:00:00.000Z",
+          updatedAt: "2026-11-23T22:05:03.000Z",
+        }),
+        last_fetched_at: "2026-11-23T22:05:20.000Z",
+      };
+    });
+    let gets = 0;
+    let aborted = 0;
+    const client: GitHubClient = {
+      ...unusedClient(),
+      async abortTask() {
+        aborted += 1;
+        throw new GitHubError("cannot abort: no active session");
+      },
+      async getTask() {
+        gets += 1;
+        return {
+          id: "task-1",
+          state: "completed",
+          created_at: "2026-11-23T22:00:00.000Z",
+          updated_at: "2026-11-23T22:05:03.000Z",
+          artifacts: [],
+        };
+      },
+    };
+    const result = await callTool(statePath, client, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect(aborted).toBe(1);
+    expect(gets).toBe(1);
+    expect(JSON.parse(textOf(result))).toEqual({
+      task_id: "task-1",
+      accepted: false,
+      reason: "already finished",
+      status: "completed",
+      terminal: true,
+    });
+    const stored = (await readState(statePath)).tasks["task-1"];
+    expect(stored?.state).toBe("completed");
+    expect(stored?.last_fetched_at).toBeTruthy();
+  });
+
+  it("list_agent_tasks next_check_after stays fixed until create check_after passes", async () => {
+    const statePath = await tempPath();
+    const checkAfter = "2026-11-23T21:08:40.000Z";
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "in_progress",
+          createdAt: "2026-11-23T21:00:00.000Z",
+          updatedAt: "2026-11-23T21:00:00.000Z",
+        }),
+        check_after: checkAfter,
+        last_fetched_at: "2026-11-23T21:04:02.000Z",
+      };
+    });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-23T21:04:02.000Z"));
+      const first = await callTool(statePath, unusedClient(), "list_agent_tasks", {});
+      const bodyOne = JSON.parse(textOf(first)) as { next_check_after?: string };
+      vi.setSystemTime(new Date("2026-11-23T21:05:02.000Z"));
+      const second = await callTool(statePath, unusedClient(), "list_agent_tasks", {});
+      const bodyTwo = JSON.parse(textOf(second)) as { next_check_after?: string };
+      expect(bodyOne.next_check_after).toBe(checkAfter);
+      expect(bodyTwo.next_check_after).toBe(checkAfter);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("abort_agent_task on a finished task validates against the output schema", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+    });
+    let aborted = 0;
+    const result = await callTool(statePath, {
+      ...unusedClient(),
+      async abortTask() {
+        aborted += 1;
+      },
+    }, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect(aborted).toBe(0);
+    expect(JSON.parse(textOf(result))).toEqual({
+      task_id: "task-1",
+      accepted: false,
+      reason: "already finished",
+      status: "completed",
+      terminal: true,
+    });
+  });
+
+  it("abort_agent_task clears the freshness cache on success", async () => {
+    const statePath = await tempPath();
+    const fetchedAt = new Date().toISOString();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "in_progress",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        }),
+        last_fetched_at: fetchedAt,
+      };
+    });
+    const result = await callTool(statePath, { ...unusedClient(), async abortTask() {} }, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect((await readState(statePath)).tasks["task-1"]?.last_fetched_at).toBeNull();
+  });
+
+  it("steer_agent_task does not spawn a watcher without notification channels", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: false }, async () => {
+      const result = await callTool(statePath, steerClient({
+        task: taskWithPull(7),
+        pull: { number: 7, state: "open" },
+      }), "steer_agent_task", { task_id: "task-1", content: "go" }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(0);
+  });
+
+  it("steer_agent_task spawns the watcher when a channel is configured", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: true }, async () => {
+      const result = await callTool(statePath, steerClient({
+        task: taskWithPull(7),
+        pull: { number: 7, state: "open" },
+      }), "steer_agent_task", { task_id: "task-1", content: "go" }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(1);
+  });
+
+  it("create_agent_task does not spawn a watcher without notification channels", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: false }, async () => {
+      const result = await callTool(statePath, {
+        ...unusedClient(),
+        async createTask() {
+          return { id: "task-1", state: "queued" };
+        },
+      }, "create_agent_task", {
+        repo: "octocat/hello-world",
+        prompt: "hola",
+        model: "mai-code-2",
+      }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(0);
+  });
+
+  it("rejects list_agent_tasks limit above 50", async () => {
+    const statePath = await tempPath();
+    const result = await callTool(statePath, unusedClient(), "list_agent_tasks", { limit: 51 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/50|limit|maximum/i);
   });
 });
 
@@ -707,7 +1127,7 @@ describe("local HTTP", () => {
     expect(http.host).toBe("127.0.0.1");
     try {
       const readonly = await listOverHttp(http.url, { "X-MCP-Readonly": "true" });
-      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "get_agent_task_events", "list_copilot_models"]);
+      expect(readonly.map((tool) => tool.name)).toEqual(["get_agent_task", "list_agent_tasks", "get_agent_task_events", "list_copilot_models"]);
       const models = await listOverHttp(`${http.url}/x/copilot_models`, { "X-MCP-Toolsets": "copilot_models" });
       expect(models.map((tool) => tool.name)).toEqual(["list_copilot_models"]);
       const denied = await fetch(http.url, {
@@ -804,6 +1224,32 @@ function steerClient(options: {
       options.onSteer?.(content);
     },
   };
+}
+
+async function withNotifyIsolation(
+  options: { channels: boolean },
+  run: () => Promise<void>,
+): Promise<void> {
+  const savedUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+  const savedPath = process.env.PATH;
+  const emptyBin = await mkdtemp(join(tmpdir(), "copilot-empty-path-"));
+  dirs.push(emptyBin);
+  if (options.channels) {
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    if (savedPath) process.env.PATH = `${emptyBin}${delimiter}${savedPath}`;
+    else process.env.PATH = emptyBin;
+  } else {
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "";
+    process.env.PATH = emptyBin;
+  }
+  try {
+    await run();
+  } finally {
+    if (savedUrl === undefined) process.env.COPILOT_AGENTS_NOTIFY_URL = "";
+    else process.env.COPILOT_AGENTS_NOTIFY_URL = savedUrl;
+    if (savedPath === undefined) process.env.PATH = "";
+    else process.env.PATH = savedPath;
+  }
 }
 
 function unusedClient(): GitHubClient {

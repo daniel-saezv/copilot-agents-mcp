@@ -21,17 +21,23 @@ const promoSchema = z.object({
   message: z.string(),
 }).strict();
 
+const policySchema = z.object({
+  state: z.string().optional(),
+}).strict();
+
+const billingSchema = z.object({
+  token_prices: tokenPricesSchema.optional(),
+  promo: promoSchema.optional(),
+  multiplier: z.number().optional(),
+}).strict();
+
 const sweModelSchema = z.object({
   id: z.string(),
   name: z.string(),
   vendor: z.string(),
   preview: z.boolean(),
-  policy: z.object({ state: z.string().nullable() }).strict(),
-  billing: z.object({
-    token_prices: tokenPricesSchema.optional(),
-    promo: promoSchema.optional(),
-    multiplier: z.number().optional(),
-  }).strict(),
+  policy: policySchema.optional(),
+  billing: billingSchema,
 }).strict();
 
 export const sweModelsResultSchema = z.object({
@@ -42,8 +48,46 @@ export const sweModelsResultSchema = z.object({
   models: z.array(sweModelSchema),
 }).strict();
 
-export type SweModel = z.infer<typeof sweModelSchema>;
-export type SweModelsResult = z.infer<typeof sweModelsResultSchema>;
+export type SweModel = {
+  id: string;
+  name: string;
+  vendor: string;
+  preview: boolean;
+  policy?: { state: string };
+  billing: {
+    token_prices?: z.infer<typeof tokenPricesSchema>;
+    promo?: z.infer<typeof promoSchema>;
+    multiplier?: number;
+  };
+};
+
+export type SweModelsResult = {
+  source: { url: string; fetched_at: string };
+  models: SweModel[];
+};
+
+export function presentSweModelsResult(result: SweModelsResult): z.infer<typeof sweModelsResultSchema> {
+  return {
+    source: result.source,
+    models: result.models.map(presentSweModel),
+  };
+}
+
+function presentSweModel(model: SweModel): z.infer<typeof sweModelSchema> {
+  const billing: z.infer<typeof billingSchema> = {};
+  if (model.billing.token_prices) billing.token_prices = model.billing.token_prices;
+  if (model.billing.promo) billing.promo = model.billing.promo;
+  if (model.billing.multiplier !== undefined) billing.multiplier = model.billing.multiplier;
+  const row: z.infer<typeof sweModelSchema> = {
+    id: model.id,
+    name: model.name,
+    vendor: model.vendor,
+    preview: model.preview,
+    billing,
+  };
+  if (model.policy?.state !== undefined) row.policy = { state: model.policy.state };
+  return row;
+}
 
 export function validateSweModels(payload: unknown): SweModel[] {
   if (!isRecord(payload) || !Object.prototype.hasOwnProperty.call(payload, "data") || !Array.isArray(payload.data)) {
@@ -177,9 +221,10 @@ function readModel(item: unknown, index: number): SweModel {
     name: readString(item, "name", `${where}.name`),
     vendor: readString(item, "vendor", `${where}.vendor`),
     preview: readBoolean(item, "preview", `${where}.preview`),
-    policy: readPolicy(item, `${where}.policy`),
     billing: {},
   };
+  const policy = readPolicy(item, `${where}.policy`);
+  if (policy) model.policy = policy;
   if (hasMultiplier) {
     model.billing.multiplier = readNumber(item.billing, "multiplier", `${where}.billing.multiplier`);
   }
@@ -192,11 +237,14 @@ function readModel(item: unknown, index: number): SweModel {
   return model;
 }
 
-function readPolicy(item: Record<string, unknown>, path: string): { state: string | null } {
+function readPolicy(item: Record<string, unknown>, path: string): { state: string } | undefined {
   if (!Object.prototype.hasOwnProperty.call(item, "policy") || item.policy === undefined || item.policy === null) {
-    return { state: null };
+    return undefined;
   }
   if (!isRecord(item.policy)) throw new ModelsError(`${path} is not an object`);
+  if (!Object.prototype.hasOwnProperty.call(item.policy, "state")) return undefined;
+  const state = item.policy.state;
+  if (state === null || state === undefined) return undefined;
   return { state: readString(item.policy, "state", `${path}.state`) };
 }
 

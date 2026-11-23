@@ -22,42 +22,21 @@ Input:
 | `custom_agent` | string | no | Custom agent name without the extension. |
 | `create_pull_request` | boolean | no | When true, the API creates a pull request. |
 
-Output: `task_id`, `repo`, `state`, `requested_model`, nullable `created_at`, nullable `html_url`, `notification` (`channels`: `system` and/or `webhook` in effect, plus `watcher_started`), and `next_step` (plain-text guidance for the client).
+Output (compact): `task_id`, `repo`, `status`, `terminal`, `requested_model`, optional `owner`, optional `session_url` (Copilot agent session page from the create response), `follow_up` (`mode`, `check_after`, `min_interval_s`, `check_with`, optional `channels`, optional `session_url`), and `next_step`.
 
 The server blocks a model already recorded as rejected and lists accepted models observed so far.
 
 ## `get_agent_task`
 
-Read a task once and update local state.
+Read one task once. Returns `status`, `terminal`, a one-line `summary`, and `delivery`. Use `list_agent_tasks` for periodic checks.
 
-Input:
+Input: `task_id` (required), `repo` (optional), `verbose` (optional).
 
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `task_id` | string | yes | Task identifier. |
-| `repo` | string | no | Repository in `owner/name` form. If omitted, use the saved repository or user endpoint. |
+Compact output includes `session_url` and `pr_url` when known (from data already returned by the GitHub API—no extra calls). Optional URL hints may appear at the end of `summary` when the line stays within 160 characters. With `verbose: true`, outputs also include raw `state`, models, `pull_request`, `branch`, `usage`, and related fields.
 
-Output fields:
+## `list_agent_tasks`
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `task_id` | string | Task identifier. |
-| `repo` | string | Repository name. |
-| `state` | string | Current task state. |
-| `requested_model` | string or null | Model originally requested. |
-| `resolved_model` | string or null | Latest `sessions[].model`. |
-| `pull_request` | object or null | `{ id, number, html_url }`. `id` is internal to the API. |
-| `branch` | object or null | `{ head_ref, base_ref }`. |
-| `artifacts` | array | Pull and branch artifacts. |
-| `error` | string or null | Failure text. |
-| `usage` | object or null | `{ type, amount, amount_human }`. |
-| `created_at` | string or null | Creation time. |
-| `updated_at` | string or null | Update time. |
-| `completed_at` | string or null | Completion time. |
-| `session_id` | string or null | Latest session ID. |
-| `notified` | boolean | `true` after the watcher delivered a completion notice; `false` if still pending or delivery failed. |
-
-For `ai_credits`, `amount_human` is `amount / 1e9`. For `premium_requests`, it equals `amount`.
+One call to check all tasks launched through this server. Each task row includes `session_url` and `pr_url` when known, plus `status`, `terminal`, and `summary`. When `all_terminal` is `true`, stop scheduled checks.
 
 ## `steer_agent_task`
 
@@ -121,7 +100,7 @@ Output:
 - `models[]`: array of objects with:
   - `id`, `name`, `vendor`: strings.
   - `preview`: boolean.
-  - `policy.state`: string or null.
+  - `policy.state`: string when upstream provides it; `policy` omitted otherwise.
   - `billing.token_prices`: optional `{ input_price, output_price, cache_price, batch_size }`.
   - `billing.multiplier`: optional number.
   - `billing.promo`: optional `{ discount_percent, ends_at, message }`.

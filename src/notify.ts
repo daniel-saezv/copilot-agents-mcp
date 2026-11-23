@@ -2,6 +2,8 @@ import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
+import { webhookPayloadId } from "./delivery.ts";
+import { mapRawState } from "./task-status.ts";
 import type { TaskNotice } from "./state.ts";
 
 export const NOTIFY_URL_ENV = "COPILOT_AGENTS_NOTIFY_URL";
@@ -152,10 +154,11 @@ function notifyFailure(command: string, error: unknown): string {
 export async function postNotice(url: string, notice: TaskNotice, authorization: string | undefined, fetchImpl: typeof fetch = fetch): Promise<void> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (authorization) headers.authorization = authorization;
+  const mapped = mapRawState(notice.state);
   const response = await fetchImpl(url, {
     method: "POST",
     headers,
-    body: JSON.stringify(notice),
+    body: JSON.stringify({ ...notice, status: mapped.status, terminal: mapped.terminal, id: webhookPayloadId(notice.task_id, notice.state) }),
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`Notification POST returned HTTP ${response.status}.`);

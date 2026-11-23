@@ -42,7 +42,7 @@ Node.js 26.13.1 (the package requires `>=26`) and npm 11.20.0. In development, N
 - `src/server.ts` registers tools. `src/http.ts` listens on `127.0.0.1`. `src/selection.ts` applies toolsets and `X-MCP-*` headers.
 - `src/github.ts` calls the agent tasks API with `X-GitHub-Api-Version: 2026-03-10` and validates responses against the official OpenAPI. `steerTask`, `abortTask`, and `getTaskEvents` use `https://api.github.com/cmc_internal/api/agents`, with `Accept: application/json` and without that header. A 401 with a GitHub App session refreshes the token and retries once. A 403 for permissions states which permission is missing.
 - `src/auth.ts` runs device flow, stores the session in the keyring, and refreshes the access token. `src/keyring.ts` opens `@napi-rs/keyring` with service `copilot-agents-mcp:github.com` and, on Linux, the `secret-service` backend.
-- `src/swe-models.ts` validates and reads `GET /agents/swe/models`. The base URL comes from GraphQL and is not hard-coded. `policy` is optional: when missing, output sets `policy.state` to `null`. `token_prices` is required unless the model includes `billing.multiplier`.
+- `src/swe-models.ts` validates and reads `GET /agents/swe/models`. The base URL comes from GraphQL and is not hard-coded. `policy` and `policy.state` are optional in tool output when upstream omits them. `token_prices` is required unless the model includes `billing.multiplier`.
 - `src/state.ts`, `src/watch.ts`, and `src/notify.ts` keep local state and notify once per turn. After an accepted steer they store `session_count` and the timestamp, restart the watcher, and the notification includes `session_id`.
 - `fixtures/` holds OpenAPI examples. `src/__toolsnaps__/` pins `tools/list`.
 

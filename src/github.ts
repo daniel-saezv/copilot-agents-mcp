@@ -60,7 +60,7 @@ export type CreateTaskInput = {
 export interface GitHubClient {
   createTask(input: CreateTaskInput): Promise<AgentTask>;
   getTask(input: { taskId: string; owner?: string; repo?: string }): Promise<AgentTask>;
-  findPullRequest(input: { owner: string; repo: string; id: number; headRef: string }): Promise<{ number: number; html_url: string } | null>;
+  findPullRequest(input: { owner: string; repo: string; id: number; headRef: string }): Promise<{ number: number; html_url: string; title?: string } | null>;
   getPullRequest(input: { owner: string; repo: string; number: number }): Promise<{ number: number; state: string }>;
   steerTask(taskId: string, content: string): Promise<void>;
   abortTask(taskId: string): Promise<void>;
@@ -406,7 +406,7 @@ function parseTaskEvents(parsed: unknown): TaskEventsPage {
   return { events, total: record.total };
 }
 
-function matchPull(parsed: unknown, id: number): { number: number; html_url: string } | null {
+function matchPull(parsed: unknown, id: number): { number: number; html_url: string; title?: string } | null {
   if (!Array.isArray(parsed)) throw new GitHubError("The pull requests response is not a list.");
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
@@ -415,7 +415,8 @@ function matchPull(parsed: unknown, id: number): { number: number; html_url: str
     if (typeof record.number !== "number" || typeof record.html_url !== "string" || !record.html_url) {
       throw new GitHubError(`Pull request ${id} has no number and html_url.`);
     }
-    return { number: record.number, html_url: record.html_url };
+    const title = typeof record.title === "string" && record.title.trim() ? record.title : undefined;
+    return { number: record.number, html_url: record.html_url, ...(title ? { title } : {}) };
   }
   return null;
 }

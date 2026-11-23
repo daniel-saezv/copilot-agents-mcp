@@ -193,6 +193,7 @@ describe("internal task API", () => {
 
   it("names the repository for an app 404 and preserves GitHub's message for a PAT", async () => {
     const notFound = () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    const missingIntegration = () => new Response(JSON.stringify({ message: "Integration not found" }), { status: 404 });
     const app = createGitHubClient({
       token: "ghu_app",
       tokens: {
@@ -205,8 +206,23 @@ describe("internal task API", () => {
       },
       fetch: mockFetch(() => notFound()),
     });
-    await expect(app.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(
-      "Install the app for octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Not Found",
+    await expect(app.getTask({ owner: "octocat", repo: "ghost-repo", taskId: "task-1" })).rejects.toThrow(
+      "Repository octocat/ghost-repo was not found or is not accessible.",
+    );
+    const appMissing = createGitHubClient({
+      token: "ghu_app",
+      tokens: {
+        async current() {
+          return "ghu_app";
+        },
+        async refresh() {
+          return "ghu_app";
+        },
+      },
+      fetch: mockFetch(() => missingIntegration()),
+    });
+    await expect(appMissing.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(
+      "Install the app for octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Integration not found",
     );
     await expect(app.steerTask("task-1", "continue")).rejects.toThrow("Not Found");
     await expect(app.steerTask("task-1", "continue")).rejects.not.toThrow(/installations\/new/);

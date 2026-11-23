@@ -1,7 +1,7 @@
 {
   "name": "create_agent_task",
   "title": "Launch Copilot task",
-  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately; do not poll in a loop—end your turn and wait for the completion notice (sent via notification.channels) or a user prompt before calling get_agent_task.",
+  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -32,6 +32,13 @@
       "create_pull_request": {
         "description": "When true, the API creates a pull request.",
         "type": "boolean"
+      },
+      "owner": {
+        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9._-]+$"
       }
     },
     "required": [
@@ -51,44 +58,77 @@
       "repo": {
         "type": "string"
       },
-      "state": {
+      "owner": {
         "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_input",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "terminal": {
+        "type": "boolean"
       },
       "requested_model": {
         "type": "string"
       },
-      "created_at": {
-        "type": [
-          "string",
-          "null"
+      "delivery": {
+        "type": "string",
+        "enum": [
+          "not_configured",
+          "pending",
+          "delivered",
+          "failed"
         ]
       },
-      "html_url": {
-        "type": [
-          "string",
-          "null"
-        ]
+      "session_url": {
+        "type": "string"
       },
-      "notification": {
+      "pr_url": {
+        "type": "string"
+      },
+      "follow_up": {
         "type": "object",
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "push",
+              "user_push",
+              "check_later"
+            ]
+          },
           "channels": {
             "type": "array",
             "items": {
               "type": "string",
               "enum": [
-                "system",
-                "webhook"
+                "webhook",
+                "system"
               ]
             }
           },
-          "watcher_started": {
-            "type": "boolean"
+          "check_after": {
+            "type": "string"
+          },
+          "min_interval_s": {
+            "type": "number"
+          },
+          "check_with": {
+            "type": "string",
+            "const": "list_agent_tasks"
           }
         },
         "required": [
-          "channels",
-          "watcher_started"
+          "mode",
+          "check_after",
+          "min_interval_s",
+          "check_with"
         ],
         "additionalProperties": false
       },
@@ -99,11 +139,11 @@
     "required": [
       "task_id",
       "repo",
-      "state",
+      "status",
+      "terminal",
       "requested_model",
-      "created_at",
-      "html_url",
-      "notification",
+      "delivery",
+      "follow_up",
       "next_step"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#",

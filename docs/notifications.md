@@ -1,12 +1,16 @@
 # Notifications
 
-Delivery is **at-least-once**; `get_agent_task.notified` only reflects local watcher bookkeeping, not a wake signal for your agent.
+Delivery is **at-least-once**; `get_agent_task.delivery` (`not_configured` | `pending` | `delivered` | `failed`) reflects local watcher bookkeeping, not a wake signal for your agent. v0.1.0 replaced the `notified` boolean and `notification` block on create with `delivery` and `follow_up`.
 
 Completion notices **do not** come back over MCP. The detached watcher polls GitHub and, when a task reaches a final state, delivers JSON through a desktop toast (`notify-send`, `osascript`, or PowerShell) and/or an HTTP POST. MCP clients must not poll `get_agent_task` in a loop waiting for that signal.
 
 To wake an autonomous agent, set `COPILOT_AGENTS_NOTIFY_URL` to an inbound webhook on the host that runs the agent (for example a small HTTP handler that posts a follow-up message into the agent session).
 
-The watcher starts after `create_agent_task` and after an accepted steer. You can also run it directly:
+The watcher starts after `create_agent_task` and after an accepted steer **only when at least one notification channel is configured** (desktop notifier or `COPILOT_AGENTS_NOTIFY_URL`). With no channels, steer and create still work; delivery stays `not_configured` and no watcher is spawned.
+
+Statuses exposed to MCP tools map the GitHub task `state` enum (`queued`, `in_progress`, `waiting_for_user`, `completed`, `idle`, `failed`, `timed_out`, `cancelled`). `waiting_for_user` maps to `needs_input` (non-terminal). Any other upstream string is treated as terminal `failed` with a `warning` field and summary `unknown state <raw>`.
+
+The watcher starts after `create_agent_task` and after an accepted steer when channels exist. You can also run it directly:
 
 ```bash
 npx -y copilot-agents-mcp watch
