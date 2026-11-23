@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +7,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const expectedVersion = "0.0.1";
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const expectedVersion = pkg.version;
 const expectedTools = [
   "abort_agent_task",
   "create_agent_task",
   "get_agent_task",
+  "list_agent_tasks",
   "get_agent_task_events",
   "list_copilot_models",
   "steer_agent_task",
