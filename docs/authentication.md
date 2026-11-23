@@ -10,21 +10,15 @@ The server ignores `GH_TOKEN` and `GITHUB_TOKEN`.
 
 ## Personal access token
 
-Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server process environment. Do not pass the token through command arguments.
+Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server process environment. Do not pass the token through command arguments or store it in project files that may be committed (such as `.vscode/mcp.json` or `.cursor/mcp.json`).
 
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "copilot-agents-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    }
-  }
-}
+Export it in the shell that starts the client:
+
+```bash
+export GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_...
 ```
+
+You can also set the variable only in user-level client configuration (for example Claude Code’s private `~/.claude.json` via `claude mcp add -e …`).
 
 When `GITHUB_PERSONAL_ACCESS_TOKEN` is set, the server does not read the keyring.
 

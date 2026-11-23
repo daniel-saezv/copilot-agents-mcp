@@ -33,29 +33,26 @@ Complete the device flow in your browser. `auth status` reports the active crede
 
 ### Alternative: personal access token
 
-Set `GITHUB_PERSONAL_ACCESS_TOKEN` on the **MCP server process** only (for example in your client’s MCP `env` block or shell). Do not commit tokens to versioned files. Prefer GitHub App `login` when the system keyring is available.
+Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the environment of the MCP server process: export it in the shell that starts the client, or set it only in **user-level** (not project) client configuration. Never put tokens in project files such as `.cursor/mcp.json` or `.vscode/mcp.json` that may be committed. Prefer GitHub App `login` when the system keyring is available.
 
 ### MCP configuration
 
-Use this stdio server entry everywhere (omit `env` after `login`):
+Use this stdio server entry everywhere:
 
 ```json
 {
   "command": "npx",
-  "args": ["-y", "copilot-agents-mcp"],
-  "env": {
-    "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-  }
+  "args": ["-y", "copilot-agents-mcp"]
 }
 ```
 
 | Client | Where to put it |
 | --- | --- |
-| **Visual Studio Code** | `.vscode/mcp.json` → `servers.copilot-agents` with `"type": "stdio"` plus the fields above |
-| **Claude Desktop** | `claude_desktop_config.json` → `mcpServers.copilot-agents` |
-| **Claude Code** | `claude mcp add --transport stdio copilot-agents -- npx -y copilot-agents-mcp` (add `-e GITHUB_PERSONAL_ACCESS_TOKEN=…` for a PAT) |
-| **Cursor** | `.cursor/mcp.json` → `mcpServers.copilot-agents` |
-| **Grok Bot** | Grok Bot MCP settings → `mcpServers.copilot-agents` |
+| **Visual Studio Code** | `.vscode/mcp.json` → `servers.copilot-agents` with `"type": "stdio"` plus the fields above (no tokens in the repo copy) |
+| **Claude Desktop** | User-level `claude_desktop_config.json` → `mcpServers.copilot-agents` |
+| **Claude Code** | `claude mcp add --transport stdio copilot-agents -- npx -y copilot-agents-mcp`. For a PAT, add `-e GITHUB_PERSONAL_ACCESS_TOKEN=…` (stored in your private `~/.claude.json`) |
+| **Cursor** | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project; no tokens) |
+| **Grok Bot** | Add a local stdio MCP server with the command and args above. |
 
 Local HTTP (optional):
 
