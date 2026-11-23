@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const expectedVersion = "0.0.1";
+const expectedVersion = "0.0.2";
 const expectedTools = [
   "abort_agent_task",
   "create_agent_task",
