@@ -24,6 +24,22 @@
       },
       "accepted": {
         "type": "boolean"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_input",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "terminal": {
+        "type": "boolean"
       }
     },
     "required": [

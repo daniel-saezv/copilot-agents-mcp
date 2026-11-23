@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitHubClient } from "./github.ts";
 import { CodedToolFailure } from "./errors.ts";
-import { activeNotificationChannels } from "./notify.ts";
 import { buildSummary, mapRawState } from "./task-status.ts";
 import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
 import { deliveryForTask } from "./delivery.ts";
@@ -41,6 +40,7 @@ describe("v0.1.0 status mapping", () => {
     ["failed", { status: "failed", terminal: true }],
     ["timed_out", { status: "failed", terminal: true }],
     ["cancelled", { status: "cancelled", terminal: true }],
+    ["mystery_upstream", { status: "failed", terminal: true }],
   ];
   for (const [raw, expected] of cases) {
     it(`maps ${raw}`, () => {
@@ -52,6 +52,44 @@ describe("v0.1.0 status mapping", () => {
 });
 
 describe("v0.1.0 owners and list filters", () => {
+  it("list counts use the full filtered set, not only the page", async () => {
+    const path = await stateFile();
+    const recent = new Date().toISOString();
+    const slightlyOlder = new Date(Date.now() - 60_000).toISOString();
+    await withStateLock(path, (state) => {
+      for (let i = 0; i < 3; i++) {
+        state.tasks[`idle-${i}`] = {
+          ...initialTask({
+            id: `idle-${i}`,
+            repo: "o/r",
+            requestedModel: "m",
+            state: "idle",
+            createdAt: slightlyOlder,
+            updatedAt: slightlyOlder,
+          }),
+          completed_at: slightlyOlder,
+        };
+      }
+      state.tasks.run = initialTask({
+        id: "run",
+        repo: "o/r",
+        requestedModel: "m",
+        state: "working",
+        createdAt: recent,
+        updatedAt: recent,
+      });
+    });
+    const { matched, tasks } = filterTasks(await readState(path), { limit: 2 });
+    expect(tasks).toHaveLength(2);
+    expect(listCounts(matched)).toMatchObject({ pending_count: 1, all_terminal: false });
+  });
+
+  it("rejects limit above the cap", async () => {
+    const path = await stateFile();
+    const state = await readState(path);
+    expect(() => filterTasks(state, { limit: 51 })).toThrow(OwnerValidationError);
+  });
+
   it("counts per owner", async () => {
     const path = await stateFile();
     await withStateLock(path, (state) => {
@@ -93,6 +131,12 @@ describe("v0.1.0 delivery matrix", () => {
     expect(deliveryForTask(task, [])).toBe("not_configured");
   });
 
+  it("keeps delivered when channels are empty", () => {
+    const task = initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null });
+    task.notified_at = "2026-01-01T00:00:00Z";
+    expect(deliveryForTask(task, [])).toBe("delivered");
+  });
+
   it("pending and delivered", () => {
     const task = initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null, deliveryRecord: { status: "pending" } });
     expect(deliveryForTask(task, ["webhook"])).toBe("pending");
@@ -126,6 +170,15 @@ describe("v0.1.0 follow_up", () => {
 });
 
 describe("v0.1.0 cache and retention", () => {
+  it("steer on a terminal task forces refetch", () => {
+    const task: TrackedTask = {
+      ...initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null }),
+      last_fetched_at: new Date().toISOString(),
+      steer: { at: "2026-01-01T00:00:00Z", session_count: 1, turn_seen: false, notified: false },
+    };
+    expect(needsFetch(task, freshnessMs())).toBe(true);
+  });
+
   it("cache hit skips fetch", () => {
     const task: TrackedTask = {
       ...initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "working", createdAt: null, updatedAt: null }),
@@ -230,8 +283,17 @@ describe("v0.1.0 session and PR urls", () => {
   });
 });
 
-describe("v0.1.0 watcher channel guard", () => {
-  it("activeNotificationChannels may be empty in CI", () => {
-    expect(Array.isArray(activeNotificationChannels(process.platform, process.env))).toBe(true);
+describe("v0.1.0 unknown upstream state", () => {
+  it("summary mentions the raw state", () => {
+    const task = initialTask({
+      id: "t",
+      repo: "o/r",
+      requestedModel: "m",
+      state: "mystery_upstream",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: null,
+    });
+    expect(buildSummary(task)).toContain("unknown state");
+    expect(buildSummary(task)).toContain("mystery_upstream");
   });
 });

@@ -550,19 +550,27 @@ describe("experimental task steering", () => {
     let launched = 0;
     let lookups = 0;
     let content = "";
-    const result = await callTool(statePath, steerClient({
-      task: taskWithPull(null),
-      pull: { number: 7, state: "open" },
-      onLookup() {
-        lookups += 1;
-      },
-      onSteer(value) {
-        steers += 1;
-        content = value;
-      },
-    }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" }, () => {
-      launched += 1;
-    });
+    const previousUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    let result;
+    try {
+      result = await callTool(statePath, steerClient({
+        task: taskWithPull(null),
+        pull: { number: 7, state: "open" },
+        onLookup() {
+          lookups += 1;
+        },
+        onSteer(value) {
+          steers += 1;
+          content = value;
+        },
+      }), "steer_agent_task", { task_id: "task-1", content: "continue with the tests" }, () => {
+        launched += 1;
+      });
+    } finally {
+      if (previousUrl === undefined) delete process.env.COPILOT_AGENTS_NOTIFY_URL;
+      else process.env.COPILOT_AGENTS_NOTIFY_URL = previousUrl;
+    }
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result))).toEqual({ task_id: "task-1", accepted: true, session_count: 1 });
     expect(steers).toBe(1);
@@ -720,6 +728,158 @@ describe("experimental task steering", () => {
   });
 });
 
+describe("PR #18 review regressions", () => {
+  it("list_agent_tasks counts pending tasks beyond the page limit", async () => {
+    const statePath = await tempPath();
+    const recent = new Date().toISOString();
+    const slightlyOlder = new Date(Date.now() - 60_000).toISOString();
+    await withStateLock(statePath, (state) => {
+      for (let i = 0; i < 3; i++) {
+        state.tasks[`idle-${i}`] = {
+          ...initialTask({
+            id: `idle-${i}`,
+            repo: "octocat/hello-world",
+            requestedModel: "m",
+            state: "idle",
+            createdAt: slightlyOlder,
+            updatedAt: slightlyOlder,
+          }),
+          completed_at: slightlyOlder,
+        };
+      }
+      state.tasks.run = initialTask({
+        id: "run",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "working",
+        createdAt: recent,
+        updatedAt: recent,
+      });
+    });
+    const github: GitHubClient = {
+      ...unusedClient(),
+      async getTask() {
+        return { id: "run", state: "working", updated_at: recent };
+      },
+    };
+    const result = await callTool(statePath, github, "list_agent_tasks", { limit: 2 });
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { all_terminal: boolean; pending_count: number; tasks: unknown[] };
+    expect(body.all_terminal).toBe(false);
+    expect(body.pending_count).toBe(1);
+    expect(body.tasks).toHaveLength(2);
+  });
+
+  it("abort_agent_task on a finished task validates against the output schema", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+    });
+    let aborted = 0;
+    const result = await callTool(statePath, {
+      ...unusedClient(),
+      async abortTask() {
+        aborted += 1;
+      },
+    }, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect(aborted).toBe(0);
+    expect(JSON.parse(textOf(result))).toEqual({
+      task_id: "task-1",
+      accepted: false,
+      reason: "already finished",
+      status: "completed",
+      terminal: true,
+    });
+  });
+
+  it("abort_agent_task clears the freshness cache on success", async () => {
+    const statePath = await tempPath();
+    const fetchedAt = new Date().toISOString();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "working",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        }),
+        last_fetched_at: fetchedAt,
+      };
+    });
+    const result = await callTool(statePath, { ...unusedClient(), async abortTask() {} }, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect((await readState(statePath)).tasks["task-1"]?.last_fetched_at).toBeNull();
+  });
+
+  it("steer_agent_task does not spawn a watcher without notification channels", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: false }, async () => {
+      const result = await callTool(statePath, steerClient({
+        task: taskWithPull(7),
+        pull: { number: 7, state: "open" },
+      }), "steer_agent_task", { task_id: "task-1", content: "go" }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(0);
+  });
+
+  it("steer_agent_task spawns the watcher when a channel is configured", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: true }, async () => {
+      const result = await callTool(statePath, steerClient({
+        task: taskWithPull(7),
+        pull: { number: 7, state: "open" },
+      }), "steer_agent_task", { task_id: "task-1", content: "go" }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(1);
+  });
+
+  it("create_agent_task does not spawn a watcher without notification channels", async () => {
+    const statePath = await tempPath();
+    let launched = 0;
+    await withNotifyIsolation({ channels: false }, async () => {
+      const result = await callTool(statePath, {
+        ...unusedClient(),
+        async createTask() {
+          return { id: "task-1", state: "queued" };
+        },
+      }, "create_agent_task", {
+        repo: "octocat/hello-world",
+        prompt: "hola",
+        model: "mai-code-2",
+      }, () => {
+        launched += 1;
+      });
+      expect(result.isError).toBeUndefined();
+    });
+    expect(launched).toBe(0);
+  });
+
+  it("rejects list_agent_tasks limit above 50", async () => {
+    const statePath = await tempPath();
+    const result = await callTool(statePath, unusedClient(), "list_agent_tasks", { limit: 51 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/50|limit|maximum/i);
+  });
+});
+
 describe("local HTTP", () => {
   it("listens on 127.0.0.1 and applies X-MCP-* headers", async () => {
     const statePath = await tempPath();
@@ -828,6 +988,32 @@ function steerClient(options: {
       options.onSteer?.(content);
     },
   };
+}
+
+async function withNotifyIsolation(
+  options: { channels: boolean },
+  run: () => Promise<void>,
+): Promise<void> {
+  const savedUrl = process.env.COPILOT_AGENTS_NOTIFY_URL;
+  const savedPath = process.env.PATH;
+  const emptyBin = await mkdtemp(join(tmpdir(), "copilot-empty-path-"));
+  dirs.push(emptyBin);
+  if (options.channels) {
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "http://127.0.0.1:9/hook";
+    if (savedPath) process.env.PATH = `${emptyBin}${delimiter}${savedPath}`;
+    else process.env.PATH = emptyBin;
+  } else {
+    process.env.COPILOT_AGENTS_NOTIFY_URL = "";
+    process.env.PATH = emptyBin;
+  }
+  try {
+    await run();
+  } finally {
+    if (savedUrl === undefined) process.env.COPILOT_AGENTS_NOTIFY_URL = "";
+    else process.env.COPILOT_AGENTS_NOTIFY_URL = savedUrl;
+    if (savedPath === undefined) process.env.PATH = "";
+    else process.env.PATH = savedPath;
+  }
 }
 
 function unusedClient(): GitHubClient {

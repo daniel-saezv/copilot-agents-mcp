@@ -17,6 +17,7 @@ export const DEFAULT_FRESHNESS_MS = 60_000;
 export const LIST_HIDE_TERMINAL_MS = 7 * 24 * 60 * 60 * 1000;
 export const REGISTRY_PRUNE_TERMINAL_MS = 30 * 24 * 60 * 60 * 1000;
 export const OWNER_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+export const LIST_LIMIT_MAX = 50;
 
 export type ListStatusFilter = "pending" | "terminal" | "all";
 
@@ -91,10 +92,18 @@ export function listVisible(task: TrackedTask, now = Date.now()): boolean {
   return now - stamp <= LIST_HIDE_TERMINAL_MS;
 }
 
-export function filterTasks(state: StateFile, input: ListAgentTasksInput, now = Date.now()): { tasks: TrackedTask[]; warnings: string[]; total_matched: number } {
+export function filterTasks(state: StateFile, input: ListAgentTasksInput, now = Date.now()): {
+  tasks: TrackedTask[];
+  matched: TrackedTask[];
+  warnings: string[];
+  total_matched: number;
+} {
   const warnings: string[] = [];
   const status = input.status ?? "all";
   const limit = input.limit ?? 20;
+  if (limit > LIST_LIMIT_MAX) {
+    throw new OwnerValidationError(`limit must be at most ${LIST_LIMIT_MAX}.`);
+  }
   const repoFilter = input.repo?.trim();
   const ownerFilter = input.owner?.trim() ? validateOwner(input.owner.trim()) : undefined;
   const idSet = input.task_ids?.length ? new Set(input.task_ids) : null;
@@ -116,7 +125,7 @@ export function filterTasks(state: StateFile, input: ListAgentTasksInput, now = 
     });
   }
   rows.sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
-  return { tasks: rows.slice(0, limit), warnings, total_matched: rows.length };
+  return { tasks: rows.slice(0, limit), matched: rows, warnings, total_matched: rows.length };
 }
 
 export function listCounts(tasks: TrackedTask[]): { pending_count: number; terminal_count: number; all_terminal: boolean } {
@@ -174,8 +183,8 @@ export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached
 }
 
 export function needsFetch(task: TrackedTask, freshness: number, now = Date.now()): boolean {
-  if (isFinalState(task.state) && mapRawState(task.state).terminal) return false;
   if (task.steer && !task.steer.turn_seen) return true;
+  if (isFinalState(task.state) && mapRawState(task.state).terminal) return false;
   if (!isFinalState(task.state)) {
     const last = Date.parse(task.last_fetched_at ?? "");
     if (!Number.isFinite(last) || now - last >= freshness) return true;

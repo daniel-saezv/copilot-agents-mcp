@@ -21,9 +21,13 @@ const RAW_TO_STATUS: Record<string, MappedStatus> = {
   cancelled: { status: "cancelled", terminal: true },
 };
 
+export function isKnownRawState(rawState: string): boolean {
+  return Object.prototype.hasOwnProperty.call(RAW_TO_STATUS, rawState.trim().toLowerCase());
+}
+
 export function mapRawState(rawState: string): MappedStatus {
   const normalized = rawState.trim().toLowerCase();
-  return RAW_TO_STATUS[normalized] ?? { status: "working", terminal: false };
+  return RAW_TO_STATUS[normalized] ?? { status: "failed", terminal: true };
 }
 
 export function isMappedTerminal(status: TaskStatusName): boolean {
@@ -67,10 +71,6 @@ export function buildSummary(task: TrackedTask, context: SummaryContext = {}): s
   if (mapped.status === "completed") {
     const pr = task.pull_request;
     if (pr?.number !== null && pr?.number !== undefined) {
-      const title = task.error ? "" : "";
-      void title;
-      const titleText = "";
-      void titleText;
       const prTitle = resolvePullTitle(task);
       if (prTitle) return withHints(`Completed in ${dur}: opened PR #${pr.number} '${sanitizeLine(prTitle, 60)}'.`);
       return withHints(`Completed in ${dur}: opened PR #${pr.number}.`);
@@ -83,7 +83,10 @@ export function buildSummary(task: TrackedTask, context: SummaryContext = {}): s
     return withHints(`Completed in ${dur}; no changes.`);
   }
   if (mapped.status === "failed") {
-    if (task.state === "timed_out") return withHints("Failed: timed out after 60m.");
+    if (!isKnownRawState(task.state)) {
+      return withHints(`Failed: unknown state ${sanitizeLine(task.state, 80)}.`);
+    }
+    if (task.state === "timed_out") return withHints(`Failed: timed out after ${dur}.`);
     const line = task.error ? sanitizeLine(task.error, 100) : "unknown error";
     return withHints(`Failed after ${dur}: ${line}.`);
   }

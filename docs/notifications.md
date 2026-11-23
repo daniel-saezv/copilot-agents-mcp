@@ -6,7 +6,11 @@ Completion notices **do not** come back over MCP. The detached watcher polls Git
 
 To wake an autonomous agent, set `COPILOT_AGENTS_NOTIFY_URL` to an inbound webhook on the host that runs the agent (for example a small HTTP handler that posts a follow-up message into the agent session).
 
-The watcher starts after `create_agent_task` and after an accepted steer. You can also run it directly:
+The watcher starts after `create_agent_task` and after an accepted steer **only when at least one notification channel is configured** (desktop notifier or `COPILOT_AGENTS_NOTIFY_URL`). With no channels, steer and create still work; delivery stays `not_configured` and no watcher is spawned.
+
+Statuses exposed to MCP tools map known GitHub task states. Any unknown upstream `state` string is treated as terminal `failed`; summaries include `unknown state <raw>`.
+
+The watcher starts after `create_agent_task` and after an accepted steer when channels exist. You can also run it directly:
 
 ```bash
 npx -y copilot-agents-mcp watch

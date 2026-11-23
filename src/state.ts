@@ -119,6 +119,7 @@ export function armSteer(task: TrackedTask, sessionCount: number, at: string): v
   task.delivery = null;
   task.delivery_record = { status: "pending" };
   task.notified_at = null;
+  task.last_fetched_at = null;
   task.steer = { at, session_count: sessionCount, turn_seen: false, notified: false };
 }
 

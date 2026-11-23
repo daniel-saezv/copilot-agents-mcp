@@ -120,7 +120,7 @@ const listInput = z.object({
   task_ids: z.array(z.string()).max(50).optional(),
   status: z.enum(["pending", "terminal", "all"]).optional(),
   repo: z.string().optional(),
-  limit: z.number().int().positive().optional(),
+  limit: z.number().int().positive().max(50).optional(),
   verbose: z.boolean().optional(),
 }).strict();
 
@@ -144,6 +144,9 @@ const abortInput = z.object({
 const abortOutput = z.object({
   task_id: z.string(),
   accepted: z.boolean(),
+  reason: z.string().optional(),
+  status: z.enum(["working", "needs_input", "completed", "failed", "cancelled"]).optional(),
+  terminal: z.boolean().optional(),
 }).strict();
 
 const eventsInput = z.object({
@@ -443,17 +446,17 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
   let registryEmpty = false;
   let matchedEmpty = false;
   let warnings: string[] = [];
-  let filtered: TrackedTask[] = [];
+  let matched: TrackedTask[] = [];
   await withStateLock(deps.statePath, (state) => {
     pruneRegistry(state, now);
     registryEmpty = Object.keys(state.tasks).length === 0;
     const result = filterTasks(state, input, now);
-    filtered = result.tasks;
+    matched = result.matched;
     warnings = result.warnings;
     matchedEmpty = !registryEmpty && result.total_matched === 0;
   });
   const staleIds = new Set<string>();
-  const toRefresh = filtered.filter((task) => needsFetch(task, freshness, now)).map((task) => task.task_id);
+  const toRefresh = matched.filter((task) => needsFetch(task, freshness, now)).map((task) => task.task_id);
   if (toRefresh.length > 0) {
     const { failures } = await refreshTasks(deps.statePath, client, toRefresh, freshness, (line) => appendWatcherLog(line));
     for (const [id, reason] of failures) {
@@ -461,11 +464,14 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
       warnings.push(`could not refresh 1 task: ${reason}`);
     }
   }
-  const updated = await withStateLock(deps.statePath, (state) => filterTasks(state, input, now).tasks);
-  const counts = listCounts(updated);
+  const updated = await withStateLock(deps.statePath, (state) => {
+    const result = filterTasks(state, input, now);
+    return { page: result.tasks, matched: result.matched };
+  });
+  const counts = listCounts(updated.matched);
   const checkAfter = new Date(now + 5 * 60 * 1000).toISOString();
   const checkLocal = formatCheckAfterLocal(checkAfter);
-  const rows = updated.map((task) => toListRow(task, {
+  const rows = updated.page.map((task) => toListRow(task, {
     stale: staleIds.has(task.task_id) ? true : undefined,
     checkAfterLocal: checkLocal,
   }));
@@ -474,7 +480,7 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
     pending_count: counts.pending_count,
     terminal_count: counts.terminal_count,
     all_terminal: counts.all_terminal,
-    next_step: listNextStep(counts, matchedEmpty, registryEmpty, checkLocal),
+    next_step: listNextStep(counts, matchedEmpty, registryEmpty, checkAfter),
   };
   if (!counts.all_terminal && counts.pending_count > 0) body.next_check_after = checkAfter;
   if (warnings.length > 0) body.warnings = warnings;
@@ -518,10 +524,12 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
     armSteer(task, sessionCount, steeredAt);
     state.tasks[taskId] = task;
   });
-  try {
-    deps.launchWatcher();
-  } catch (error) {
-    console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
+  if (shouldSpawnWatcher(activeNotificationChannels(process.platform, process.env))) {
+    try {
+      deps.launchWatcher();
+    } catch (error) {
+      console.error(`Could not start the watcher: ${error instanceof Error ? error.message : "error"}.`);
+    }
   }
   return { task_id: taskId, accepted: true, session_count: sessionCount };
 }
@@ -542,6 +550,10 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
     };
   }
   await deps.clientForToken(token).abortTask(taskId);
+  await withStateLock(deps.statePath, (state) => {
+    const task = state.tasks[taskId];
+    if (task) task.last_fetched_at = null;
+  });
   return { task_id: taskId, accepted: true };
 }
 
