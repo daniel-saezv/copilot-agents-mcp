@@ -1,16 +1,7 @@
+import { githubPageUrl } from "./github-hosts.ts";
 import type { TrackedTask } from "./state.ts";
 
-export function githubPageUrl(url: string | null | undefined): string | undefined {
-  if (!url?.trim()) return undefined;
-  try {
-    const parsed = new URL(url.trim());
-    if (parsed.hostname.toLowerCase() !== "github.com") return undefined;
-    if (parsed.pathname.toLowerCase().startsWith("/api/")) return undefined;
-    return parsed.toString();
-  } catch {
-    return undefined;
-  }
-}
+export { githubApiBase, githubPageUrl, githubWebHost } from "./github-hosts.ts";
 
 export function resolveTaskPageUrl(input: { html_url?: string | null; url?: string | null }): string | undefined {
   return githubPageUrl(input.html_url) ?? githubPageUrl(input.url);

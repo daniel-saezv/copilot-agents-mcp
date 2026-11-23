@@ -158,22 +158,9 @@ function helpText(): string {
   ].join("\n");
 }
 
-export function githubApiBase(env: NodeJS.ProcessEnv): string | undefined {
-  const raw = env.COPILOT_AGENTS_GITHUB_API_BASE_URL?.trim();
-  if (!raw) return undefined;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL is not a valid URL.");
-  }
-  const host = url.hostname;
-  const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-  if (url.protocol !== "https:" && !loopback) {
-    throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL must use https unless the host is loopback.");
-  }
-  return raw.replace(/\/$/, "");
-}
+import { githubApiBase } from "./github-hosts.ts";
+
+export { githubApiBase };
 
 export function warnGithubApiBase(env: NodeJS.ProcessEnv): void {
   const base = githubApiBase(env);

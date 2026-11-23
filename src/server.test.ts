@@ -776,6 +776,24 @@ describe("MCP tool errors", () => {
     expect(body.all_terminal).toBe(true);
   });
 
+  it("get_agent_task returns not_found through MCP without structured output", async () => {
+    const statePath = await tempPath();
+    const client: GitHubClient = {
+      ...unusedClient(),
+      async getTask() {
+        throw new Error("GET https://api.github.com/agents/repos/octocat/hello-world/tasks/missing returned HTTP 404");
+      },
+    };
+    const result = await callTool(statePath, client, "get_agent_task", {
+      task_id: "missing",
+      repo: "octocat/hello-world",
+    });
+    expect(result.isError).toBe(true);
+    expect(result).not.toHaveProperty("structuredContent");
+    const body = JSON.parse(textOf(result)) as { error: { code: string } };
+    expect(body.error.code).toBe("not_found");
+  });
+
   it("get_agent_task returns terminal cache when unauthenticated", async () => {
     const statePath = await tempPath();
     await withStateLock(statePath, (state) => {

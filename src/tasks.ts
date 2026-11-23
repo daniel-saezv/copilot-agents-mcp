@@ -180,11 +180,9 @@ export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached
 
 export function needsFetch(task: TrackedTask, freshness: number, now = Date.now()): boolean {
   if (task.steer && !task.steer.turn_seen) return true;
-  if (isFinalState(task.state) && mapRawState(task.state).terminal) return false;
-  if (!isFinalState(task.state)) {
-    const last = Date.parse(task.last_fetched_at ?? "");
-    if (!Number.isFinite(last) || now - last >= freshness) return true;
-  }
+  if (mapRawState(task.state).terminal) return false;
+  const last = Date.parse(task.last_fetched_at ?? "");
+  if (!Number.isFinite(last) || now - last >= freshness) return true;
   return false;
 }
 

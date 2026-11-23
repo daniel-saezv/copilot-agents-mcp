@@ -209,6 +209,31 @@ describe("v0.1.0 follow_up", () => {
 });
 
 describe("v0.1.0 cache and retention", () => {
+  it("unknown terminal upstream state skips refetch", () => {
+    const task = initialTask({
+      id: "t",
+      repo: "o/r",
+      requestedModel: "m",
+      state: "mystery_upstream",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    expect(needsFetch(task, freshnessMs())).toBe(false);
+  });
+
+  it("prunes unknown terminal tasks after retention window", async () => {
+    const path = await stateFile();
+    const old = new Date(Date.now() - REGISTRY_PRUNE_TERMINAL_MS - 1_000).toISOString();
+    await withStateLock(path, (state) => {
+      state.tasks.old = {
+        ...initialTask({ id: "old", repo: "o/r", requestedModel: "m", state: "mystery_upstream", createdAt: old, updatedAt: old }),
+        completed_at: old,
+      };
+    });
+    await withStateLock(path, (state) => pruneRegistry(state));
+    expect((await readState(path)).tasks.old).toBeUndefined();
+  });
+
   it("steer on a terminal task forces refetch", () => {
     const task: TrackedTask = {
       ...initialTask({ id: "t", repo: "o/r", requestedModel: "m", state: "idle", createdAt: null, updatedAt: null }),

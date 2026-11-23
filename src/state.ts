@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 import { resolveTaskPageUrl } from "./task-urls.ts";
+import { mapRawState } from "./task-status.ts";
 
 export const MODEL_PREFIX = "sweagent-capi:";
-export const FINAL_STATES = new Set(["completed", "failed", "timed_out", "cancelled", "idle"]);
 
 export type Usage = {
   type: "ai_credits" | "premium_requests";
@@ -107,7 +107,7 @@ export function normalizeModel(model: string): string {
 }
 
 export function isFinalState(state: string): boolean {
-  return FINAL_STATES.has(state);
+  return mapRawState(state).terminal;
 }
 
 export function taskSessionCount(task: AgentTask, fallback = 0): number {
