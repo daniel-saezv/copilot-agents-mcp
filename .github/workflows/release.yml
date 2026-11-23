@@ -69,13 +69,10 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish with npm trusted publishing
-        id: trusted-publish
-        continue-on-error: true
-        run: npm publish --provenance --access public
+      - name: Ensure npm CLI for staged publishing
+        run: |
+          npm install -g "npm@^11.15.0"
+          npm --version
 
-      - name: Publish with NPM_TOKEN fallback
-        if: steps.trusted-publish.outcome == 'failure'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Stage on npm with OIDC trusted publishing
+        run: npm stage publish --provenance --access public
