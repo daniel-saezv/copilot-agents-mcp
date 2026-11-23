@@ -15,6 +15,10 @@ export function withMissingAppInstall(message: string, status: number, path: str
   if (!appCredential || status !== 404) return message;
   const repository = repositoryFromPath(path);
   if (!repository) return message;
+  const trimmed = message.trim();
+  if (/^not found\.?$/i.test(trimmed) || /^task .+ was not found\.?$/i.test(trimmed)) {
+    return `Repository ${repository.owner}/${repository.repo} was not found or is not accessible.`;
+  }
   return `Install the app for ${repository.owner}/${repository.repo}: ${githubAppInstallUrl()}. ${message}`;
 }
 

@@ -81,9 +81,9 @@ export function createFollowUpNextStep(
 
 function scheduleClause(owner: string | undefined, taskId: string, checkAfterIso: string): string {
   const filter = owner
-    ? `calls list_agent_tasks with owner="${owner}"`
-    : `calls list_agent_tasks with task_ids=["${taskId}"]`;
-  return `If you can schedule a later check, first check not before ${formatCheckAfterUtc(checkAfterIso)}; then ${filter}, repeating no more often than every 5 minutes and stopping when all_terminal is true.`;
+    ? `list_agent_tasks with owner="${owner}"`
+    : `list_agent_tasks with task_ids=["${taskId}"]`;
+  return `If you can schedule a later check, first check not before ${formatCheckAfterUtc(checkAfterIso)}; then call ${filter}, repeating no more often than every 5 minutes and stopping when all_terminal is true.`;
 }
 
 function checkLaterBase(owner: string | undefined, taskId: string, checkAfterIso: string): string {

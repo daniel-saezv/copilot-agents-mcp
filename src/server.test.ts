@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
-import { CodedToolFailure, ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CodedToolFailure, GitHubError, ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
 import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
@@ -720,7 +720,12 @@ describe("experimental task steering", () => {
     };
     const abortedResult = await callTool(statePath, github, "abort_agent_task", { task_id: "task-1" });
     expect(abortedResult.isError).toBeUndefined();
-    expect(JSON.parse(textOf(abortedResult))).toEqual({ task_id: "task-1", accepted: true });
+    expect(JSON.parse(textOf(abortedResult))).toEqual({
+      task_id: "task-1",
+      accepted: true,
+      status: "working",
+      terminal: false,
+    });
     expect(aborted).toBe(1);
     const listed = await callTool(statePath, github, "get_agent_task_events", { task_id: "task-1", page: 2, per_page: 2 });
     expect(listed.isError).toBeUndefined();
@@ -917,6 +922,88 @@ describe("PR #18 review regressions", () => {
     expect(body.terminal).toBe(false);
     expect(body.status).toBe("working");
     expect(gets).toBeGreaterThanOrEqual(2);
+  });
+
+  it("abort_agent_task refetches when upstream rejects abort for a finished task", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "in_progress",
+          createdAt: "2026-11-23T22:00:00.000Z",
+          updatedAt: "2026-11-23T22:05:03.000Z",
+        }),
+        last_fetched_at: "2026-11-23T22:05:20.000Z",
+      };
+    });
+    let gets = 0;
+    let aborted = 0;
+    const client: GitHubClient = {
+      ...unusedClient(),
+      async abortTask() {
+        aborted += 1;
+        throw new GitHubError("cannot abort: no active session");
+      },
+      async getTask() {
+        gets += 1;
+        return {
+          id: "task-1",
+          state: "completed",
+          created_at: "2026-11-23T22:00:00.000Z",
+          updated_at: "2026-11-23T22:05:03.000Z",
+          artifacts: [],
+        };
+      },
+    };
+    const result = await callTool(statePath, client, "abort_agent_task", { task_id: "task-1" });
+    expect(result.isError).toBeUndefined();
+    expect(aborted).toBe(1);
+    expect(gets).toBe(1);
+    expect(JSON.parse(textOf(result))).toEqual({
+      task_id: "task-1",
+      accepted: false,
+      reason: "already finished",
+      status: "completed",
+      terminal: true,
+    });
+    const stored = (await readState(statePath)).tasks["task-1"];
+    expect(stored?.state).toBe("completed");
+    expect(stored?.last_fetched_at).toBeTruthy();
+  });
+
+  it("list_agent_tasks next_check_after stays fixed until create check_after passes", async () => {
+    const statePath = await tempPath();
+    const checkAfter = "2026-11-23T21:08:40.000Z";
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = {
+        ...initialTask({
+          id: "task-1",
+          repo: "octocat/hello-world",
+          requestedModel: "m",
+          state: "in_progress",
+          createdAt: "2026-11-23T21:00:00.000Z",
+          updatedAt: "2026-11-23T21:00:00.000Z",
+        }),
+        check_after: checkAfter,
+        last_fetched_at: "2026-11-23T21:04:02.000Z",
+      };
+    });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-23T21:04:02.000Z"));
+      const first = await callTool(statePath, unusedClient(), "list_agent_tasks", {});
+      const bodyOne = JSON.parse(textOf(first)) as { next_check_after?: string };
+      vi.setSystemTime(new Date("2026-11-23T21:05:02.000Z"));
+      const second = await callTool(statePath, unusedClient(), "list_agent_tasks", {});
+      const bodyTwo = JSON.parse(textOf(second)) as { next_check_after?: string };
+      expect(bodyOne.next_check_after).toBe(checkAfter);
+      expect(bodyTwo.next_check_after).toBe(checkAfter);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("abort_agent_task on a finished task validates against the output schema", async () => {

@@ -24,11 +24,13 @@ import { compactGetTask } from "./task-present.ts";
 import { mapRawState } from "./task-status.ts";
 import { prUrl, resolveTaskPageUrl } from "./task-urls.ts";
 import {
+  aggregateNextCheckAfter,
   filterTasks,
   freshnessMs,
   listCounts,
   listNextStep,
   needsFetch,
+  resolveNextCheckAfter,
   OwnerValidationError,
   pruneRegistry,
   refreshTasks,
@@ -301,19 +303,6 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     ...(args.create_pull_request !== undefined ? { create_pull_request: args.create_pull_request } : {}),
   });
   const mapped = mapRawState(task.state);
-  await withStateLock(deps.statePath, (state) => {
-    state.tasks[task.id] = initialTask({
-      id: task.id,
-      repo,
-      requestedModel: model,
-      state: task.state,
-      createdAt: task.created_at ?? null,
-      updatedAt: task.updated_at ?? null,
-      ...(taskOwner ? { owner: taskOwner } : {}),
-      deliveryRecord,
-      htmlUrl: resolveTaskPageUrl(task) ?? null,
-    });
-  });
   let watcher_started = false;
   if (shouldSpawnWatcher(channels)) {
     try {
@@ -325,6 +314,22 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   }
   const session = resolveTaskPageUrl(task);
   const follow_up = followUpBlock(channels, watcher_started, Date.now());
+  await withStateLock(deps.statePath, (state) => {
+    state.tasks[task.id] = {
+      ...initialTask({
+        id: task.id,
+        repo,
+        requestedModel: model,
+        state: task.state,
+        createdAt: task.created_at ?? null,
+        updatedAt: task.updated_at ?? null,
+        ...(taskOwner ? { owner: taskOwner } : {}),
+        deliveryRecord,
+        htmlUrl: resolveTaskPageUrl(task) ?? null,
+      }),
+      check_after: follow_up.check_after,
+    };
+  });
   const planMode = follow_up.mode;
   const next_step = createFollowUpNextStep(
     planMode,
@@ -373,9 +378,10 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const token = deps.readToken();
   const channels = activeNotificationChannels(process.platform, process.env);
   const freshness = freshnessMs(process.env);
-  const checkAfter = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const now = Date.now();
   if (!token) {
     if (known && mapRawState(known.state).terminal) {
+      const checkAfter = resolveNextCheckAfter(known, now);
       return {
         ...compactGetTask(known, channels, { verbose, checkAfter, cached: true }),
         stale: true,
@@ -446,6 +452,7 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
     } catch (error) {
       if (known) {
         tracked = known;
+        const checkAfter = resolveNextCheckAfter(tracked, now);
         return {
           ...compactGetTask(tracked, channels, { verbose, checkAfter, cached: true }),
           stale: true,
@@ -459,6 +466,7 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
       throw error;
     }
   }
+  const checkAfter = resolveNextCheckAfter(tracked, now);
   return compactGetTask(tracked, channels, { verbose, checkAfter, cached });
 }
 
@@ -493,8 +501,8 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
     const hasPending = matched.some((task) => !mapRawState(task.state).terminal);
     if (hasPending) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
     const counts = listCounts(matched);
-    const checkAfter = new Date(now + 5 * 60 * 1000).toISOString();
-    const rows = page.map((task) => toListRow(task, { checkAfter }));
+    const checkAfter = aggregateNextCheckAfter(matched, now);
+    const rows = page.map((task) => toListRow(task, { checkAfter: resolveNextCheckAfter(task, now) }));
     const staleWarnings = [...warnings, NO_SESSION_STALE_WARNING];
     return {
       tasks: rows,
@@ -521,10 +529,10 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
     return { page: result.tasks, matched: result.matched };
   });
   const counts = listCounts(updated.matched);
-  const checkAfter = new Date(now + 5 * 60 * 1000).toISOString();
+  const checkAfter = aggregateNextCheckAfter(updated.matched, now);
   const rows = updated.page.map((task) => toListRow(task, {
     stale: staleIds.has(task.task_id) ? true : undefined,
-    checkAfter,
+    checkAfter: resolveNextCheckAfter(task, now),
   }));
   const body: Record<string, unknown> = {
     tasks: rows,
@@ -585,6 +593,10 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
   return { task_id: taskId, accepted: true, session_count: sessionCount };
 }
 
+function isAbortNoSessionError(message: string): boolean {
+  return /cannot abort/i.test(message) && /no active session/i.test(message);
+}
+
 async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const token = deps.readToken();
@@ -600,12 +612,51 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
       terminal: true,
     };
   }
-  await deps.clientForToken(token).abortTask(taskId);
+  const client = deps.clientForToken(token);
+  try {
+    await client.abortTask(taskId);
+  } catch (error) {
+    const message = failureMessage(error);
+    if (isAbortNoSessionError(message) && known?.repo) {
+      const parsed = parseRepo(known.repo);
+      const remote = await client.getTask({
+        taskId,
+        owner: parsed.owner,
+        repo: parsed.repo,
+      });
+      const tracked = await withStateLock(deps.statePath, (state) => {
+        const row = observe(state, remote, {
+          repo: known.repo,
+          requestedModel: state.tasks[taskId]?.requested_model ?? known.requested_model ?? null,
+        });
+        row.last_fetched_at = new Date().toISOString();
+        return row;
+      });
+      if (isFinalState(tracked.state)) {
+        const mapped = mapRawState(tracked.state);
+        return {
+          task_id: taskId,
+          accepted: false,
+          reason: "already finished",
+          status: mapped.status,
+          terminal: true,
+        };
+      }
+    }
+    throw error;
+  }
   await withStateLock(deps.statePath, (state) => {
     const task = state.tasks[taskId];
     if (task) task.last_fetched_at = null;
   });
-  return { task_id: taskId, accepted: true };
+  const current = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
+  const mapped = mapRawState(current?.state ?? "in_progress");
+  return {
+    task_id: taskId,
+    accepted: true,
+    status: mapped.status,
+    terminal: mapped.terminal,
+  };
 }
 
 async function readEvents(args: z.infer<typeof eventsInput>, deps: ServerDeps) {

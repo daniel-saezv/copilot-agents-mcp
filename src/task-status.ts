@@ -59,22 +59,37 @@ export function sanitizeLine(text: string, maxLen: number): string {
   return `${stripped.slice(0, maxLen - 1)}…`;
 }
 
-export function durationLabel(task: Pick<TrackedTask, "created_at" | "completed_at" | "updated_at">, now = Date.now()): string {
-  const start = Date.parse(task.created_at ?? task.updated_at ?? "");
-  const end = Date.parse(task.completed_at ?? task.updated_at ?? "");
-  const startMs = Number.isFinite(start) ? start : now;
-  const endMs = Number.isFinite(end) ? end : now;
-  const minutes = Math.max(1, Math.round(Math.abs(endMs - startMs) / 60_000));
+export function durationStartMs(task: TrackedTask): number | null {
+  if (task.steer?.at) {
+    const steerAt = Date.parse(task.steer.at);
+    if (Number.isFinite(steerAt)) return steerAt;
+  }
+  const created = Date.parse(task.created_at ?? "");
+  if (Number.isFinite(created)) return created;
+  return null;
+}
+
+export function durationLabel(task: TrackedTask, now = Date.now()): string {
+  const startMs = durationStartMs(task) ?? now;
+  const mapped = mapRawState(task.state);
+  const endRaw = mapped.terminal
+    ? Date.parse(task.completed_at ?? task.updated_at ?? "")
+    : now;
+  const endMs = Number.isFinite(endRaw) ? endRaw : now;
+  const diffMs = Math.max(0, endMs - startMs);
+  if (diffMs < 60_000) return "<1m";
+  const minutes = Math.round(diffMs / 60_000);
   return `${minutes}m`;
 }
 
 export type SummaryContext = {
   checkAfter?: string;
+  now?: number;
 };
 
 export function buildSummary(task: TrackedTask, context: SummaryContext = {}): string {
   const mapped = mapRawState(task.state);
-  const dur = durationLabel(task);
+  const dur = durationLabel(task, context.now);
   if (mapped.status === "working") {
     if (context.checkAfter) return `Working for ${dur}. First check not before ${formatCheckAfterUtc(context.checkAfter)}.`;
     return `Working for ${dur}.`;

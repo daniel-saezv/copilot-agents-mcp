@@ -1,5 +1,6 @@
 import type { GitHubClient } from "./github.ts";
 import { buildSummary, mapRawState, unknownStateWarning, type MappedStatus } from "./task-status.ts";
+import { DEFAULT_MIN_INTERVAL_S } from "./follow-up.ts";
 import { formatCheckAfterUtc } from "./time-format.ts";
 import { prUrl, sessionUrl } from "./task-urls.ts";
 import {
@@ -45,6 +46,32 @@ export type ListTaskRow = {
   cached?: true;
   warning?: string;
 };
+
+export function resolveNextCheckAfter(task: TrackedTask, now = Date.now()): string {
+  const stored = task.check_after?.trim();
+  if (stored) {
+    const storedMs = Date.parse(stored);
+    if (Number.isFinite(storedMs) && now < storedMs) return stored;
+  }
+  const lastFetch = Date.parse(task.last_fetched_at ?? "");
+  const anchorMs = Number.isFinite(lastFetch)
+    ? lastFetch
+    : (stored && Number.isFinite(Date.parse(stored)) ? Date.parse(stored) : now);
+  return new Date(anchorMs + DEFAULT_MIN_INTERVAL_S * 1000).toISOString();
+}
+
+export function aggregateNextCheckAfter(tasks: TrackedTask[], now = Date.now()): string | undefined {
+  const pending = tasks.filter((task) => !mapRawState(task.state).terminal);
+  if (pending.length === 0) return undefined;
+  let latest = 0;
+  for (const task of pending) {
+    const next = Date.parse(resolveNextCheckAfter(task, now));
+    if (Number.isFinite(next) && next > latest) latest = next;
+  }
+  if (latest > 0) return new Date(latest).toISOString();
+  const first = pending[0];
+  return first ? resolveNextCheckAfter(first, now) : undefined;
+}
 
 export function freshnessMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.COPILOT_AGENTS_FRESHNESS_MS?.trim();

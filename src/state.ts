@@ -61,6 +61,7 @@ export type TrackedTask = {
   delivery?: TaskDelivery | null;
   delivery_record?: DeliveryRecord | null;
   last_fetched_at?: string | null;
+  check_after?: string | null;
   pr_title?: string | null;
   html_url?: string | null;
   session_id?: string | null;
@@ -224,6 +225,7 @@ export function observe(state: StateFile, task: AgentTask, context: { repo: stri
         ? { status: "failed" as const, reason: existing.delivery.reason }
         : existing?.delivery_record ?? null),
     last_fetched_at: existing?.last_fetched_at ?? null,
+    check_after: existing?.check_after ?? null,
     pr_title: existing?.pr_title ?? null,
     html_url: resolveTaskPageUrl(task) ?? existing?.html_url ?? null,
     session_id: latestSessionId(sessions) ?? existing?.session_id ?? null,

@@ -204,7 +204,7 @@ describe("v0.1.0 follow_up", () => {
     const checkAfter = "2026-11-23T21:00:00.000Z";
     const text = createFollowUpNextStep("check_later", undefined, "abc", false, checkAfter);
     expect(text).toContain("first check not before");
-    expect(text).toContain('task_ids=["abc"]');
+    expect(text).toContain('then call list_agent_tasks with task_ids=["abc"]');
   });
 });
 
