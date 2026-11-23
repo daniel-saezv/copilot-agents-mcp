@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="128" alt="copilot-agents-mcp">
+  <img src="https://raw.githubusercontent.com/daniel-saezv/copilot-agents-mcp/main/assets/logo.svg" width="128" alt="copilot-agents-mcp">
 </p>
 
 # copilot-agents-mcp
@@ -29,7 +29,7 @@ npx -y copilot-agents-mcp login
 npx -y copilot-agents-mcp auth status
 ```
 
-Complete the device flow in your browser. `auth status` reports the active credential and does not print tokens. See [authentication](docs/authentication.md) and [permissions](docs/permissions.md).
+Complete the device flow in your browser. `auth status` reports the active credential and does not print tokens. See [authentication](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/authentication.md) and [permissions](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/permissions.md).
 
 ### Alternative: personal access token
 
@@ -81,7 +81,7 @@ Add the copilot-agents MCP server with command npx and args -y copilot-agents-mc
 | `list_copilot_models` | copilot_models | yes | Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present. |
 <!-- END AUTOMATED TOOLS -->
 
-See [the tool reference](docs/tools.md) for all input and output fields.
+See [the tool reference](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/tools.md) for all input and output fields.
 
 ## Watch tasks
 
@@ -91,7 +91,7 @@ See [the tool reference](docs/tools.md) for all input and output fields.
 npx -y copilot-agents-mcp watch
 ```
 
-The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](docs/notifications.md).
+The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/docs/notifications.md).
 
 ## Release
 
@@ -108,8 +108,8 @@ npm run build
 node scripts/pack-smoke.mjs
 ```
 
-Agent development instructions remain in [AGENTS.md](AGENTS.md).
+Agent development instructions remain in [AGENTS.md](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/AGENTS.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/daniel-saezv/copilot-agents-mcp/blob/main/LICENSE)
