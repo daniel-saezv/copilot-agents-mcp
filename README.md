@@ -5,7 +5,7 @@
 # copilot-agents-mcp
 
 `copilot-agents-mcp` is a local Model Context Protocol (MCP) server for launching and managing GitHub Copilot cloud agent tasks.
-It runs on your machine over stdio or local HTTP. Version 0.0.1 requires Node.js 26 or later.
+It runs on your machine over stdio or local HTTP. Requires Node.js 26 or later.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ flowchart LR
 
 **Requirement:** Node.js 26 or later.
 
-The published package is [`copilot-agents-mcp@0.0.1`](https://www.npmjs.com/package/copilot-agents-mcp) (`copilot-agents-mcp` on your `PATH` when installed).
+The published package is [`copilot-agents-mcp`](https://www.npmjs.com/package/copilot-agents-mcp) on npm (`copilot-agents-mcp` on your `PATH` when installed).
 
 ### Sign in with the GitHub App (preferred)
 

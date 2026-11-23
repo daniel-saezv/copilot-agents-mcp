@@ -1,6 +1,6 @@
 # Tool reference
 
-`copilot-agents-mcp` version 0.0.1 publishes six tools. The default toolsets are `copilot_tasks` and `copilot_models`.
+`copilot-agents-mcp` publishes six tools. The default toolsets are `copilot_tasks` and `copilot_models`.
 
 All schemas reject additional properties. GET tools are read-only. POST tools are not marked idempotent.
 
