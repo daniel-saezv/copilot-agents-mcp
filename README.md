@@ -18,186 +18,57 @@ flowchart LR
 
 ## Install
 
-The package is not published to npm. Run it directly from this repository:
+**Requirement:** Node.js 26 or later.
+
+The published package is [`copilot-agents-mcp@0.0.1`](https://www.npmjs.com/package/copilot-agents-mcp) (`copilot-agents-mcp` on your `PATH` when installed).
+
+### Sign in with the GitHub App (preferred)
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp
+npx -y copilot-agents-mcp login
+npx -y copilot-agents-mcp auth status
 ```
 
-The default server uses stdio. To use local HTTP, run:
+Complete the device flow in your browser. `auth status` reports the active credential and does not print tokens. See [authentication](docs/authentication.md) and [permissions](docs/permissions.md).
+
+### Alternative: personal access token
+
+Set `GITHUB_PERSONAL_ACCESS_TOKEN` on the **MCP server process** only (for example in your client’s MCP `env` block or shell). Do not commit tokens to versioned files. Prefer GitHub App `login` when the system keyring is available.
+
+### MCP configuration
+
+Use this stdio server entry everywhere (omit `env` after `login`):
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "copilot-agents-mcp"],
+  "env": {
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+  }
+}
+```
+
+| Client | Where to put it |
+| --- | --- |
+| **Visual Studio Code** | `.vscode/mcp.json` → `servers.copilot-agents` with `"type": "stdio"` plus the fields above |
+| **Claude Desktop** | `claude_desktop_config.json` → `mcpServers.copilot-agents` |
+| **Claude Code** | `claude mcp add --transport stdio copilot-agents -- npx -y copilot-agents-mcp` (add `-e GITHUB_PERSONAL_ACCESS_TOKEN=…` for a PAT) |
+| **Cursor** | `.cursor/mcp.json` → `mcpServers.copilot-agents` |
+| **Grok Bot** | Grok Bot MCP settings → `mcpServers.copilot-agents` |
+
+Local HTTP (optional):
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp --http --port 3333
+npx -y copilot-agents-mcp --http --port 3333
 ```
 
-The HTTP endpoint is `http://127.0.0.1:3333/mcp`.
+The endpoint is `http://127.0.0.1:3333/mcp`.
 
-## Authentication
+You can also ask your agent (Cursor, Claude Code, Grok Bot, etc.) to wire it up. Example prompt:
 
-Use one of these credential modes:
-
-- **Personal access token.** Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP process environment.
-- **GitHub App.** Run `npx -y github:daniel-saezv/copilot-agents-mcp login`, complete the device flow, and leave `GITHUB_PERSONAL_ACCESS_TOKEN` unset.
-
-Check the active credential with:
-
-```bash
-npx -y github:daniel-saezv/copilot-agents-mcp auth status
-```
-
-See [authentication](docs/authentication.md) and [permissions](docs/permissions.md).
-
-## Configure your MCP client
-
-Every example below has two variants:
-
-- PAT: keep the `env` block and do not run `login`.
-- GitHub App: run `login`, then remove the `env` block.
-
-The command is the same in each client. Replace `github_pat_...` with a token that has the required permissions.
-
-### Visual Studio Code
-
-Create `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "copilot-agents": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    }
-  }
-}
-```
-
-For GitHub App authentication, run `login` once and use this variant:
-
-```json
-{
-  "servers": {
-    "copilot-agents": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
-    }
-  }
-}
-```
-
-### Claude Desktop
-
-Add this server to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    }
-  }
-}
-```
-
-For GitHub App authentication, run `login` once and use this variant:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
-    }
-  }
-}
-```
-
-### Claude Code
-
-For a PAT, register the local stdio server:
-
-```bash
-claude mcp add --transport stdio copilot-agents \
-  -e GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_... \
-  -- npx -y github:daniel-saezv/copilot-agents-mcp
-```
-
-For GitHub App authentication, run the server `login` command first. Then register it without `-e`:
-
-```bash
-npx -y github:daniel-saezv/copilot-agents-mcp login
-claude mcp add --transport stdio copilot-agents \
-  -- npx -y github:daniel-saezv/copilot-agents-mcp
-```
-
-### Cursor
-
-Create `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    }
-  }
-}
-```
-
-For GitHub App authentication, run `login` once and use this variant:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
-    }
-  }
-}
-```
-
-### Grok Bot
-
-Configure Grok Bot as a local MCP server over stdio with:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    }
-  }
-}
-```
-
-For GitHub App authentication, run `login` once and use this variant:
-
-```json
-{
-  "mcpServers": {
-    "copilot-agents": {
-      "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"]
-    }
-  }
-}
+```text
+Add the copilot-agents MCP server with command npx and args -y copilot-agents-mcp. Prefer GitHub App login over a PAT.
 ```
 
 ## Tools
@@ -220,7 +91,7 @@ See [the tool reference](docs/tools.md) for all input and output fields.
 `create_agent_task` starts a detached watcher. You can also start it directly:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp watch
+npx -y copilot-agents-mcp watch
 ```
 
 The watcher polls pending tasks, stores local state, and sends completion notifications. See [notifications](docs/notifications.md).

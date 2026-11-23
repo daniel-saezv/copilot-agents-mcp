@@ -3,7 +3,7 @@
 The watcher starts after `create_agent_task` and after an accepted steer. You can also run it directly:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp watch
+npx -y copilot-agents-mcp watch
 ```
 
 The watcher polls until a task reaches `completed`, `failed`, `timed_out`, `cancelled`, or `idle`. It notifies once for each turn and resumes unfinished tasks from local state.

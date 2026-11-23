@@ -17,7 +17,7 @@ Set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server process environment. Do not pas
   "mcpServers": {
     "copilot-agents": {
       "command": "npx",
-      "args": ["-y", "github:daniel-saezv/copilot-agents-mcp"],
+      "args": ["-y", "copilot-agents-mcp"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
       }
@@ -37,7 +37,7 @@ Install the default app for only the repositories where you use Copilot agent ta
 Then sign in:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp login
+npx -y copilot-agents-mcp login
 ```
 
 Open the displayed URL and enter the displayed code. The device code expires after 15 minutes by default. Never enter a code that you did not request from that terminal.
@@ -46,7 +46,7 @@ The default client ID is `Iv23liNbsc3GH7vmP8OT`. The client ID is not a secret. 
 
 ```bash
 COPILOT_AGENTS_GITHUB_APP_CLIENT_ID=Iv23... \
-npx -y github:daniel-saezv/copilot-agents-mcp login
+npx -y copilot-agents-mcp login
 ```
 
 The access token expires after 8 hours, and the refresh token expires after 6 months. The server refreshes the access token 5 minutes before expiry and after a 401. A refresh rotates both tokens.
@@ -66,13 +66,13 @@ On Linux, the server does not silently fall back from Secret Service. If the key
 Show the active method without printing token values:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp auth status
+npx -y copilot-agents-mcp auth status
 ```
 
 Delete the local session:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp logout
+npx -y copilot-agents-mcp logout
 ```
 
 `logout` also prints the GitHub settings path for revoking app access. It does not uninstall the app from a repository or organization.

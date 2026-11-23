@@ -130,7 +130,7 @@ Output:
 Use CLI flags or environment variables:
 
 ```bash
-npx -y github:daniel-saezv/copilot-agents-mcp \
+npx -y copilot-agents-mcp \
   --toolsets copilot_tasks,copilot_models \
   --read-only
 ```
