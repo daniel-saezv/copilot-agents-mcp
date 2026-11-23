@@ -25,22 +25,18 @@ function fragmentsOf(value: string, minLength = 4): string[] {
   return [...out];
 }
 
-function assertOutputHidesSecrets(output: string, secrets: string[]): void {
-  for (const secret of secrets) {
+function assertNotifySecretsHidden(output: string, urlSecret: string, authSecret: string, patSecret: string): void {
+  expect(output).not.toContain(patSecret);
+  expect(output).not.toContain(urlSecret);
+  expect(output).not.toContain(authSecret);
+  const url = new URL(urlSecret);
+  expect(output).not.toContain(url.host);
+  expect(output).not.toContain(url.pathname);
+  const bearerTail = authSecret.slice("Bearer ".length);
+  expect(output).not.toContain(bearerTail);
+  for (const secret of [urlSecret, authSecret]) {
     for (const fragment of fragmentsOf(secret)) {
       expect(output).not.toContain(fragment);
-    }
-    const bearerTail = secret.startsWith("Bearer ") ? secret.slice("Bearer ".length) : "";
-    if (bearerTail.length >= 4) {
-      expect(output).not.toContain(bearerTail);
-    }
-    try {
-      const host = new URL(secret).host;
-      if (host.length >= 4) expect(output).not.toContain(host);
-      const path = new URL(secret).pathname;
-      if (path.length >= 4) expect(output).not.toContain(path);
-    } catch {
-      // not a URL
     }
   }
 }
@@ -71,7 +67,7 @@ function minimalDeps(statePath: string): ServerDeps {
 
 describe("auth status CLI", () => {
   it.skipIf(!nodeOk)("prints auth status diagnostics only on the CLI without leaking notify values", async () => {
-    const home = await mkdtemp(join(tmpdir(), "auth-status-cli-"));
+    const home = await mkdtemp(join(tmpdir(), "copilot-cas-"));
     const statePath = join(home, "state.json");
     await mkdir(home, { recursive: true });
 
@@ -96,7 +92,7 @@ describe("auth status CLI", () => {
     expect(output).toContain("Local diagnostics:");
     expect(output).toContain("COPILOT_AGENTS_NOTIFY_URL: yes");
     expect(output).toContain("PAT");
-    assertOutputHidesSecrets(output, [urlSecret, authSecret, patSecret]);
+    assertNotifySecretsHidden(output, urlSecret, authSecret, patSecret);
   });
 });
 
