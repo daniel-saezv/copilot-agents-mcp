@@ -4,7 +4,19 @@
   "description": "Local MCP server for launching GitHub Copilot cloud agents.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["mcp", "github", "copilot", "agents"],
+  "homepage": "https://github.com/daniel-saezv/copilot-agents-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/daniel-saezv/copilot-agents-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "github-copilot",
+    "copilot",
+    "coding-agent",
+    "github",
+    "agents"
+  ],
   "bin": {
     "copilot-agents-mcp": "dist/cli.js"
   },

@@ -1,6 +1,6 @@
 # Authentication
 
-`copilot-agents-mcp` version 0.0.1 requires Node.js 26 or later. It accepts one active credential in this order:
+`copilot-agents-mcp` requires Node.js 26 or later. It accepts one active credential in this order:
 
 1. `GITHUB_PERSONAL_ACCESS_TOKEN`, when the value is non-empty.
 2. A GitHub App session stored in the system keyring.
