@@ -1,5 +1,6 @@
 import type { GitHubClient } from "./github.ts";
 import { buildSummary, mapRawState, unknownStateWarning, type MappedStatus } from "./task-status.ts";
+import { formatCheckAfterUtc } from "./time-format.ts";
 import { prUrl, sessionUrl } from "./task-urls.ts";
 import {
   fillPullRequest,
@@ -151,16 +152,8 @@ export function listNextStep(
     return "No tasks are running. If you scheduled a check for these tasks, delete it now.";
   }
   const n = counts.pending_count;
-  const suffix = checkAfter ? ` End your turn; check again after ${checkAfter} (not sooner than 5 minutes).` : "";
+  const suffix = checkAfter ? ` End your turn; first check not before ${formatCheckAfterUtc(checkAfter)} (not sooner than 5 minutes).` : "";
   return `${n} task${n === 1 ? "" : "s"} still working.${suffix}`;
-}
-
-export function formatCheckAfterLocal(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
 }
 
 export function toListRow(task: TrackedTask, options?: { stale?: boolean; cached?: boolean; checkAfter?: string }): ListTaskRow {

@@ -71,7 +71,11 @@ export class KeyringError extends Error {
   }
 }
 
-export const NO_SESSION_MESSAGE = "No GitHub session is available. Set GITHUB_PERSONAL_ACCESS_TOKEN or run `npx copilot-agents-mcp login`.";
+export const NO_SESSION_MESSAGE =
+  "No GitHub session is available. A prior `npx copilot-agents-mcp login` stores credentials in the OS keyring, which may be unreachable from this process (for example a different D-Bus session on Linux). Set GITHUB_PERSONAL_ACCESS_TOKEN in the environment or run `npx copilot-agents-mcp login` in the same session as this server.";
+
+export const NO_SESSION_STALE_WARNING =
+  "No GitHub session in this process; returning stored data only (not refreshed). Set GITHUB_PERSONAL_ACCESS_TOKEN or run `npx copilot-agents-mcp login`.";
 
 export type GithubPermission = "Agent tasks" | "Pull requests" | "Contents: write";
 
@@ -127,7 +131,6 @@ export function toolError(message: string | ErrorBody) {
   return {
     isError: true as const,
     content: [{ type: "text" as const, text }],
-    structuredContent: compactValue(body) as ErrorBody,
   };
 }
 

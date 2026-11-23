@@ -2,6 +2,7 @@ import type { NotifyChannel } from "./notify.ts";
 import { deliveryForTask } from "./delivery.ts";
 import { buildSummary, durationLabel, mapRawState, pullRequestView, unknownStateWarning } from "./task-status.ts";
 import type { TrackedTask, Usage } from "./state.ts";
+import { formatCheckAfterUtc } from "./time-format.ts";
 import { prUrl, sessionUrl } from "./task-urls.ts";
 
 const ERROR_VERBOSE_MAX = 2048;
@@ -40,7 +41,7 @@ export function compactGetTask(
   if (task.completed_at) body.completed_at = task.completed_at;
   if (!mapped.terminal && options?.checkAfter) {
     const dur = durationLabel(task);
-    body.next_step = `Still working (${dur}). End your turn; check again after ${options.checkAfter}.`;
+    body.next_step = `Still working (${dur}). End your turn; first check not before ${formatCheckAfterUtc(options.checkAfter)}.`;
   } else if (mapped.terminal && mapped.status === "completed" && task.pull_request?.number) {
     body.next_step = `PR #${task.pull_request.number} is open for review.`;
   }

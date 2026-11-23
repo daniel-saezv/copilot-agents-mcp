@@ -181,8 +181,10 @@ describe("v0.1.0 delivery matrix", () => {
 
 describe("v0.1.0 follow_up", () => {
   it("push next_step", () => {
-    const text = createFollowUpNextStep("push", "thrall", "abc", false);
-    expect(text).toBe("Task queued; cloud tasks usually take 5-30 minutes. End your turn now. Do not wait and do not call get_agent_task in a loop. A completion notice will be POSTed to the configured endpoint. If you are woken by it, call get_agent_task once for the result.");
+    const checkAfter = "2026-11-23T21:00:00.000Z";
+    const text = createFollowUpNextStep("push", "thrall", "abc", false, checkAfter);
+    expect(text).toContain("Do not wait and do not call get_agent_task in a loop");
+    expect(text).toContain("POSTed");
   });
 
   it("check_after default 10 minutes and min_interval 300", () => {
@@ -193,12 +195,15 @@ describe("v0.1.0 follow_up", () => {
   });
 
   it("owner substitution in user_push", () => {
-    const text = createFollowUpNextStep("user_push", "thrall", "abc", false);
+    const checkAfter = "2026-11-23T21:00:00.000Z";
+    const text = createFollowUpNextStep("user_push", "thrall", "abc", false, checkAfter);
     expect(text).toContain('owner="thrall"');
   });
 
   it("task_ids fallback", () => {
-    const text = createFollowUpNextStep("check_later", undefined, "abc", false);
+    const checkAfter = "2026-11-23T21:00:00.000Z";
+    const text = createFollowUpNextStep("check_later", undefined, "abc", false, checkAfter);
+    expect(text).toContain("first check not before");
     expect(text).toContain('task_ids=["abc"]');
   });
 });

@@ -189,7 +189,7 @@ describe("/agents/swe/models reader", () => {
     expect(textOf(result)).toContain("https://copilot.example.test/agents/swe/models");
     expect(textOf(result)).toContain("data[1].billing.token_prices");
     expect(textOf(result)).not.toContain("test-model-a");
-    expect(result.structuredContent).toMatchObject({ error: { code: expect.any(String) } });
+    expect(result).not.toHaveProperty("structuredContent");
   });
 
   it("returns isError when policy has no state", async () => {

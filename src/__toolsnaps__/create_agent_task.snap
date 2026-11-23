@@ -1,7 +1,7 @@
 {
   "name": "create_agent_task",
   "title": "Launch Copilot task",
-  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. The task keeps running in the cloud for minutes; the task_id stays valid while GitHub keeps the task. Follow next_step.",
+  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -34,7 +34,7 @@
         "type": "boolean"
       },
       "owner": {
-        "description": "Stable name of the agent or bot launching the task (e.g. your own name). Several agents may share this server; pass the same owner every time and filter list_agent_tasks by it.",
+        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
         "type": "string",
         "minLength": 1,
         "maxLength": 64,
@@ -77,7 +77,19 @@
       "requested_model": {
         "type": "string"
       },
+      "delivery": {
+        "type": "string",
+        "enum": [
+          "not_configured",
+          "pending",
+          "delivered",
+          "failed"
+        ]
+      },
       "session_url": {
+        "type": "string"
+      },
+      "pr_url": {
         "type": "string"
       },
       "follow_up": {
@@ -110,9 +122,6 @@
           "check_with": {
             "type": "string",
             "const": "list_agent_tasks"
-          },
-          "session_url": {
-            "type": "string"
           }
         },
         "required": [
@@ -133,6 +142,7 @@
       "status",
       "terminal",
       "requested_model",
+      "delivery",
       "follow_up",
       "next_step"
     ],

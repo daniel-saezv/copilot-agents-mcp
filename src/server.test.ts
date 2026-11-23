@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
+import { CodedToolFailure, ModelsError, TASK_HAS_NO_PULL_REQUEST, TASK_PULL_REQUEST_NOT_OPEN } from "./errors.ts";
 import { createGitHubClient, type AgentTask, type GitHubClient } from "./github.ts";
 import { startHttpServer } from "./http.ts";
 import { selectToolNames, TOOLS, type Selection } from "./selection.ts";
@@ -137,11 +137,14 @@ describe("tools", () => {
         follow_up: { mode: string; channels?: string[]; check_with: string };
         next_step: string;
         status: string;
+        delivery: string;
       };
       expect(body.follow_up.mode).toBe("push");
       expect(body.follow_up.channels).toContain("webhook");
       expect(body.follow_up.check_with).toBe("list_agent_tasks");
       expect(body.status).toBe("working");
+      expect(body.delivery).toBe("pending");
+      expect(body.follow_up).not.toHaveProperty("session_url");
       expect(body.next_step).toContain("Task queued");
       expect(body.next_step).toContain("POSTed");
     } finally {
@@ -220,6 +223,7 @@ describe("tools", () => {
     const body = JSON.parse(textOf(result)) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("not_authenticated");
     expect(body.error.message).toContain("npx copilot-agents-mcp login");
+    expect(body.error.message).toContain("keyring");
   });
 
   it("blocks an already rejected model without calling the API", async () => {
@@ -725,6 +729,71 @@ describe("experimental task steering", () => {
     expect(body.total).toBe(events.total);
     expect(body.events.map((event) => event.type)).toEqual(events.events.map((event) => event.type));
     expect(body.events.some((event) => event.timestamp === "0001-01-01T00:00:00Z")).toBe(true);
+  });
+});
+
+describe("MCP tool errors", () => {
+  const noAuthCases: Array<[string, Record<string, unknown>]> = [
+    ["create_agent_task", { repo: "octocat/hello-world", prompt: "hi", model: "mai-code-2" }],
+    ["abort_agent_task", { task_id: "task-1" }],
+    ["steer_agent_task", { task_id: "task-1", content: "go" }],
+    ["get_agent_task_events", { task_id: "task-1", page: 1, per_page: 1 }],
+    ["list_copilot_models", {}],
+  ];
+  for (const [name, args] of noAuthCases) {
+    it(`${name} returns coded error without structured output`, async () => {
+      const statePath = await tempPath();
+      const readModels = name === "list_copilot_models"
+        ? async () => {
+          throw new CodedToolFailure("not_authenticated", "No GitHub session is available.");
+        }
+        : undefined;
+      const result = await callTool(statePath, unusedClient(), name, args, () => {}, readModels, () => null);
+      expect(result.isError).toBe(true);
+      expect(result).not.toHaveProperty("structuredContent");
+      const body = JSON.parse(textOf(result)) as { error: { code: string } };
+      expect(body.error.code).toBe("not_authenticated");
+    });
+  }
+
+  it("list_agent_tasks returns terminal-only rows when unauthenticated", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks.done = initialTask({
+        id: "done",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const result = await callTool(statePath, unusedClient(), "list_agent_tasks", {}, () => {}, undefined, () => null);
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { stale: boolean; warnings: string[]; all_terminal: boolean };
+    expect(body.stale).toBe(true);
+    expect(body.warnings.some((line) => /session is available|stored data/i.test(line))).toBe(true);
+    expect(body.all_terminal).toBe(true);
+  });
+
+  it("get_agent_task returns terminal cache when unauthenticated", async () => {
+    const statePath = await tempPath();
+    await withStateLock(statePath, (state) => {
+      state.tasks["task-1"] = initialTask({
+        id: "task-1",
+        repo: "octocat/hello-world",
+        requestedModel: "m",
+        state: "idle",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const result = await callTool(statePath, unusedClient(), "get_agent_task", { task_id: "task-1" }, () => {}, undefined, () => null);
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(textOf(result)) as { terminal: boolean; stale: boolean; warnings: string[] };
+    expect(body.terminal).toBe(true);
+    expect(body.stale).toBe(true);
+    expect(body.warnings.length).toBeGreaterThan(0);
   });
 });
 

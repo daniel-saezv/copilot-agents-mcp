@@ -6,7 +6,7 @@
     "type": "object",
     "properties": {
       "owner": {
-        "description": "Stable name of the agent or bot launching the task (e.g. your own name). Several agents may share this server; pass the same owner every time and filter list_agent_tasks by it.",
+        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
         "type": "string"
       },
       "task_ids": {

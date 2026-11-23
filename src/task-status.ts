@@ -1,4 +1,5 @@
 import type { TrackedTask } from "./state.ts";
+import { formatCheckAfterUtc } from "./time-format.ts";
 import { githubPageUrl } from "./task-urls.ts";
 
 export type TaskStatusName = "working" | "needs_input" | "completed" | "failed" | "cancelled";
@@ -75,7 +76,7 @@ export function buildSummary(task: TrackedTask, context: SummaryContext = {}): s
   const mapped = mapRawState(task.state);
   const dur = durationLabel(task);
   if (mapped.status === "working") {
-    if (context.checkAfter) return `Working for ${dur}. Check again after ${context.checkAfter}.`;
+    if (context.checkAfter) return `Working for ${dur}. First check not before ${formatCheckAfterUtc(context.checkAfter)}.`;
     return `Working for ${dur}.`;
   }
   if (mapped.status === "needs_input") {
