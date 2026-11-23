@@ -84,4 +84,4 @@ The branch protection API returned 403, so required checks are not recorded here
 
 To test: `npm test`, `npm run typecheck`, and `npm run lint`. To list tools, run `node src/cli.ts` over stdio or `node src/cli.ts --http --port 3333` and point the client at `http://127.0.0.1:3333/mcp`.
 
-Secrets you can add in Cursor, with no values here: `GITHUB_PERSONAL_ACCESS_TOKEN` (needed to create a task, read a task, or list models without `login`; not needed for CI or `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` is optional and not a secret: when unset, the client ID embedded in the code is used.
+Secrets you can add in Cursor, with no values here: `GITHUB_PERSONAL_ACCESS_TOKEN` (needed to create a task, read a task, or list models without `login`; not needed for CI or `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` is optional and not a secret: when unset, the client ID embedded in the code is used. `COPILOT_AGENTS_GITHUB_API_BASE_URL` overrides `https://api.github.com` for local fakes and E2E.
