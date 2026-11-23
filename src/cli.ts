@@ -167,7 +167,8 @@ export function githubApiBase(env: NodeJS.ProcessEnv): string | undefined {
   } catch {
     throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL is not a valid URL.");
   }
-  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+  const host = url.hostname;
+  const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
   if (url.protocol !== "https:" && !loopback) {
     throw new Error("COPILOT_AGENTS_GITHUB_API_BASE_URL must use https unless the host is loopback.");
   }

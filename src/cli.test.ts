@@ -19,6 +19,7 @@ describe("cli", () => {
   it("requires https for GitHub base URL unless loopback", () => {
     expect(() => githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://example.com" })).toThrow(/https/);
     expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://127.0.0.1:4321/" })).toBe("http://127.0.0.1:4321");
+    expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "http://[::1]:4321/" })).toBe("http://[::1]:4321");
     expect(githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "https://api.github.com" })).toBe("https://api.github.com");
     expect(() => githubApiBase({ COPILOT_AGENTS_GITHUB_API_BASE_URL: "not-a-url" })).toThrow(/valid URL/);
   });

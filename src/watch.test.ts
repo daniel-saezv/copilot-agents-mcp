@@ -472,7 +472,24 @@ describe("system notification", () => {
   });
 
   it("treats signal kill as system notification failure", async () => {
-    await expect(deliverNotice(sampleNotice(), { PATH: "/usr/bin" }, fetch, spawnExitNull(), "linux")).resolves.toEqual({ channels: [] });
+    const dir = await mkdtemp(join(tmpdir(), "copilot-agents-"));
+    dirs.push(dir);
+    const logPath = join(dir, "watch.log");
+    const notifySend = join(dir, "notify-send");
+    await writeFile(notifySend, "#!/bin/sh\n");
+    await chmod(notifySend, 0o755);
+    let spawnCalls = 0;
+    const spawnKill = ((...args: Parameters<ReturnType<typeof spawnExitNull>>) => {
+      spawnCalls += 1;
+      return spawnExitNull()(...args);
+    }) as ReturnType<typeof spawnExitNull>;
+    const delivered = await deliverNotice(sampleNotice(), {
+      COPILOT_AGENTS_LOG: logPath,
+      PATH: dir,
+    }, fetch, spawnKill, "linux");
+    expect(spawnCalls).toBe(1);
+    expect(delivered.channels).toEqual([]);
+    expect(await readFile(logPath, "utf8")).toContain("signal notify-send");
   });
 
   it("prepares Windows, macOS, and Linux notifications without the token", () => {
