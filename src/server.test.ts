@@ -474,7 +474,6 @@ describe("tools", () => {
         name: "Test model A",
         vendor: "Fabricante Ficticio",
         preview: false,
-        policy: { state: "enabled" },
         billing: {
           token_prices: { input_price: 11, output_price: 22, cache_price: 3, batch_size: 1000 },
         },
