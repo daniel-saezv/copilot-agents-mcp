@@ -22,11 +22,11 @@
 
 ## Skills
 
-This template ships `project-setup` and `agent-environment` in `.agents/skills/`. `.claude/skills/` links to those folders so Claude Code loads the same skills.
+This template ships `project-setup` and `agent-environment` in `.agents/skills/`. `.claude/skills/` and `.github/skills/` symlink those folders (and `mcp-builder`) so Cursor, Claude Code, and GitHub Copilot cloud agent discover the same skills.
 
 ### mcp-builder (vendored)
 
-Agents working on this MCP server must read and follow `.claude/skills/mcp-builder/SKILL.md`. Vendored verbatim from [anthropics/skills `skills/mcp-builder`](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/mcp-builder) (Apache-2.0; see `LICENSE.txt` there). Do not edit the vendored files; update by re-vendoring a new upstream commit.
+Agents working on this MCP server must read and follow `.agents/skills/mcp-builder/SKILL.md` (canonical copy). Vendored verbatim from [anthropics/skills `skills/mcp-builder`](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/mcp-builder) (Apache-2.0; see `LICENSE.txt` there). Do not edit the vendored files; update by re-vendoring a new upstream commit.
 
 ## Credit
 
