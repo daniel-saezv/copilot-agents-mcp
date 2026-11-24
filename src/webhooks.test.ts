@@ -1,5 +1,6 @@
 import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialTask, readState, withStateLock } from "./state.ts";
 import { listWebhooks, ownerWebhook, registerWebhook, removeWebhook, webhookKeyPath, WEBHOOK_ERROR } from "./webhooks.ts";
@@ -10,7 +11,7 @@ vi.mock("./webhook-http.ts", () => ({ validateWebhookUrl: vi.fn(async () => ({})
 
 const dirs: string[] = [];
 async function statePath(): Promise<string> {
-  const dir = await mkdtemp(join(process.cwd(), ".webhooks-test-"));
+  const dir = await mkdtemp(join(tmpdir(), ".webhooks-test-"));
   dirs.push(dir);
   return join(dir, "state.json");
 }

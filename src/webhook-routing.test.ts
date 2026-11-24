@@ -105,7 +105,7 @@ describe("owner webhook routing", () => {
     await client.connect(clientTransport);
     try {
       const result = await client.callTool({ name: "create_agent_task", arguments: { repo: "o/r", prompt: "tiny edit", model: "m", owner } });
-      const body = result.structuredContent;
+      const body = result.structuredContent as Record<string, unknown> | undefined;
       expect(body).toMatchObject({ owner, follow_up: { mode: owner === "client" ? "push" : "check_later" } });
       const recommendation = "No webhook: using check_later. Recommended: configure one with `webhook register`.";
       if (owner === "unregistered") expect(body?.next_step).toContain(recommendation);

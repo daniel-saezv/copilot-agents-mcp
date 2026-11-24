@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -17,7 +18,7 @@ const cliEntry = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const nodeOk = supportsNode(process.versions.node);
 const testDirs: string[] = [];
 function testDir(prefix: string): string {
-  const dir = mkdtempSync(join(process.cwd(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   testDirs.push(dir);
   return dir;
 }
@@ -86,8 +87,7 @@ function minimalDeps(statePath: string): ServerDeps {
 
 describe("auth status CLI", () => {
   it.skipIf(!nodeOk)("prints auth status diagnostics only on the CLI without leaking notify values", async () => {
-    const home = await mkdtemp(join(process.cwd(), ".copilot-cas-"));
-    testDirs.push(home);
+    const home = testDir(".copilot-cas-");
     const statePath = join(home, "state.json");
     await mkdir(home, { recursive: true });
 
