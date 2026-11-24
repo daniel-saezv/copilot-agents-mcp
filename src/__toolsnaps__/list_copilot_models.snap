@@ -44,15 +44,6 @@
             "preview": {
               "type": "boolean"
             },
-            "policy": {
-              "type": "object",
-              "properties": {
-                "state": {
-                  "type": "string"
-                }
-              },
-              "additionalProperties": false
-            },
             "billing": {
               "type": "object",
               "properties": {
