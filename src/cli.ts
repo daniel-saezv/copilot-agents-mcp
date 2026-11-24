@@ -25,6 +25,7 @@ import { createGitHubClient } from "./github.ts";
 import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
 import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
+import { buildLocalStatusDiagnostics } from "./status-local.ts";
 import { defaultStatePath } from "./state.ts";
 import { deliverNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
@@ -83,7 +84,7 @@ function helpText(): string {
     "copilot-agents-mcp logout",
     "  Delete the keyring session.",
     "copilot-agents-mcp auth status",
-    "  Show which credential is active without showing the token.",
+    "  Show which credential is active without showing the token, plus local diagnostics (state, notify env, D-Bus).",
     "",
     "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
     "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH,",
@@ -256,14 +257,17 @@ async function status(): Promise<void> {
     stored = session.stored();
   }
   const app = !pat && stored ? await readGitHubApp(stored.access_token, fetch) : null;
-  console.log(statusReport({
+  const credential = statusReport({
     env: process.env,
     stored,
     keyring: opened.persistent ? "ready" : "memory",
     account: systemAccount(),
     appName: app?.name ?? null,
     appNotInstalled: app?.empty === true,
-  }));
+  });
+  const local = await buildLocalStatusDiagnostics(process.env);
+  console.log(`${credential}\n\n${local.text}`);
+  if (local.failed) process.exitCode = 1;
 }
 
 function invokedDirectly(): boolean {

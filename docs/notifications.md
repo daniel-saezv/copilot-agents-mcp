@@ -4,7 +4,9 @@ Delivery is **at-least-once** bookkeeping in local state. `get_agent_task.delive
 
 ## Webhook
 
-Set `COPILOT_AGENTS_NOTIFY_URL`. The background watcher POSTs JSON when a task reaches a terminal state (or when a steered turn completes). Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the full `Authorization` header value (for example `Bearer <key>`).
+Set `COPILOT_AGENTS_NOTIFY_URL` to the webhook endpoint (`https://…`). The background watcher POSTs JSON when a task reaches a terminal state (or when a steered turn completes).
+
+Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the literal string `Bearer <key>`: `Bearer` exactly once, one space, then the routine’s Authorization key. This is sent verbatim as the HTTP `Authorization` header—not the webhook URL.
 
 Without a webhook URL, `create_agent_task` returns `follow_up.mode: check_later` and scheduling text in `next_step`.
 
