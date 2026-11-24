@@ -115,15 +115,6 @@ describe("/agents/swe/models validator", () => {
     expect(() => validateSweModels({
       data: [tokenModel, { id: "test-model-d", name: "Incomplete", vendor: "Fictional", preview: false, policy: { state: "enabled" }, billing: {} }],
     })).toThrow(/missing data\[1\]\.billing\.token_prices/);
-    expect(validateSweModels({
-      data: [{ ...pricedWithoutPolicy, policy: { terms: "no state field" } }],
-    })[0]?.policy).toBeUndefined();
-    expect(validateSweModels({
-      data: [{ ...pricedWithoutPolicy, policy: {} }],
-    })[0]?.policy).toBeUndefined();
-    expect(validateSweModels({
-      data: [{ ...pricedWithoutPolicy, policy: { state: null } }],
-    })[0]?.policy).toBeUndefined();
   });
 
   it("does not store a real endpoint URL or real models", () => {
@@ -198,8 +189,7 @@ describe("/agents/swe/models reader", () => {
     expect(result).not.toHaveProperty("structuredContent");
   });
 
-  it("accepts models without policy.state through MCP output validation", async () => {
-    const withoutPolicy = { ...pricedWithoutPolicy };
+  it("omits policy from tool output even when upstream sends it", async () => {
     const policyEmptyObject = {
       ...pricedWithoutPolicy,
       id: "test-model-policy-empty-object",
@@ -210,24 +200,17 @@ describe("/agents/swe/models reader", () => {
       id: "test-model-policy-null-state",
       policy: { state: null },
     };
-    const policyWithoutState = {
-      ...tokenModel,
-      id: "test-model-policy-extra-fields",
-      policy: { terms: "without state" },
-    };
     const result = await callListModels(async (url) => {
       if (url === GRAPHQL_URL) return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test" } } } });
       return json({
-        data: [withoutPolicy, policyEmptyObject, policyNullState, policyWithoutState, tokenModel],
+        data: [pricedWithoutPolicy, policyEmptyObject, policyNullState, tokenModel],
       });
     });
     expect(result.isError).toBeUndefined();
-    const body = JSON.parse(textOf(result)) as { models: Array<{ id: string; policy?: { state?: string } }> };
-    expect(body.models.find((m) => m.id === "test-model-c")?.policy).toBeUndefined();
-    expect(body.models.find((m) => m.id === "test-model-policy-empty-object")?.policy).toBeUndefined();
-    expect(body.models.find((m) => m.id === "test-model-policy-null-state")?.policy).toBeUndefined();
-    expect(body.models.find((m) => m.id === "test-model-policy-extra-fields")?.policy).toBeUndefined();
-    expect(body.models.find((m) => m.id === "test-model-a")?.policy).toEqual({ state: "enabled" });
+    const body = JSON.parse(textOf(result)) as { models: Array<Record<string, unknown>> };
+    for (const model of body.models) {
+      expect(model).not.toHaveProperty("policy");
+    }
   });
 });
 
@@ -236,7 +219,6 @@ function expectSame(input: {
   name: string;
   vendor: string;
   preview: boolean;
-  policy?: { state: string };
   billing: {
     token_prices?: { input_price: number; output_price: number; cache_price: number; batch_size: number };
     promo?: { discount_percent: number; ends_at: string; message: string };
@@ -247,8 +229,6 @@ function expectSame(input: {
   expect(output.name).toBe(input.name);
   expect(output.vendor).toBe(input.vendor);
   expect(output.preview).toBe(input.preview);
-  if (input.policy?.state) expect(output.policy).toEqual({ state: input.policy.state });
-  else expect(output.policy).toBeUndefined();
   if (input.billing.token_prices) expect(output.billing.token_prices).toEqual(input.billing.token_prices);
   else expect(output.billing.token_prices).toBeUndefined();
   if (input.billing.promo) expect(output.billing.promo).toEqual(input.billing.promo);

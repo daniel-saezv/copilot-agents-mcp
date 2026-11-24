@@ -24,4 +24,4 @@ Experimental: request cancellation via the internal steer endpoint.
 
 ## `list_copilot_models`
 
-Read `/agents/swe/models` with billing and policy fields validated client-side.
+Read `/agents/swe/models` with billing fields validated client-side.

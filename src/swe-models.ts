@@ -21,10 +21,6 @@ const promoSchema = z.object({
   message: z.string(),
 }).strict();
 
-const policySchema = z.object({
-  state: z.string().optional(),
-}).strict();
-
 const billingSchema = z.object({
   token_prices: tokenPricesSchema.optional(),
   promo: promoSchema.optional(),
@@ -36,7 +32,6 @@ const sweModelSchema = z.object({
   name: z.string(),
   vendor: z.string(),
   preview: z.boolean(),
-  policy: policySchema.optional(),
   billing: billingSchema,
 }).strict();
 
@@ -53,7 +48,6 @@ export type SweModel = {
   name: string;
   vendor: string;
   preview: boolean;
-  policy?: { state: string };
   billing: {
     token_prices?: z.infer<typeof tokenPricesSchema>;
     promo?: z.infer<typeof promoSchema>;
@@ -85,7 +79,6 @@ function presentSweModel(model: SweModel): z.infer<typeof sweModelSchema> {
     preview: model.preview,
     billing,
   };
-  if (model.policy?.state !== undefined) row.policy = { state: model.policy.state };
   return row;
 }
 
@@ -223,8 +216,6 @@ function readModel(item: unknown, index: number): SweModel {
     preview: readBoolean(item, "preview", `${where}.preview`),
     billing: {},
   };
-  const policy = readPolicy(item, `${where}.policy`);
-  if (policy) model.policy = policy;
   if (hasMultiplier) {
     model.billing.multiplier = readNumber(item.billing, "multiplier", `${where}.billing.multiplier`);
   }
@@ -235,17 +226,6 @@ function readModel(item: unknown, index: number): SweModel {
     model.billing.promo = readPromo(item.billing.promo, `${where}.billing.promo`);
   }
   return model;
-}
-
-function readPolicy(item: Record<string, unknown>, path: string): { state: string } | undefined {
-  if (!Object.prototype.hasOwnProperty.call(item, "policy") || item.policy === undefined || item.policy === null) {
-    return undefined;
-  }
-  if (!isRecord(item.policy)) throw new ModelsError(`${path} is not an object`);
-  if (!Object.prototype.hasOwnProperty.call(item.policy, "state")) return undefined;
-  const state = item.policy.state;
-  if (state === null || state === undefined) return undefined;
-  return { state: readString(item.policy, "state", `${path}.state`) };
 }
 
 function readPrices(value: unknown, path: string): SweModel["billing"]["token_prices"] {
