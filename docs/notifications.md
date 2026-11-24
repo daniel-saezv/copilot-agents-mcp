@@ -10,7 +10,9 @@ Only tasks created after their owner's registration use it. Otherwise the existi
 
 Registration errors distinguish non-HTTPS URLs, non-public resolved addresses, hosts outside `COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS`, DNS failures, and invalid input. Correct the indicated setting and register again. Reasons never print the URL path/query or Authorization value. Delivery revalidates DNS and pins the connection to a validated public IP; these diagnostics do not relax that check.
 
-Set `COPILOT_AGENTS_NOTIFY_URL` to the webhook endpoint (`https://…`). The background watcher POSTs JSON when a task reaches a terminal state (or when a steered turn completes).
+Set `COPILOT_AGENTS_NOTIFY_URL` to the webhook endpoint (`https://…`). The background watcher POSTs JSON when a task reaches a terminal state (or when a steered turn completes). Like owner delivery, the global body contains exactly `task_id`, `state`, `repo`, and `pr_url` (nullable), with `Idempotency-Key: <task_id>:<status>` using the terminal status. Deduplicate this key and call `get_agent_task` for details; the full task and body `id` are no longer sent.
+
+For a receiver using a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` before starting the server/watcher process that sends webhooks, not only on the receiver.
 
 Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the literal string `Bearer <key>`: `Bearer` exactly once, one space, then the routine’s Authorization key. This is sent verbatim as the HTTP `Authorization` header—not the webhook URL.
 

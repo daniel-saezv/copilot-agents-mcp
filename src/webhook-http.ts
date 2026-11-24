@@ -107,6 +107,23 @@ export async function validateWebhookUrl(
   return { url, addresses };
 }
 
+export function webhookPost(notice: TaskNotice, authorization: string | undefined): { body: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Idempotency-Key": webhookPayloadId(notice.task_id, notice.state),
+  };
+  if (authorization) headers.Authorization = authorization;
+  return {
+    body: JSON.stringify({
+      task_id: notice.task_id,
+      state: notice.state,
+      repo: notice.repo,
+      pr_url: notice.pull_request?.html_url ?? null,
+    }),
+    headers,
+  };
+}
+
 export async function postOwnerNotice(
   input: string,
   notice: TaskNotice,
@@ -120,12 +137,7 @@ export async function postOwnerNotice(
       if (options.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
       else callback(null, pinned.address, pinned.family);
     };
-    const body = JSON.stringify({
-      task_id: notice.task_id,
-      state: notice.state,
-      repo: notice.repo,
-      pr_url: notice.pull_request?.html_url ?? null,
-    });
+    const { body, headers } = webhookPost(notice, authorization);
     await new Promise<void>((resolve, reject) => {
       const request = https.request(url, {
         method: "POST",
@@ -133,11 +145,9 @@ export async function postOwnerNotice(
         lookup: pinnedLookup,
         servername: isIP(url.hostname.replace(/^\[|\]$/g, "")) ? "" : url.hostname,
         headers: {
+          ...headers,
           Host: url.host,
-          "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
-          Authorization: authorization,
-          "Idempotency-Key": webhookPayloadId(notice.task_id, notice.state),
         },
         timeout: TIMEOUT_MS,
       }, (response) => {

@@ -157,7 +157,9 @@ Only tasks created **after** registration route to that owner. Other tasks retai
 
 Owner endpoints must use public HTTPS. Registration and delivery validate every resolved IP, blocking local/private, CGNAT, link-local, metadata, unspecified, multicast, and broadcast destinations, including IPv4-mapped IPv6. Delivery pins a validated address while retaining the original TLS hostname, preventing DNS rebinding; redirects fail. `COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS` optionally narrows allowed hostnames (comma-separated); it never permits blocked IPs. Unset means any public HTTPS host.
 
-Owner POST bodies contain only `task_id`, `state`, `repo`, and `pr_url` (nullable), with a stable `Idempotency-Key` per task and terminal status. Receivers should deduplicate this key. Delivery records remain in local state; inspect `get_agent_task.delivery` and use scheduled checks if delivery fails.
+Owner and global POST bodies contain only `task_id`, `state`, `repo`, and `pr_url` (nullable), with a stable `Idempotency-Key: <task_id>:<status>` per task and terminal status. Receivers should deduplicate this key and call `get_agent_task` for details. Delivery records remain in local state; inspect `get_agent_task.delivery` and use scheduled checks if delivery fails.
+
+If the receiver uses a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` before starting the server/watcher process that sends webhooks. Setting it only on the receiver does not configure the sender's trust.
 
 ### Example client: Grok Bot routine
 

@@ -1,10 +1,8 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { webhookPayloadId } from "./delivery.ts";
-import { mapRawState } from "./task-status.ts";
 import { readState, toDeliveryNotice, type StateFile, type TaskNotice, type TrackedTask } from "./state.ts";
 import { ownerWebhook } from "./webhooks.ts";
-import { postOwnerNotice } from "./webhook-http.ts";
+import { postOwnerNotice, webhookPost } from "./webhook-http.ts";
 
 export const NOTIFY_URL_ENV = "COPILOT_AGENTS_NOTIFY_URL";
 export const NOTIFY_AUTHORIZATION_ENV = "COPILOT_AGENTS_NOTIFY_AUTHORIZATION";
@@ -64,13 +62,11 @@ export async function appendWatcherLog(line: string, env: NodeJS.ProcessEnv = pr
 }
 
 export async function postNotice(url: string, notice: TaskNotice, authorization: string | undefined, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (authorization) headers.authorization = authorization;
-  const mapped = mapRawState(notice.state);
+  const { body, headers } = webhookPost(notice, authorization);
   const response = await fetchImpl(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ...notice, status: mapped.status, terminal: mapped.terminal, id: webhookPayloadId(notice.task_id, notice.state) }),
+    body,
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`Notification POST returned HTTP ${response.status}.`);
