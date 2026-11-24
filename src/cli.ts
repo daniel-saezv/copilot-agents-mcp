@@ -32,6 +32,7 @@ import { deliverTaskNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
 import { listWebhooks, registerWebhook, removeWebhook, WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
 import { validateOwner } from "./tasks.ts";
+import { WebhookValidationError } from "./webhook-http.ts";
 
 export const WATCH_POLL_INTERVAL_MS = 15_000;
 
@@ -77,14 +78,14 @@ function parseWebhookArgs(args: string[]): WebhookCommand {
     throw new Help();
   }
   if (action === "list" && args.length === 1) return { command: "webhook", action };
-  if (action !== "register" && action !== "remove") throw new Error(WEBHOOK_ERROR);
+  if (action !== "register" && action !== "remove") throw new Error(WEBHOOK_INPUT_ERROR);
   const values = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
     if (!flag || !value || value.startsWith("-") || values.has(flag)
       || (flag !== "--owner" && !(action === "register" && (flag === "--url-file" || flag === "--auth-file")))) {
-      throw new Error(WEBHOOK_ERROR);
+      throw new Error(WEBHOOK_INPUT_ERROR);
     }
     values.set(flag, value);
   }
@@ -92,7 +93,7 @@ function parseWebhookArgs(args: string[]): WebhookCommand {
     const owner = validateOwner(values.get("--owner") ?? "");
     return { command: "webhook", action, owner, urlFile: values.get("--url-file"), authFile: values.get("--auth-file") };
   } catch {
-    throw new Error(WEBHOOK_ERROR);
+    throw new Error(WEBHOOK_INPUT_ERROR);
   }
 }
 
@@ -239,13 +240,22 @@ async function webhook(command: WebhookCommand): Promise<void> {
       if ((!command.urlFile || !command.authFile) && (!process.stdin.isTTY || !process.stderr.isTTY)) {
         throw new Error(WEBHOOK_INPUT_ERROR);
       }
-      const url = command.urlFile ? (await readFile(command.urlFile, "utf8")).trim() : await hiddenPrompt("Webhook URL: ");
-      const authorization = command.authFile ? (await readFile(command.authFile, "utf8")).trim() : await hiddenPrompt("Authorization header value: ");
+      const url = command.urlFile ? await readWebhookInput(command.urlFile) : await hiddenPrompt("Webhook URL: ");
+      const authorization = command.authFile ? await readWebhookInput(command.authFile) : await hiddenPrompt("Authorization header value: ");
       await registerWebhook(statePath, command.owner, url, authorization);
       console.log("Webhook registered.");
     }
   } catch (error) {
+    if (error instanceof WebhookValidationError) throw error;
     throw new Error(error instanceof Error && error.message === WEBHOOK_INPUT_ERROR ? WEBHOOK_INPUT_ERROR : WEBHOOK_ERROR);
+  }
+}
+
+async function readWebhookInput(path: string): Promise<string> {
+  try {
+    return (await readFile(path, "utf8")).trim();
+  } catch {
+    throw new Error(WEBHOOK_INPUT_ERROR);
   }
 }
 
@@ -265,7 +275,7 @@ function hiddenPrompt(label: string): Promise<string> {
       }
       input.pause();
       process.stderr.write("\n");
-      if (result === undefined) reject(new Error(WEBHOOK_ERROR));
+      if (result === undefined) reject(new Error(WEBHOOK_INPUT_ERROR));
       else resolvePrompt(result);
     };
     const onEnd = () => finish();

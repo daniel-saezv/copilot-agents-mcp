@@ -1,7 +1,7 @@
 {
   "name": "list_agent_tasks",
   "title": "List tracked tasks",
-  "description": "One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary.",
+  "description": "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a label, not a security boundary; this is not a GitHub-wide task search.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -10,13 +10,16 @@
         "type": "string"
       },
       "task_ids": {
+        "description": "Filter to at most 50 task IDs. Omit or pass [] for all tracked IDs; unknown IDs produce warnings.",
         "maxItems": 50,
         "type": "array",
         "items": {
-          "type": "string"
+          "type": "string",
+          "description": "Locally tracked task identifier."
         }
       },
       "status": {
+        "description": "Filter by lifecycle status. Default all; completed tasks are visible for seven days.",
         "type": "string",
         "enum": [
           "pending",
@@ -25,17 +28,121 @@
         ]
       },
       "repo": {
+        "description": "Exact repository filter in owner/name form. Omit for all repositories.",
         "type": "string"
       },
       "limit": {
+        "description": "Maximum rows returned, 1-50; default 20. Counts cover every matching task, not just returned rows.",
         "type": "integer",
         "exclusiveMinimum": 0,
         "maximum": 50
       },
       "verbose": {
+        "description": "Compatibility flag, default false. List rows remain compact; use get_agent_task with verbose=true for details.",
         "type": "boolean"
       }
     },
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "tasks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "working",
+                "needs_input",
+                "completed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "pr_url": {
+              "type": "string"
+            },
+            "session_url": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "cached": {
+              "type": "boolean"
+            },
+            "warning": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_id",
+            "repo",
+            "status",
+            "terminal",
+            "summary"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "pending_count": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "terminal_count": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "all_terminal": {
+        "type": "boolean"
+      },
+      "next_step": {
+        "type": "string"
+      },
+      "next_check_after": {
+        "type": "string"
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "stale": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "tasks",
+      "pending_count",
+      "terminal_count",
+      "all_terminal",
+      "next_step"
+    ],
     "$schema": "http://json-schema.org/draft-07/schema#",
     "additionalProperties": false
   },

@@ -9,7 +9,20 @@ export type WebhookAddress = { address: string; family: number };
 export type WebhookResolver = (hostname: string) => Promise<WebhookAddress[]>;
 export type ValidatedWebhookUrl = { url: URL; addresses: WebhookAddress[] };
 
-const INVALID_URL = "Webhook URL must resolve exclusively to public HTTPS addresses.";
+const VALIDATION_ERRORS = {
+  input: "Invalid webhook URL. Provide an absolute URL without embedded credentials.",
+  https: "Webhook URL must use HTTPS. Change the URL scheme to https.",
+  nonPublic: "Webhook URL resolves to a non-public address. Use a host whose addresses are all public.",
+  allowedHost: "Webhook host is outside COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS. Use an allowed host or update that setting.",
+  dns: "Webhook DNS lookup failed. Check the hostname and DNS configuration, then retry.",
+} as const;
+
+export class WebhookValidationError extends Error {
+  constructor(reason: keyof typeof VALIDATION_ERRORS) {
+    super(VALIDATION_ERRORS[reason]);
+    this.name = "WebhookValidationError";
+  }
+}
 const DELIVERY_FAILED = "Webhook delivery failed.";
 const TIMEOUT_MS = 10_000;
 
@@ -64,26 +77,34 @@ export async function validateWebhookUrl(
   env: NodeJS.ProcessEnv = process.env,
   resolver: WebhookResolver = resolveWebhook,
 ): Promise<ValidatedWebhookUrl> {
+  let url: URL;
   try {
-    const url = new URL(input);
-    const hostname = url.hostname.replace(/^\[|\]$/g, "");
-    if (url.protocol !== "https:" || url.username || url.password || !hostname
-      || hostname.toLowerCase().replace(/\.$/, "") === "metadata.google.internal") {
-      throw new Error(INVALID_URL);
-    }
-    const allowed = env.COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS;
-    if (allowed !== undefined && !allowed.split(",").some((host) => host.trim().toLowerCase() === hostname.toLowerCase())) {
-      throw new Error(INVALID_URL);
-    }
-    const family = isIP(hostname);
-    const addresses = family ? [{ address: hostname, family }] : await resolver(hostname);
-    if (!addresses.length || addresses.some(({ address, family: resolvedFamily }) => (
-      !publicAddress(address) || isIP(address) !== resolvedFamily
-    ))) throw new Error(INVALID_URL);
-    return { url, addresses };
+    url = new URL(input);
   } catch {
-    throw new Error(INVALID_URL);
+    throw new WebhookValidationError("input");
   }
+  if (url.protocol !== "https:") throw new WebhookValidationError("https");
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  if (url.username || url.password || !hostname) throw new WebhookValidationError("input");
+  if (hostname.toLowerCase().replace(/\.$/, "") === "metadata.google.internal") {
+    throw new WebhookValidationError("nonPublic");
+  }
+  const allowed = env.COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS;
+  if (allowed !== undefined && !allowed.split(",").some((host) => host.trim().toLowerCase() === hostname.toLowerCase())) {
+    throw new WebhookValidationError("allowedHost");
+  }
+  const family = isIP(hostname);
+  let addresses: WebhookAddress[];
+  try {
+    addresses = family ? [{ address: hostname, family }] : await resolver(hostname);
+  } catch {
+    throw new WebhookValidationError("dns");
+  }
+  if (!addresses.length) throw new WebhookValidationError("dns");
+  if (addresses.some(({ address, family: resolvedFamily }) => (
+    !publicAddress(address) || isIP(address) !== resolvedFamily
+  ))) throw new WebhookValidationError("nonPublic");
+  return { url, addresses };
 }
 
 export async function postOwnerNotice(

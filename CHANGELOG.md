@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Refine agent-facing descriptions, input documentation, annotations, and no-polling instructions without renaming tools or changing accepted inputs.
+- Publish output schemas for all six tools, retaining structured results and compact JSON text.
+- Distinguish upstream refusal statuses with actionable, secret-free hints, including repository/model policy guidance for task creation (#24).
+- Distinguish webhook HTTPS, public-address, host allowlist, DNS, and input failures without exposing secrets.
+- Preserve DNS-pinned HTTPS delivery, owner routing/global fallback, CLI-only hidden registration, private hashed key files, and presence-only authentication diagnostics.
+
 ## 0.1.0
 
 - Add `list_agent_tasks` for scheduled checks with `owner`, `status`, and `all_terminal`.

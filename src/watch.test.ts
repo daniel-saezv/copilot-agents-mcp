@@ -568,7 +568,9 @@ describe("credits and pull request", () => {
     expect((await readState(statePath)).tasks["task-1"]?.notified_at).toBeTruthy();
     const log = await readFile(logPath, "utf8");
     expect(log).toContain("Could not resolve pull request 42 for task-1");
-    expect(log).toContain("boom");
+    expect(log).toContain("HTTP 500");
+    expect(log).toContain("Check GitHub service status");
+    expect(log).not.toContain("boom");
     expect(log).not.toContain("test-token");
   });
 });

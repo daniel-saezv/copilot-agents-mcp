@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import { failureToError, ModelsError } from "./errors.ts";
 import { buildServer } from "./server.ts";
 import {
   COPILOT_INTEGRATION_ID,
@@ -163,7 +164,7 @@ describe("/agents/swe/models reader", () => {
     });
     expect(graphql.isError).toBe(true);
     expect(textOf(graphql)).toContain("HTTP 401");
-    expect(textOf(graphql)).toContain(GRAPHQL_URL);
+    expect(textOf(graphql)).toContain("not_authenticated");
     expect(textOf(graphql)).not.toContain("test-secret");
 
     const get = await toolError(async (url) => {
@@ -172,7 +173,8 @@ describe("/agents/swe/models reader", () => {
     });
     expect(get.isError).toBe(true);
     expect(textOf(get)).toContain("HTTP 503");
-    expect(textOf(get)).toContain("https://copilot.example.test/agents/swe/models");
+    expect(textOf(get)).toContain("upstream_error");
+    expect(textOf(get)).not.toContain("https://copilot.example.test");
     expect(textOf(get)).not.toContain("test-secret");
   });
 
@@ -183,7 +185,8 @@ describe("/agents/swe/models reader", () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("HTTP 200");
-    expect(textOf(result)).toContain("https://copilot.example.test/agents/swe/models");
+    expect(textOf(result)).toContain("Copilot models API");
+    expect(textOf(result)).not.toContain("https://copilot.example.test");
     expect(textOf(result)).toContain("data[1].billing.token_prices");
     expect(textOf(result)).not.toContain("test-model-a");
     expect(result).not.toHaveProperty("structuredContent");
@@ -333,6 +336,70 @@ function textOf(result: unknown): string {
 }
 
 describe("models and session", () => {
+  it.each([
+    [403, "forbidden", /repository access/],
+    [404, "not_found", /repository or task ID/],
+    [422, "invalid_argument", /arguments/],
+    [429, "rate_limited", /Wait/],
+  ] as const)("maps HTTP %s from either upstream request without echoing response data", async (status, code, hint) => {
+    for (const stage of ["discovery", "models"]) {
+      const result = await toolError(async (url) => {
+        if (stage === "models" && url === GRAPHQL_URL) {
+          return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test/private-path?private-query=" } } } });
+        }
+        return new Response(JSON.stringify({
+          message: "opaque-response-secret test-secret ghs_synthetic.jwt.signature HTTP 404",
+          errors: [{ message: "******" }],
+        }), { status, headers: { "x-accepted-github-permissions": "private-header=read" } });
+      });
+      expect(result.isError).toBe(true);
+      const output = textOf(result);
+      const body = JSON.parse(output) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe(code);
+      expect(body.error.message).toMatch(hint);
+      for (const secret of ["opaque-response-secret", "test-secret", "ghs_synthetic", "private-authorization", "private-header", "private-path", "private-query", "copilot.example.test"]) {
+        expect(output).not.toContain(secret);
+      }
+    }
+  });
+
+  it.each(["fetch", "body", "non-json", "invalid-format"] as const)("does not echo URLs or exception details from %s", async (stage) => {
+    const secret = "Authorization: ****** https://copilot.example.test/private-path?private-query";
+    const failure: unknown = await readSweModels({
+      token: "test-secret",
+      fetchImpl: (async (input) => {
+        if (String(input) === GRAPHQL_URL) {
+          return json({ data: { viewer: { copilotEndpoints: { api: "https://copilot.example.test/private-path?private-query=" } } } });
+        }
+        if (stage === "fetch") throw new Error(secret);
+        if (stage === "body") return { async text() { throw new Error(secret); } };
+        if (stage === "non-json") return new Response(secret, { status: 200 });
+        return json({ message: secret });
+      }) as typeof fetch,
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelsError);
+    const body = failureToError(failure);
+    expect(body.error.code).toBe("upstream_error");
+    const output = JSON.stringify(body);
+    for (const fragment of ["Authorization", "Bearer", "test-secret", "copilot.example.test", "private-path", "private-query"]) {
+      expect(output).not.toContain(fragment);
+    }
+  });
+
+  it("maps response body timeouts without copying their exception message", async () => {
+    const failure: unknown = await readSweModels({
+      token: "test-secret",
+      fetchImpl: async () => {
+        const response = new Response();
+        response.text = async () => { throw new DOMException("test-secret private-path", "AbortError"); };
+        return response;
+      },
+    }).catch((error: unknown) => error);
+    expect(failureToError(failure).error).toMatchObject({ code: "upstream_timeout", retryable: true });
+    expect(JSON.stringify(failureToError(failure))).not.toContain("test-secret");
+    expect(JSON.stringify(failureToError(failure))).not.toContain("private-path");
+  });
+
   it("refreshes once when GraphQL returns 401 and uses the new token", async () => {
     let refreshes = 0;
     let graphql = 0;

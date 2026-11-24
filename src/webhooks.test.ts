@@ -3,11 +3,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialTask, readState, withStateLock } from "./state.ts";
-import { listWebhooks, ownerWebhook, registerWebhook, removeWebhook, webhookKeyPath, WEBHOOK_ERROR } from "./webhooks.ts";
-import { validateWebhookUrl } from "./webhook-http.ts";
+import { listWebhooks, ownerWebhook, registerWebhook, removeWebhook, webhookKeyPath, WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
+import { validateWebhookUrl, WebhookValidationError } from "./webhook-http.ts";
 import { buildLocalStatusDiagnostics } from "./status-local.ts";
 
-vi.mock("./webhook-http.ts", () => ({ validateWebhookUrl: vi.fn(async () => ({})) }));
+vi.mock("./webhook-http.ts", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./webhook-http.ts")>(),
+  validateWebhookUrl: vi.fn(async () => ({})),
+}));
 
 const dirs: string[] = [];
 async function statePath(): Promise<string> {
@@ -84,8 +87,19 @@ describe("owner webhook registry", () => {
     vi.mocked(validateWebhookUrl).mockRejectedValueOnce(new Error("URL_SECRET AUTH_SECRET"));
     await expect(registerWebhook(path, "owner", "URL_SECRET", "AUTH_SECRET")).rejects.toThrow(new Error(WEBHOOK_ERROR));
     expect(await readFile(webhookKeyPath(path, "owner"), "utf8")).toBe("original");
-    await expect(registerWebhook(path, "bad owner", "URL_SECRET", "AUTH_SECRET")).rejects.toThrow(new Error(WEBHOOK_ERROR));
-    await expect(registerWebhook(path, "owner", "https://8.8.8.8/", "bad\nheader")).rejects.toThrow(new Error(WEBHOOK_ERROR));
+    await expect(registerWebhook(path, "bad owner", "URL_SECRET", "AUTH_SECRET")).rejects.toThrow(new Error(WEBHOOK_INPUT_ERROR));
+    await expect(registerWebhook(path, "owner", "https://8.8.8.8/", "bad\nheader")).rejects.toThrow(new Error(WEBHOOK_INPUT_ERROR));
+  });
+
+  it.each(["input", "https", "nonPublic", "allowedHost", "dns"] as const)("preserves the safe %s validation reason without changing the key", async (reason) => {
+    const path = await statePath();
+    await registerWebhook(path, "owner", "https://8.8.8.8/", "original");
+    const before = await readFile(path, "utf8");
+    const error = new WebhookValidationError(reason);
+    vi.mocked(validateWebhookUrl).mockRejectedValueOnce(error);
+    await expect(registerWebhook(path, "owner", "URL_SECRET", "AUTH_SECRET")).rejects.toBe(error);
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect(await readFile(webhookKeyPath(path, "owner"), "utf8")).toBe("original");
   });
 
   it("shows host and key metadata without reading key contents or printing URL secrets", async () => {

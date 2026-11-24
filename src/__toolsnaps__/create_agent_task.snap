@@ -1,36 +1,36 @@
 {
   "name": "create_agent_task",
   "title": "Launch Copilot task",
-  "description": "Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.",
+  "description": "Launch a GitHub Copilot cloud agent with repo, prompt, and model; use list_copilot_models to discover IDs. Returns status, delivery, follow_up, and next_step. May fail for authentication, repository access or policy, invalid input, or an unavailable model; previously rejected models skip the API and list accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "repo": {
         "type": "string",
-        "description": "Repository in owner/name form."
+        "description": "Required repository in owner/name form, e.g. octocat/hello-world; surrounding whitespace is trimmed."
       },
       "prompt": {
         "type": "string",
-        "description": "Instructions for the agent."
+        "description": "Required non-blank task instructions; surrounding whitespace is trimmed. Never include credentials."
       },
       "model": {
         "type": "string",
-        "description": "Model sent unchanged to the API without a closed allowlist."
+        "description": "Required non-blank model ID, e.g. gpt-6.1-sol; trimmed and sent unchanged without a closed allowlist. Discover IDs with list_copilot_models."
       },
       "base_ref": {
-        "description": "Base branch for a new branch or pull request.",
+        "description": "Base branch for a new branch or pull request, e.g. main. Omit to use GitHub's default.",
         "type": "string"
       },
       "head_ref": {
-        "description": "Existing branch. With base_ref, the agent commits to this branch.",
+        "description": "Existing branch. With base_ref, the agent commits to this branch. Omit to let GitHub choose.",
         "type": "string"
       },
       "custom_agent": {
-        "description": "Custom agent name without the extension.",
+        "description": "Custom agent name without the extension. Omit to use GitHub's default agent.",
         "type": "string"
       },
       "create_pull_request": {
-        "description": "When true, the API creates a pull request.",
+        "description": "When true, the API creates a pull request. Omit to use GitHub's default.",
         "type": "boolean"
       },
       "owner": {
@@ -100,9 +100,11 @@
             "enum": [
               "push",
               "check_later"
-            ]
+            ],
+            "description": "Wake on a webhook, or end the turn and schedule a later check."
           },
           "channels": {
+            "description": "Configured notification channels, when available.",
             "type": "array",
             "items": {
               "type": "string",
@@ -112,14 +114,17 @@
             }
           },
           "check_after": {
-            "type": "string"
+            "type": "string",
+            "description": "ISO 8601 timestamp; do not check before this time."
           },
           "min_interval_s": {
-            "type": "number"
+            "type": "number",
+            "description": "Minimum seconds between subsequent checks."
           },
           "check_with": {
             "type": "string",
-            "const": "list_agent_tasks"
+            "const": "list_agent_tasks",
+            "description": "Tool to call for a scheduled check."
           }
         },
         "required": [

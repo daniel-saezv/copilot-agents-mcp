@@ -1,25 +1,225 @@
 {
   "name": "get_agent_task",
   "title": "Get task status",
-  "description": "Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks.",
+  "description": "Read one task's result by task_id; optional repo overrides the saved repository and verbose adds details. Returns status, terminal, summary, delivery, and available PR/session links. Cached results may include stale and warnings after a refresh failure. Check authentication or task/repository access on errors. Use list_agent_tasks for scheduled checks, never call this in a loop.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Task identifier."
+        "description": "Required non-blank identifier returned by create_agent_task; surrounding whitespace is trimmed."
       },
       "repo": {
         "description": "Repository in owner/name form. If omitted, use the saved repository or user endpoint.",
         "type": "string"
       },
       "verbose": {
-        "description": "Include raw state, models, usage, and full error.",
+        "description": "Include raw state, models, usage, artifacts, and error (up to 2048 characters). Default false.",
         "type": "boolean"
       }
     },
     "required": [
       "task_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "owner": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_input",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "terminal": {
+        "type": "boolean"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "pr_url": {
+        "type": "string"
+      },
+      "session_url": {
+        "type": "string"
+      },
+      "updated_at": {
+        "type": "string"
+      },
+      "stale": {
+        "type": "boolean"
+      },
+      "cached": {
+        "type": "boolean"
+      },
+      "warning": {
+        "type": "string"
+      },
+      "delivery": {
+        "type": "string",
+        "enum": [
+          "not_configured",
+          "pending",
+          "delivered",
+          "failed"
+        ]
+      },
+      "next_step": {
+        "type": "string"
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "completed_at": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string"
+      },
+      "requested_model": {
+        "type": "string"
+      },
+      "resolved_model": {
+        "type": "string"
+      },
+      "pull_request": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "number": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "branch": {
+        "type": "object",
+        "properties": {
+          "head_ref": {
+            "type": "string"
+          },
+          "base_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "head_ref",
+          "base_ref"
+        ],
+        "additionalProperties": false
+      },
+      "artifacts": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "pull"
+                },
+                "id": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "branch"
+                },
+                "head_ref": {
+                  "type": "string"
+                },
+                "base_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "head_ref",
+                "base_ref"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "usage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "ai_credits",
+              "premium_requests"
+            ]
+          },
+          "amount": {
+            "type": "number"
+          },
+          "amount_human": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "amount",
+          "amount_human"
+        ],
+        "additionalProperties": false
+      },
+      "session_id": {
+        "type": "string"
+      },
+      "created_at": {
+        "type": "string"
+      },
+      "error": {
+        "type": "string"
+      },
+      "delivered_via": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id",
+      "repo",
+      "status",
+      "terminal",
+      "summary",
+      "delivery"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#",
     "additionalProperties": false

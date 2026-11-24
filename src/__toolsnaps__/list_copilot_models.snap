@@ -1,7 +1,7 @@
 {
   "name": "list_copilot_models",
   "title": "List Copilot models",
-  "description": "Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present.",
+  "description": "Discover model IDs before create_agent_task. Reads /agents/swe/models and returns source metadata plus models with ID, name, vendor, preview, token prices or billing multiplier, and optional promotion/policy. No parameters. Availability remains subject to repository policy. Errors explain missing authentication, upstream access/network failures, or an invalid upstream response.",
   "inputSchema": {
     "type": "object",
     "properties": {},

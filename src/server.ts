@@ -72,22 +72,22 @@ const OWNER_FIELD =
   "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.";
 
 const createInput = z.object({
-  repo: z.string().describe("Repository in owner/name form."),
-  prompt: z.string().describe("Instructions for the agent."),
-  model: z.string().describe("Model sent unchanged to the API without a closed allowlist."),
-  base_ref: z.string().optional().describe("Base branch for a new branch or pull request."),
-  head_ref: z.string().optional().describe("Existing branch. With base_ref, the agent commits to this branch."),
-  custom_agent: z.string().optional().describe("Custom agent name without the extension."),
-  create_pull_request: z.boolean().optional().describe("When true, the API creates a pull request."),
+  repo: z.string().describe("Required repository in owner/name form, e.g. octocat/hello-world; surrounding whitespace is trimmed."),
+  prompt: z.string().describe("Required non-blank task instructions; surrounding whitespace is trimmed. Never include credentials."),
+  model: z.string().describe("Required non-blank model ID, e.g. gpt-6.1-sol; trimmed and sent unchanged without a closed allowlist. Discover IDs with list_copilot_models."),
+  base_ref: z.string().optional().describe("Base branch for a new branch or pull request, e.g. main. Omit to use GitHub's default."),
+  head_ref: z.string().optional().describe("Existing branch. With base_ref, the agent commits to this branch. Omit to let GitHub choose."),
+  custom_agent: z.string().optional().describe("Custom agent name without the extension. Omit to use GitHub's default agent."),
+  create_pull_request: z.boolean().optional().describe("When true, the API creates a pull request. Omit to use GitHub's default."),
   owner: z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).optional().describe(OWNER_FIELD),
 }).strict();
 
 const followUpSchema = z.object({
-  mode: z.enum(["push", "check_later"]),
-  channels: z.array(z.enum(["webhook"])).optional(),
-  check_after: z.string(),
-  min_interval_s: z.number(),
-  check_with: z.literal("list_agent_tasks"),
+  mode: z.enum(["push", "check_later"]).describe("Wake on a webhook, or end the turn and schedule a later check."),
+  channels: z.array(z.enum(["webhook"])).optional().describe("Configured notification channels, when available."),
+  check_after: z.string().describe("ISO 8601 timestamp; do not check before this time."),
+  min_interval_s: z.number().describe("Minimum seconds between subsequent checks."),
+  check_with: z.literal("list_agent_tasks").describe("Tool to call for a scheduled check."),
 }).strict();
 
 const createOutput = z.object({
@@ -106,39 +106,38 @@ const createOutput = z.object({
 
 const SERVER_INSTRUCTIONS = [
   "Copilot cloud tasks take minutes. Tools never wait.",
-  "Always pass owner=<your agent name> to create_agent_task so list_agent_tasks with that owner shows only your tasks.",
-  "A webhook is the RECOMMENDED completion path. Clients that can receive webhooks should register one from the start with `webhook register` (local CLI, not an MCP tool).",
-  "After create_agent_task, end your turn and follow next_step; do not poll in a loop.",
-  "check_later is the supported fallback: end your turn, schedule a check at check_after if possible, never poll in a loop.",
-  "First list check not before follow_up.check_after; call list_agent_tasks with your owner at most every follow_up.min_interval_s seconds until all_terminal is true.",
-  "get_agent_task returns one task's full result (once, not in a loop).",
-  "steer_agent_task sends a user message to a running task with an open pull request; abort_agent_task requests cancellation (experimental GitHub endpoints).",
-  "With an eligible owner webhook or COPILOT_AGENTS_NOTIFY_URL set, the watcher POSTs JSON when a task reaches a terminal state—wake on that webhook and call get_agent_task once. Otherwise follow check_later in next_step.",
+  "Pass owner=<your stable agent name> on create_agent_task and list_agent_tasks; owner is a label, not authentication.",
+  "A webhook is the RECOMMENDED completion path: configure `webhook register` locally before creating tasks; never pass webhook secrets through MCP.",
+  "An eligible owner webhook or COPILOT_AGENTS_NOTIFY_URL enables watcher notifications. Wake on the webhook and call get_agent_task once.",
+  "After create_agent_task, follow next_step and end your turn. check_later is the fallback: schedule list_agent_tasks at follow_up.check_after if possible, never poll in a loop.",
+  "Check no sooner than check_after, space later checks by at least follow_up.min_interval_s, and stop scheduled checks when all_terminal is true.",
+  "Use get_agent_task for one task's result, list_agent_tasks for scheduled batch checks, and list_copilot_models to discover model IDs.",
+  "steer_agent_task sends instructions to a task with an open pull request and consumes credits; abort_agent_task requests cancellation. Both use experimental GitHub endpoints.",
 ].join(" ");
 
 const CREATE_TASK_GUIDANCE =
   "Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.";
 
 const getInput = z.object({
-  task_id: z.string().describe("Task identifier."),
+  task_id: z.string().describe("Required non-blank identifier returned by create_agent_task; surrounding whitespace is trimmed."),
   repo: z.string().optional().describe("Repository in owner/name form. If omitted, use the saved repository or user endpoint."),
-  verbose: z.boolean().optional().describe("Include raw state, models, usage, and full error."),
+  verbose: z.boolean().optional().describe("Include raw state, models, usage, artifacts, and error (up to 2048 characters). Default false."),
 }).strict();
 
 const listInput = z.object({
   owner: z.string().optional().describe(OWNER_FIELD),
-  task_ids: z.array(z.string()).max(50).optional(),
-  status: z.enum(["pending", "terminal", "all"]).optional(),
-  repo: z.string().optional(),
-  limit: z.number().int().positive().max(50).optional(),
-  verbose: z.boolean().optional(),
+  task_ids: z.array(z.string().describe("Locally tracked task identifier.")).max(50).optional().describe("Filter to at most 50 task IDs. Omit or pass [] for all tracked IDs; unknown IDs produce warnings."),
+  status: z.enum(["pending", "terminal", "all"]).optional().describe("Filter by lifecycle status. Default all; completed tasks are visible for seven days."),
+  repo: z.string().optional().describe("Exact repository filter in owner/name form. Omit for all repositories."),
+  limit: z.number().int().positive().max(50).optional().describe("Maximum rows returned, 1-50; default 20. Counts cover every matching task, not just returned rows."),
+  verbose: z.boolean().optional().describe("Compatibility flag, default false. List rows remain compact; use get_agent_task with verbose=true for details."),
 }).strict();
 
 const experimentalNotice = "[Experimental] Undocumented internal GitHub endpoint that can change without notice.";
 
 const steerInput = z.object({
-  task_id: z.string().describe("Task identifier."),
-  content: z.string().describe("Instructions to send to the task."),
+  task_id: z.string().describe("Required non-blank task identifier returned by create_agent_task."),
+  content: z.string().describe("Required non-blank follow-up instructions, trimmed before sending. Each call consumes credits; never include credentials."),
 }).strict();
 
 const steerOutput = z.object({
@@ -148,7 +147,7 @@ const steerOutput = z.object({
 }).strict();
 
 const abortInput = z.object({
-  task_id: z.string().describe("Task identifier."),
+  task_id: z.string().describe("Required non-blank task identifier returned by create_agent_task."),
 }).strict();
 
 const abortOutput = z.object({
@@ -157,6 +156,67 @@ const abortOutput = z.object({
   reason: z.string().optional(),
   status: z.enum(["working", "needs_input", "completed", "failed", "cancelled"]).optional(),
   terminal: z.boolean().optional(),
+}).strict();
+
+const taskRowFields = {
+  task_id: z.string(),
+  repo: z.string(),
+  owner: z.string().optional(),
+  status: z.enum(["working", "needs_input", "completed", "failed", "cancelled"]),
+  terminal: z.boolean(),
+  summary: z.string(),
+  pr_url: z.string().optional(),
+  session_url: z.string().optional(),
+  updated_at: z.string().optional(),
+  stale: z.boolean().optional(),
+  cached: z.boolean().optional(),
+  warning: z.string().optional(),
+};
+
+const branchFields = {
+  head_ref: z.string(),
+  base_ref: z.string(),
+};
+
+const getOutput = z.object({
+  ...taskRowFields,
+  delivery: z.enum(["not_configured", "pending", "delivered", "failed"]),
+  next_step: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
+  completed_at: z.string().optional(),
+  state: z.string().optional(),
+  requested_model: z.string().optional(),
+  resolved_model: z.string().optional(),
+  pull_request: z.object({
+    id: z.number().optional(),
+    number: z.number().optional(),
+    url: z.string().optional(),
+  }).strict().optional(),
+  branch: z.object(branchFields).strict().optional(),
+  artifacts: z.array(z.discriminatedUnion("type", [
+    z.object({ type: z.literal("pull"), id: z.number() }).strict(),
+    z.object({ type: z.literal("branch"), ...branchFields }).strict(),
+  ])).optional(),
+  usage: z.object({
+    type: z.enum(["ai_credits", "premium_requests"]),
+    amount: z.number(),
+    amount_human: z.number(),
+  }).strict().optional(),
+  session_id: z.string().optional(),
+  created_at: z.string().optional(),
+  error: z.string().optional(),
+  delivered_via: z.string().optional(),
+}).strict();
+
+const listOutput = z.object({
+  tasks: z.array(z.object(taskRowFields).strict()),
+  pending_count: z.number().int().nonnegative(),
+  terminal_count: z.number().int().nonnegative(),
+  all_terminal: z.boolean(),
+  next_step: z.string(),
+  next_check_after: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
+  stale: z.boolean().optional(),
 }).strict();
 
 export function buildServer(deps: ServerDeps): McpServer {
@@ -170,7 +230,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("create_agent_task")) {
     server.registerTool("create_agent_task", {
       title: "Launch Copilot task",
-      description: `Launch a GitHub Copilot cloud agent task. The model is sent unchanged. If the model was already rejected, the tool skips the API call and lists accepted models observed so far. ${CREATE_TASK_GUIDANCE}`,
+      description: `Launch a GitHub Copilot cloud agent with repo, prompt, and model; use list_copilot_models to discover IDs. Returns status, delivery, follow_up, and next_step. May fail for authentication, repository access or policy, invalid input, or an unavailable model; previously rejected models skip the API and list accepted models observed so far. ${CREATE_TASK_GUIDANCE}`,
       inputSchema: createInput,
       outputSchema: createOutput,
       annotations: toolAnnotations("create_agent_task", "Launch Copilot task"),
@@ -179,23 +239,25 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("get_agent_task")) {
     server.registerTool("get_agent_task", {
       title: "Get task status",
-      description: "Read one task once. Returns status, terminal and a one-line summary. Do not call repeatedly; use list_agent_tasks for periodic checks.",
+      description: "Read one task's result by task_id; optional repo overrides the saved repository and verbose adds details. Returns status, terminal, summary, delivery, and available PR/session links. Cached results may include stale and warnings after a refresh failure. Check authentication or task/repository access on errors. Use list_agent_tasks for scheduled checks, never call this in a loop.",
       inputSchema: getInput,
+      outputSchema: getOutput,
       annotations: toolAnnotations("get_agent_task", "Get task status"),
     }, async (args) => run(() => readTask(args, deps)));
   }
   if (enabled.has("list_agent_tasks")) {
     server.registerTool("list_agent_tasks", {
       title: "List tracked tasks",
-      description: "One call to check all tracked tasks. Use it for scheduled checks. When all_terminal is true, stop checking. Several agents may share this server; owner is a labeling convention, not a security boundary.",
+      description: "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a label, not a security boundary; this is not a GitHub-wide task search.",
       inputSchema: listInput,
+      outputSchema: listOutput,
       annotations: toolAnnotations("list_agent_tasks", "List tracked tasks"),
     }, async (args) => run(() => listAgentTasks(args, deps)));
   }
   if (enabled.has("steer_agent_task")) {
     server.registerTool("steer_agent_task", {
       title: "Steer task",
-      description: `${experimentalNotice} Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request.`,
+      description: `${experimentalNotice} Send content to task_id when continuing or redirecting a task with an open pull request. Each call consumes credits and is not idempotent; the agent applies it after its current tool call. Returns task_id, accepted, and the pre-steer session_count, then watches the new turn when notifications are configured. Errors explain missing authentication, repository, or an absent/closed pull request.`,
       inputSchema: steerInput,
       outputSchema: steerOutput,
       annotations: toolAnnotations("steer_agent_task", "Steer task"),
@@ -204,7 +266,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("abort_agent_task")) {
     server.registerTool("abort_agent_task", {
       title: "Abort task",
-      description: `${experimentalNotice} Send {type: "abort"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub.`,
+      description: `${experimentalNotice} Request cancellation of task_id via the internal steer endpoint; not verified against live GitHub. Use only to stop work, not to read status. Returns accepted, status, and terminal; accepted=false with reason when already finished. Acceptance does not mean cancellation has completed. Check authentication and task access on errors.`,
       inputSchema: abortInput,
       outputSchema: abortOutput,
       annotations: toolAnnotations("abort_agent_task", "Abort task"),
@@ -213,7 +275,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("list_copilot_models")) {
     server.registerTool("list_copilot_models", {
       title: "List Copilot models",
-      description: "Read /agents/swe/models and return the ID, name, vendor, preview flag, token prices or multiplier, and promotion when present.",
+      description: "Discover model IDs before create_agent_task. Reads /agents/swe/models and returns source metadata plus models with ID, name, vendor, preview, token prices or billing multiplier, and optional promotion/policy. No parameters. Availability remains subject to repository policy. Errors explain missing authentication, upstream access/network failures, or an invalid upstream response.",
       inputSchema: z.object({}).strict(),
       outputSchema: sweModelsResultSchema,
       annotations: toolAnnotations("list_copilot_models", "List Copilot models"),

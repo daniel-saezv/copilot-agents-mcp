@@ -11,32 +11,6 @@ export function appNotInstalledMessage(): string {
   return `The app is not installed in any repository. Install it at ${githubAppInstallUrl()}.`;
 }
 
-export function withMissingAppInstall(message: string, status: number, path: string, appCredential: boolean): string {
-  if (!appCredential || status !== 404) return message;
-  const repository = repositoryFromPath(path);
-  if (!repository) return message;
-  const trimmed = message.trim();
-  if (/^not found\.?$/i.test(trimmed) || /^task .+ was not found\.?$/i.test(trimmed)) {
-    return `Repository ${repository.owner}/${repository.repo} was not found or is not accessible.`;
-  }
-  return `Install the app for ${repository.owner}/${repository.repo}: ${githubAppInstallUrl()}. ${message}`;
-}
-
-function repositoryFromPath(path: string): { owner: string; repo: string } | null {
-  const match = /\/repos\/([^/]+)\/([^/?]+)/.exec(path);
-  const ownerPart = match?.[1];
-  const repoPart = match?.[2];
-  if (!ownerPart || !repoPart) return null;
-  try {
-    const owner = decodeURIComponent(ownerPart);
-    const repo = decodeURIComponent(repoPart);
-    if (!owner || !repo) return null;
-    return { owner, repo };
-  } catch {
-    return null;
-  }
-}
-
 export const TASK_HAS_NO_PULL_REQUEST = "task_has_no_pull_request";
 export const TASK_PULL_REQUEST_NOT_OPEN = "task_pull_request_not_open";
 
@@ -44,20 +18,6 @@ export class ToolFailure extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ToolFailure";
-  }
-}
-
-export class GitHubError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GitHubError";
-  }
-}
-
-export class ModelsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ModelsError";
   }
 }
 
@@ -126,6 +86,22 @@ export class CodedToolFailure extends ToolFailure {
     };
     if (this.retry_after_s !== undefined) body.error.retry_after_s = this.retry_after_s;
     return body;
+  }
+}
+
+type ApiFailure = ErrorBody["error"];
+
+export class GitHubError extends CodedToolFailure {
+  constructor(message: string, failure?: Omit<ApiFailure, "message">) {
+    super(failure?.code ?? "upstream_error", message, failure);
+    this.name = "GitHubError";
+  }
+}
+
+export class ModelsError extends CodedToolFailure {
+  constructor(message: string, failure?: Omit<ApiFailure, "message">) {
+    super(failure?.code ?? "upstream_error", message, failure);
+    this.name = "ModelsError";
   }
 }
 
@@ -211,15 +187,67 @@ export function isModelUnavailable(message: string): boolean {
 type HeaderLookup = { get(name: string): string | null };
 
 export function formatApiError(status: number, headers: HeaderLookup, body: unknown): string {
-  const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : `HTTP ${status}`;
-  const details = flattenErrors(record.errors);
-  let text = details ? `${message}: ${details}` : message;
+  return apiFailure(status, headers, body).message;
+}
+
+export function apiFailure(
+  status: number,
+  headers: HeaderLookup,
+  body: unknown,
+  context?: { permission?: GithubPermission; createTask?: boolean; appRepository?: boolean },
+): ApiFailure {
+  const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  const upstreamMessage = typeof body === "string" ? body : typeof record.message === "string" ? record.message : "";
   const retry = retrySeconds(headers);
-  if (retry !== null && (status === 429 || status === 403 || /rate limit/i.test(text))) {
-    text += `. Retry after ${retry} seconds`;
+  const limited = status === 429 || (status === 403 && (
+    retry !== null || headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(upstreamMessage)
+  ));
+  let code: ErrorCode = "upstream_error";
+  let hint = "The upstream request failed. Check GitHub service status before trying again.";
+  if (limited) {
+    code = "rate_limited";
+    hint = "GitHub rate limit exceeded. Wait before trying again.";
+  } else if (status === 401) {
+    code = "not_authenticated";
+    hint = "Authentication failed. Run `npx copilot-agents-mcp login` or check GITHUB_PERSONAL_ACCESS_TOKEN.";
+  } else if (status === 403) {
+    code = "forbidden";
+    hint = "Access denied. Check repository access and credential permissions.";
+    if (context?.createTask) {
+      hint += " Copilot coding agent may not be enabled for this repository. Ask a repository or organization administrator to enable it and check the organization's model policy for agent tasks.";
+    }
+  } else if (status === 404) {
+    code = "not_found";
+    hint = "Resource not found or is not accessible. Check the repository or task ID and your access.";
+    if (context?.appRepository) hint += ` Install the app for the repository: ${githubAppInstallUrl()}.`;
+  } else if (status === 400 || status === 422) {
+    code = "invalid_argument";
+    hint = "Validation Failed. Check the task arguments.";
+    const details = flattenErrors(record.errors);
+    if (details) hint = `Validation Failed: ${details}. Check the task arguments.`;
+  } else if (status === 409) {
+    code = "conflict";
+    hint = "The request conflicts with the current state. Read the task's current status before trying again.";
+  } else if (status === 408 || status === 504) {
+    code = "upstream_timeout";
+    hint = "The upstream request timed out. Check the task's current status before trying again.";
   }
-  return text;
+  if ([400, 409, 422].includes(status) && /^cannot abort:\s*no active session[.!]?$/i.test(upstreamMessage.trim())) {
+    hint = "cannot abort: no active session. Read the task's current status.";
+  }
+  if ((status === 403 || status === 422) && /model/i.test(upstreamMessage)
+    && /not (?:allowed|available|enabled|supported)|disabled|policy|isn.?t available/i.test(upstreamMessage)) {
+    hint += " The selected model is not allowed or available for agent tasks. Use list_copilot_models and check the organization's model policy.";
+  }
+  const missing = context?.permission ? missingPermission(status, headers, body, context.permission) : null;
+  let message = `HTTP ${status}: ${missing ? `${missing} ` : ""}${hint}`;
+  if (limited && retry !== null) message += ` Retry after ${retry} seconds.`;
+  return {
+    code,
+    message,
+    retryable: limited || status === 408 || status >= 500,
+    ...(limited && retry !== null ? { retry_after_s: retry } : {}),
+  };
 }
 
 function flattenErrors(errors: unknown): string | null {
@@ -228,24 +256,22 @@ function flattenErrors(errors: unknown): string | null {
   for (const item of errors) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
-    if (typeof record.message === "string" && record.message.trim()) {
-      parts.push(record.message.trim());
-      continue;
-    }
     const field = typeof record.field === "string" ? record.field : "";
     const code = typeof record.code === "string" ? record.code : "";
-    const text = [field, code].filter(Boolean).join(" ");
-    if (text) parts.push(text);
+    if (["prompt", "model", "base_ref", "head_ref", "custom_agent", "create_pull_request"].includes(field)
+      && ["missing_field", "invalid", "missing", "already_exists", "unprocessable"].includes(code)) {
+      parts.push(`${field} ${code}`);
+    }
   }
   return parts.length > 0 ? parts.join("; ") : null;
 }
 
 function retrySeconds(headers: HeaderLookup): number | null {
   const retryAfter = headers.get("retry-after");
-  if (retryAfter && /^\d+$/.test(retryAfter.trim())) return Number(retryAfter.trim());
+  if (retryAfter && /^\d+$/.test(retryAfter.trim()) && Number.isSafeInteger(Number(retryAfter))) return Number(retryAfter);
   const remaining = headers.get("x-ratelimit-remaining");
   const reset = headers.get("x-ratelimit-reset");
-  if (remaining === "0" && reset && /^\d+$/.test(reset.trim())) {
+  if (remaining === "0" && reset && /^\d+$/.test(reset.trim()) && Number.isSafeInteger(Number(reset))) {
     return Math.max(0, Number(reset.trim()) - Math.floor(Date.now() / 1000));
   }
   return null;
@@ -292,18 +318,21 @@ function acceptedPermissions(header: string | null): string[] {
     const eq = trimmed.indexOf("=");
     const slug = (eq === -1 ? trimmed : trimmed.slice(0, eq)).trim().toLowerCase();
     const level = eq === -1 ? "" : trimmed.slice(eq + 1).trim().toLowerCase();
-    if (!slug) continue;
     const name = permissionLabel(slug);
+    if (!name || (level && !["read", "write", "admin"].includes(level))) continue;
     labels.push(level ? `${name}: ${level}` : name);
   }
   return labels;
 }
 
-function permissionLabel(slug: string): string {
-  const words = slug.split("_").filter(Boolean);
-  const first = words[0];
-  if (!first) return slug;
-  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(" ");
+function permissionLabel(slug: string): string | undefined {
+  const labels: Record<string, string> = {
+    agent_tasks: "Agent tasks",
+    pull_requests: "Pull requests",
+    contents: "Contents",
+    metadata: "Metadata",
+  };
+  return Object.prototype.hasOwnProperty.call(labels, slug) ? labels[slug] : undefined;
 }
 
 function joinEnglish(items: string[]): string {

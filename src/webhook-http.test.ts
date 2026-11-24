@@ -12,7 +12,11 @@ const { lookup } = vi.hoisted(() => ({ lookup: vi.fn<() => Promise<WebhookAddres
 vi.mock("node:dns/promises", () => ({ lookup }));
 vi.mock("node:https", () => ({ request: vi.fn() }));
 
-const invalidUrl = "Webhook URL must resolve exclusively to public HTTPS addresses.";
+const invalidUrl = "Webhook URL resolves to a non-public address. Use a host whose addresses are all public.";
+const inputError = "Invalid webhook URL. Provide an absolute URL without embedded credentials.";
+const httpsError = "Webhook URL must use HTTPS. Change the URL scheme to https.";
+const allowedHostError = "Webhook host is outside COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS. Use an allowed host or update that setting.";
+const dnsError = "Webhook DNS lookup failed. Check the hostname and DNS configuration, then retry.";
 const notice: TaskNotice = {
   task_id: "task-1", state: "completed", repo: "owner/repo",
   requested_model: "model", resolved_model: null, pull_request: null, branch: null,
@@ -57,12 +61,13 @@ describe("validateWebhookUrl", () => {
   });
 
   it.each([
-    "http://example.com", "ftp://example.com", "not-a-url", "https://",
-    "******example.com/private", "https://username@example.com",
-    "https://metadata.google.internal", "https://METADATA.GOOGLE.INTERNAL.",
-    "https://[fe80::1%25eth0]",
-  ])("rejects unsafe URL %s", async (url) => {
-    await expect(validateWebhookUrl(url, {})).rejects.toThrow(invalidUrl);
+    ["http://example.com", httpsError], ["ftp://example.com", httpsError],
+    ["not-a-url", inputError], ["https://", inputError],
+    ["******example.com/private", inputError], ["https://username@example.com", inputError],
+    ["https://metadata.google.internal", invalidUrl], ["https://METADATA.GOOGLE.INTERNAL.", invalidUrl],
+    ["https://[fe80::1%25eth0]", inputError],
+  ])("rejects unsafe URL %s with an actionable reason", async (url, message) => {
+    await expect(validateWebhookUrl(url, {})).rejects.toThrow(message);
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -85,7 +90,7 @@ describe("validateWebhookUrl", () => {
   });
 
   it.each(([
-    [], [{ address: "127.0.0.1", family: 4 }],
+    [{ address: "127.0.0.1", family: 4 }],
     [{ address: "8.8.8.8", family: 4 }, { address: "10.0.0.1", family: 4 }],
     [{ address: "8.8.8.8", family: 4 }, { address: "::ffff:192.168.0.1", family: 6 }],
     [{ address: "8.8.8.8", family: 6 }], [{ address: "not-an-ip", family: 4 }],
@@ -93,18 +98,23 @@ describe("validateWebhookUrl", () => {
     await expect(validateWebhookUrl("https://hooks.example.com", {}, async () => addresses)).rejects.toThrow(invalidUrl);
   });
 
+  it("reports an empty DNS response as a DNS failure", async () => {
+    await expect(validateWebhookUrl("https://hooks.example.com", {}, async () => []))
+      .rejects.toThrow(dnsError);
+  });
+
   it("never exposes resolver errors or URL fragments", async () => {
     const resolver = vi.fn().mockRejectedValue(new Error("secret.example.com/private?token=secret"));
     await expect(validateWebhookUrl("https://secret.example.com/private?token=secret", {}, resolver))
-      .rejects.toEqual(new Error(invalidUrl));
+      .rejects.toThrow(dnsError);
   });
 
   it("uses allowed hosts only as an exact narrowing", async () => {
     const env = { COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS: " Hooks.Example.com , other.example.com " };
     await expect(validateWebhookUrl("https://hooks.example.com", env)).resolves.toBeDefined();
-    await expect(validateWebhookUrl("https://sub.hooks.example.com", env)).rejects.toThrow(invalidUrl);
-    await expect(validateWebhookUrl("https://hooks.example.com.evil.com", env)).rejects.toThrow(invalidUrl);
-    await expect(validateWebhookUrl("https://hooks.example.com", { COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS: "" })).rejects.toThrow(invalidUrl);
+    await expect(validateWebhookUrl("https://sub.hooks.example.com", env)).rejects.toThrow(allowedHostError);
+    await expect(validateWebhookUrl("https://hooks.example.com.evil.com", env)).rejects.toThrow(allowedHostError);
+    await expect(validateWebhookUrl("https://hooks.example.com", { COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS: "" })).rejects.toThrow(allowedHostError);
     await expect(validateWebhookUrl("https://127.0.0.1", { COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS: "127.0.0.1" })).rejects.toThrow(invalidUrl);
   });
 });
