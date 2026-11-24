@@ -128,9 +128,41 @@ Point stdio transport at `npx -y github:daniel-saezv/copilot-agents-mcp`. Pass a
 npx -y github:daniel-saezv/copilot-agents-mcp watch
 ```
 
-`create_agent_task` also starts a detached watcher when `COPILOT_AGENTS_NOTIFY_URL` is set. The watcher polls pending tasks, updates local state under a directory lock, and POSTs completion notices once per terminal state.
+`create_agent_task` also starts a detached watcher when an eligible owner webhook or `COPILOT_AGENTS_NOTIFY_URL` is configured. The watcher polls pending tasks, updates local state under a directory lock, and records completion delivery.
 
 Several agents can share one server; pass a stable `owner` on create and filter with `list_agent_tasks` (labeling convention, not a security boundary).
+
+## Optional per-client webhooks
+
+A webhook is the **RECOMMENDED** completion path. Clients that can receive webhooks should register one from the start with `webhook register`. `check_later` is the supported fallback: end the turn, schedule a check at `check_after` if possible, never poll in a loop. Webhook registration is local CLI configuration, not an MCP tool:
+
+```bash
+copilot-agents-mcp webhook register --owner client-1
+copilot-agents-mcp webhook list
+copilot-agents-mcp auth status
+copilot-agents-mcp webhook remove --owner client-1
+```
+
+Registration reads the URL and complete `Authorization` header value through hidden terminal prompts. Alternatively, supply private input files with `--url-file /path/to/url-file --auth-file /path/to/auth-file`. Never put either secret in argv, environment variables for this command, or chat. Keep input files private and remove them when no longer needed.
+
+Use the same `owner` when calling `create_agent_task`. Owners are exact, case-sensitive routing labels, **not authentication**: any local process with state access can register any owner. All clients and the watcher must share `COPILOT_AGENTS_STATE_PATH` (default `~/.copilot-agents-mcp/state.json`).
+
+For an owner without a registration, only the creation response adds: “No webhook: using check_later. Recommended: configure one with `webhook register`.” It never blocks creation or repeats on status checks.
+
+The registry stores the URL, registration time, and key file path in locked local state; the Authorization value lives separately in a mode `0600` file named `sha256(owner)` beside that state. `webhook list` shows only owner, URL host, key path, and registration time. `auth status` reports owner, host, and key presence/permissions, never the URL path/query or Authorization value.
+
+Only tasks created **after** registration route to that owner. Other tasks retain the existing global `COPILOT_AGENTS_NOTIFY_URL` / `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` fallback. Failed owner delivery does not forward secrets or task data to the global endpoint. Re-registration applies only to subsequent tasks.
+
+Owner endpoints must use public HTTPS. Registration and delivery validate every resolved IP, blocking local/private, CGNAT, link-local, metadata, unspecified, multicast, and broadcast destinations, including IPv4-mapped IPv6. Delivery pins a validated address while retaining the original TLS hostname, preventing DNS rebinding; redirects fail. `COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS` optionally narrows allowed hostnames (comma-separated); it never permits blocked IPs. Unset means any public HTTPS host.
+
+Owner POST bodies contain only `task_id`, `state`, `repo`, and `pr_url` (nullable), with a stable `Idempotency-Key` per task and terminal status. Receivers should deduplicate this key. Delivery records remain in local state; inspect `get_agent_task.delivery` and use scheduled checks if delivery fails.
+
+### Example client: Grok Bot routine
+
+1. Each bot creates its own webhook-trigger routine.
+2. The owner copies that routine's URL and complete Authorization value into the hidden prompts of `copilot-agents-mcp webhook register --owner <botName>`. Never paste either into chat.
+3. Have that bot launch a tiny task with `owner: "<botName>"`, such as a one-line documentation correction.
+4. Verify end-to-end that its routine receives the terminal notice and calls `get_agent_task` once for the result. Confirm another bot's routine is not triggered. No release or merge is needed.
 
 ## Develop
 

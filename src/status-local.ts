@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { dirname } from "node:path";
 import { defaultStatePath } from "./state.ts";
 import { NOTIFY_AUTHORIZATION_ENV, NOTIFY_URL_ENV } from "./notify.ts";
+import { listWebhooks } from "./webhooks.ts";
 
 export type WritableProbe = "ok" | "fail";
 
@@ -84,5 +85,15 @@ export async function buildLocalStatusDiagnostics(
     ...formatNotifyEnvDiagnostics(env),
     ...formatDbusDiagnostics(env, platform),
   ];
-  return { text: lines.join("\n"), failed: state.writable === "fail" };
+  let webhookFailed = false;
+  try {
+    const webhooks = await listWebhooks(statePath);
+    for (const webhook of webhooks) {
+      lines.push(`Owner webhook: ${webhook.owner} — host: ${webhook.host} — key present: ${webhook.keyPresent ? "yes" : "no"} — mode0600: ${webhook.keyMode0600 ? "yes" : "no"}`);
+    }
+  } catch {
+    lines.push("Owner webhooks: unavailable.");
+    webhookFailed = true;
+  }
+  return { text: lines.join("\n"), failed: state.writable === "fail" || webhookFailed };
 }

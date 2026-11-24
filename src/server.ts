@@ -19,7 +19,7 @@ import { presentSweModelsResult, sweModelsResultSchema, type SweModelsResult } f
 import { TOOLS, toolNames } from "./selection.ts";
 import { deliveryForTask, shouldSpawnWatcher } from "./delivery.ts";
 import { createFollowUpNextStep, followUpBlock } from "./follow-up.ts";
-import { activeNotificationChannels, appendWatcherLog } from "./notify.ts";
+import { activeNotificationChannels, appendWatcherLog, notificationChannelsForTask } from "./notify.ts";
 import { compactGetTask } from "./task-present.ts";
 import { mapRawState } from "./task-status.ts";
 import { prUrl, resolveTaskPageUrl } from "./task-urls.ts";
@@ -45,6 +45,7 @@ import {
   isFinalState,
   normalizeModel,
   observe,
+  readState,
   taskSessionCount,
   withStateLock,
   type TrackedTask,
@@ -106,11 +107,13 @@ const createOutput = z.object({
 const SERVER_INSTRUCTIONS = [
   "Copilot cloud tasks take minutes. Tools never wait.",
   "Always pass owner=<your agent name> to create_agent_task so list_agent_tasks with that owner shows only your tasks.",
+  "A webhook is the RECOMMENDED completion path. Clients that can receive webhooks should register one from the start with `webhook register` (local CLI, not an MCP tool).",
   "After create_agent_task, end your turn and follow next_step; do not poll in a loop.",
+  "check_later is the supported fallback: end your turn, schedule a check at check_after if possible, never poll in a loop.",
   "First list check not before follow_up.check_after; call list_agent_tasks with your owner at most every follow_up.min_interval_s seconds until all_terminal is true.",
   "get_agent_task returns one task's full result (once, not in a loop).",
   "steer_agent_task sends a user message to a running task with an open pull request; abort_agent_task requests cancellation (experimental GitHub endpoints).",
-  "With COPILOT_AGENTS_NOTIFY_URL set, the watcher POSTs JSON when a task reaches a terminal state—wake on that webhook and call get_agent_task once. Without it, follow the check_later schedule in next_step.",
+  "With an eligible owner webhook or COPILOT_AGENTS_NOTIFY_URL set, the watcher POSTs JSON when a task reaches a terminal state—wake on that webhook and call get_agent_task once. Otherwise follow check_later in next_step.",
 ].join(" ");
 
 const CREATE_TASK_GUIDANCE =
@@ -261,8 +264,6 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   if (blocked) throw new CodedToolFailure("model_unavailable", blocked);
   const token = deps.readToken();
   if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
-  const channels = activeNotificationChannels(process.platform, process.env);
-  const deliveryRecord = channels.length > 0 ? { status: "pending" as const } : null;
   const task = await deps.clientForToken(token).createTask({
     owner: parsed.owner,
     repo: parsed.repo,
@@ -272,6 +273,27 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     ...(args.head_ref !== undefined ? { head_ref: args.head_ref } : {}),
     ...(args.custom_agent !== undefined ? { custom_agent: args.custom_agent } : {}),
     ...(args.create_pull_request !== undefined ? { create_pull_request: args.create_pull_request } : {}),
+  });
+  const localTask = initialTask({
+    id: task.id,
+    repo,
+    requestedModel: model,
+    state: task.state,
+    createdAt: task.created_at ?? null,
+    updatedAt: task.updated_at ?? null,
+    ...(taskOwner ? { owner: taskOwner } : {}),
+    htmlUrl: resolveTaskPageUrl(task) ?? null,
+  });
+  const followUpNow = Date.now();
+  const { channels, hasWebhookRegistration } = await withStateLock(deps.statePath, (state) => {
+    const configured = notificationChannelsForTask(localTask, state);
+    localTask.delivery_record = configured.length > 0 ? { status: "pending" } : null;
+    localTask.check_after = followUpBlock(configured, false, followUpNow).check_after;
+    state.tasks[task.id] = localTask;
+    return {
+      channels: configured,
+      hasWebhookRegistration: taskOwner !== undefined && Object.hasOwn(state.webhooks ?? {}, taskOwner),
+    };
   });
   const mapped = mapRawState(task.state);
   let watcher_started = false;
@@ -284,45 +306,20 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     }
   }
   const session = resolveTaskPageUrl(task);
-  const follow_up = followUpBlock(channels, watcher_started, Date.now());
-  await withStateLock(deps.statePath, (state) => {
-    state.tasks[task.id] = {
-      ...initialTask({
-        id: task.id,
-        repo,
-        requestedModel: model,
-        state: task.state,
-        createdAt: task.created_at ?? null,
-        updatedAt: task.updated_at ?? null,
-        ...(taskOwner ? { owner: taskOwner } : {}),
-        deliveryRecord,
-        htmlUrl: resolveTaskPageUrl(task) ?? null,
-      }),
-      check_after: follow_up.check_after,
-    };
-  });
+  const follow_up = followUpBlock(channels, watcher_started, followUpNow);
   const planMode = follow_up.mode;
-  const next_step = createFollowUpNextStep(
+  let next_step = createFollowUpNextStep(
     planMode,
     taskOwner,
     task.id,
     channels.length > 0 && !watcher_started,
     follow_up.check_after,
   );
+  if (taskOwner && !hasWebhookRegistration) {
+    next_step += "\nNo webhook: using check_later. Recommended: configure one with `webhook register`.";
+  }
   const stored = await withStateLock(deps.statePath, (state) => state.tasks[task.id] ?? null);
-  const delivery = deliveryForTask(
-    stored ?? initialTask({
-      id: task.id,
-      repo,
-      requestedModel: model,
-      state: task.state,
-      createdAt: task.created_at ?? null,
-      updatedAt: task.updated_at ?? null,
-      deliveryRecord,
-      htmlUrl: session ?? null,
-    }),
-    channels,
-  );
+  const delivery = deliveryForTask(stored ?? localTask, channels);
   const body: Record<string, unknown> = {
     task_id: task.id,
     repo,
@@ -347,7 +344,9 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const repo = args.repo?.trim() || known?.repo || "";
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
-  const channels = activeNotificationChannels(process.platform, process.env);
+  const channels = known
+    ? notificationChannelsForTask(known, await readState(deps.statePath))
+    : activeNotificationChannels(process.platform, process.env);
   const freshness = freshnessMs();
   const now = Date.now();
   if (!token) {
@@ -554,7 +553,9 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
     armSteer(task, sessionCount, steeredAt);
     state.tasks[taskId] = task;
   });
-  if (shouldSpawnWatcher(activeNotificationChannels(process.platform, process.env))) {
+  const savedState = await readState(deps.statePath);
+  const steered = savedState.tasks[taskId];
+  if (steered && shouldSpawnWatcher(notificationChannelsForTask(steered, savedState))) {
     try {
       deps.launchWatcher();
     } catch (error) {
