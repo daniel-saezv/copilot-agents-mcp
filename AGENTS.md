@@ -24,6 +24,10 @@
 
 This template ships `project-setup` and `agent-environment` in `.agents/skills/`. `.claude/skills/` links to those folders so Claude Code loads the same skills.
 
+### mcp-builder (vendored)
+
+Agents working on this MCP server must read and follow `.claude/skills/mcp-builder/SKILL.md`. Vendored verbatim from [anthropics/skills `skills/mcp-builder`](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/mcp-builder) (Apache-2.0; see `LICENSE.txt` there). Do not edit the vendored files; update by re-vendoring a new upstream commit.
+
 ## Credit
 
 Rules 1 to 16 are adapted from [pstack](https://github.com/cursor/plugins/tree/main/pstack) by Lauren Tan, under the MIT license.
