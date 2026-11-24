@@ -1,8 +1,10 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { webhookPayloadId } from "./delivery.ts";
 import { mapRawState } from "./task-status.ts";
-import type { TaskNotice } from "./state.ts";
+import { readState, toDeliveryNotice, type StateFile, type TaskNotice, type TrackedTask } from "./state.ts";
+import { ownerWebhook } from "./webhooks.ts";
+import { postOwnerNotice } from "./webhook-http.ts";
 
 export const NOTIFY_URL_ENV = "COPILOT_AGENTS_NOTIFY_URL";
 export const NOTIFY_AUTHORIZATION_ENV = "COPILOT_AGENTS_NOTIFY_AUTHORIZATION";
@@ -15,6 +17,29 @@ export type DeliveredNotice = {
 
 export function activeNotificationChannels(_platform: NodeJS.Platform, baseEnv: NodeJS.ProcessEnv): NotifyChannel[] {
   return baseEnv[NOTIFY_URL_ENV]?.trim() ? ["webhook"] : [];
+}
+
+export function notificationChannelsForTask(task: TrackedTask, state: StateFile, env: NodeJS.ProcessEnv = process.env): NotifyChannel[] {
+  return ownerWebhook(state, task) ? ["webhook"] : activeNotificationChannels(process.platform, env);
+}
+
+export async function deliverTaskNotice(
+  task: TrackedTask,
+  statePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+  ownerPost: typeof postOwnerNotice = postOwnerNotice,
+): Promise<DeliveredNotice> {
+  const registration = ownerWebhook(await readState(statePath), task);
+  if (!registration) return deliverNotice(toDeliveryNotice(task), env, fetchImpl);
+  try {
+    const authorization = await readFile(registration.keyFilePath, "utf8");
+    await ownerPost(registration.url, toDeliveryNotice(task), authorization, env);
+    return { channels: ["webhook"] };
+  } catch {
+    await appendWatcherLog("Could not POST the owner task notification.", env);
+    return { channels: [] };
+  }
 }
 
 export function createNextStep(channels: NotifyChannel[]): string {

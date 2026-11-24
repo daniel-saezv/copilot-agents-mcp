@@ -1,0 +1,14 @@
+{
+  "tasks": {},
+  "models": {
+    "accepted": [],
+    "rejected": []
+  },
+  "webhooks": {
+    "owner": {
+      "url": "https://8.8.8.8/URL_PATH_SECRET?key=URL_QUERY_SECRET",
+      "keyFilePath": "/home/runner/work/copilot-agents-mcp/copilot-agents-mcp/.webhook-cli-lqAxyk/4c1029697ee358715d3a14a2add817c4b01651440de808371f78165ac90dc581",
+      "registeredAt": "2026-11-24T00:51:53.645Z"
+    }
+  }
+}

@@ -5,14 +5,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
-import { activeNotificationChannels, appendWatcherLog, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
+import { appendWatcherLog, notificationChannelsForTask, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { shouldSpawnWatcher } from "./delivery.ts";
 import { awaitingSteer, fillPullRequest, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
   client: Pick<GitHubClient, "getTask" | "findPullRequest">;
   statePath: string;
-  deliver: (notice: TaskNotice) => Promise<DeliveredNotice>;
+  deliver: (notice: TaskNotice, task: TrackedTask) => Promise<DeliveredNotice>;
   intervalMs: number;
   maxCycles?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -58,17 +58,15 @@ async function notifyFinal(
   options: {
     client: Pick<GitHubClient, "findPullRequest">;
     statePath: string;
-    deliver: (notice: TaskNotice) => Promise<DeliveredNotice>;
+    deliver: (notice: TaskNotice, task: TrackedTask) => Promise<DeliveredNotice>;
   },
   channelOverride?: NotifyChannel[],
 ): Promise<void> {
   const ready = await withStateLock(options.statePath, (state) => {
     return Object.values(state.tasks)
-      .filter((task) => readyToNotify(task))
+      .filter((task) => readyToNotify(task) && shouldSpawnWatcher(channelOverride ?? notificationChannelsForTask(task, state)))
       .map((task) => task.task_id);
   });
-  const channels = channelOverride ?? activeNotificationChannels(process.platform, process.env);
-  if (!shouldSpawnWatcher(channels)) return;
   for (const taskId of ready) {
     const tracked = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
@@ -83,18 +81,18 @@ async function notifyFinal(
       if (!task || !readyToNotify(task)) return null;
       task.pull_request = tracked.pull_request;
       task.usage = tracked.usage;
-      return { notice: toDeliveryNotice(task) };
+      return { notice: toDeliveryNotice(task), task, channels: channelOverride ?? notificationChannelsForTask(task, state) };
     });
     if (!claimed) continue;
     let delivered: DeliveredNotice;
     try {
-      delivered = await options.deliver(claimed.notice);
+      delivered = await options.deliver(claimed.notice, claimed.task);
     } catch (error) {
       console.error(`Could not notify for task ${taskId}: ${failureMessage(error)}`);
       delivered = { channels: [] };
     }
     if (delivered.channels.length === 0) {
-      const configured = activeNotificationChannels(process.platform, process.env);
+      const configured = claimed.channels;
       const reason = configured.length === 0
         ? "no notification channels configured"
         : `all configured channels failed (${configured.join(", ")})`;
@@ -131,8 +129,7 @@ function readyToNotify(task: TrackedTask): boolean {
 
 async function hasPending(statePath: string): Promise<boolean> {
   const state = await readState(statePath);
-  const channels = activeNotificationChannels(process.platform, process.env);
-  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || steerPending(task) || (shouldSpawnWatcher(channels) && readyToNotify(task)));
+  return Object.values(state.tasks).some((task) => !isFinalState(task.state) || steerPending(task) || (shouldSpawnWatcher(notificationChannelsForTask(task, state)) && readyToNotify(task)));
 }
 
 function steerPending(task: TrackedTask): boolean {

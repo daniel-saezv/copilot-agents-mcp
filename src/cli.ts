@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -27,17 +28,22 @@ import { readSweModels } from "./swe-models.ts";
 import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
 import { buildLocalStatusDiagnostics } from "./status-local.ts";
 import { defaultStatePath } from "./state.ts";
-import { deliverNotice } from "./notify.ts";
+import { deliverTaskNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
+import { listWebhooks, registerWebhook, removeWebhook, WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
+import { validateOwner } from "./tasks.ts";
 
 export const WATCH_POLL_INTERVAL_MS = 15_000;
 
 export type ServeCommand = { command: "serve" };
 export type WatchCommand = { command: "watch" };
-export type CliCommand = ServeCommand | WatchCommand | { command: "login" } | { command: "logout" } | { command: "status" } | { command: "version" };
+export type WebhookCommand = { command: "webhook"; action: "register" | "remove"; owner: string; urlFile?: string; authFile?: string }
+  | { command: "webhook"; action: "list" };
+export type CliCommand = ServeCommand | WatchCommand | WebhookCommand | { command: "login" } | { command: "logout" } | { command: "status" } | { command: "version" };
 
 export function parseArgs(argv: string[]): CliCommand {
   const args = [...argv];
+  if (args[0] === "webhook") return parseWebhookArgs(args.slice(1));
   if (args.includes("--version")) return { command: "version" };
   if (args[0] === "watch") {
     if (args.length > 1) throw new Error("watch does not accept additional arguments.");
@@ -59,9 +65,35 @@ export function parseArgs(argv: string[]): CliCommand {
     const arg = args[index];
     if (!arg) continue;
     if (arg === "--help" || arg === "-h") throw new Help();
-    throw new Error(`Unknown argument: ${arg}`);
+    throw new Error("Unknown argument.");
   }
   return { command: "serve" };
+}
+
+function parseWebhookArgs(args: string[]): WebhookCommand {
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) throw new Help();
+  const action = args[0];
+  if ((action === "register" || action === "remove" || action === "list") && args.length === 2 && (args[1] === "--help" || args[1] === "-h")) {
+    throw new Help();
+  }
+  if (action === "list" && args.length === 1) return { command: "webhook", action };
+  if (action !== "register" && action !== "remove") throw new Error(WEBHOOK_ERROR);
+  const values = new Map<string, string>();
+  for (let index = 1; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (!flag || !value || value.startsWith("-") || values.has(flag)
+      || (flag !== "--owner" && !(action === "register" && (flag === "--url-file" || flag === "--auth-file")))) {
+      throw new Error(WEBHOOK_ERROR);
+    }
+    values.set(flag, value);
+  }
+  try {
+    const owner = validateOwner(values.get("--owner") ?? "");
+    return { command: "webhook", action, owner, urlFile: values.get("--url-file"), authFile: values.get("--auth-file") };
+  } catch {
+    throw new Error(WEBHOOK_ERROR);
+  }
 }
 
 class Help extends Error {
@@ -85,9 +117,17 @@ function helpText(): string {
     "  Delete the keyring session.",
     "copilot-agents-mcp auth status",
     "  Show which credential is active without showing the token, plus local diagnostics (state, notify env, D-Bus).",
+    "copilot-agents-mcp webhook register --owner <id> [--url-file <path>] [--auth-file <path>]",
+    "  Files contain the URL and complete Authorization header value; surrounding whitespace is trimmed.",
+    "  Missing secret files require hidden terminal prompts. Secrets are never accepted as arguments.",
+    "copilot-agents-mcp webhook list",
+    "  Show owner, host, key file path, and registration time (never URL or authorization).",
+    "copilot-agents-mcp webhook remove --owner <id>",
+    "  Remove the registration and key file; safe to repeat.",
     "",
     "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
-    "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_STATE_PATH,",
+    "COPILOT_AGENTS_NOTIFY_URL, COPILOT_AGENTS_NOTIFY_AUTHORIZATION, COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS,",
+    "COPILOT_AGENTS_STATE_PATH,",
     "COPILOT_AGENTS_GITHUB_API_BASE_URL",
   ].join("\n");
 }
@@ -151,7 +191,7 @@ async function watch(): Promise<void> {
     await runWatcher({
       client: githubClient(token, process.env, session),
       statePath,
-      deliver: (notice) => deliverNotice(notice),
+      deliver: (_notice, task) => deliverTaskNotice(task, statePath),
       intervalMs: WATCH_POLL_INTERVAL_MS,
     });
   } finally {
@@ -177,11 +217,73 @@ async function main(): Promise<void> {
     else if (command.command === "logout") await logout();
     else if (command.command === "status") await status();
     else if (command.command === "version") console.log(packageVersion());
+    else if (command.command === "webhook") await webhook(command);
     else await serve();
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Error.");
     process.exitCode = error instanceof Help ? 0 : 1;
   }
+}
+
+async function webhook(command: WebhookCommand): Promise<void> {
+  try {
+    const statePath = defaultStatePath();
+    if (command.action === "list") {
+      for (const item of await listWebhooks(statePath)) {
+        console.log(`${item.owner}\t${item.host}\t${item.keyFilePath}\t${item.registeredAt}`);
+      }
+    } else if (command.action === "remove") {
+      await removeWebhook(statePath, command.owner);
+      console.log("Webhook removed.");
+    } else {
+      if ((!command.urlFile || !command.authFile) && (!process.stdin.isTTY || !process.stderr.isTTY)) {
+        throw new Error(WEBHOOK_INPUT_ERROR);
+      }
+      const url = command.urlFile ? (await readFile(command.urlFile, "utf8")).trim() : await hiddenPrompt("Webhook URL: ");
+      const authorization = command.authFile ? (await readFile(command.authFile, "utf8")).trim() : await hiddenPrompt("Authorization header value: ");
+      await registerWebhook(statePath, command.owner, url, authorization);
+      console.log("Webhook registered.");
+    }
+  } catch (error) {
+    throw new Error(error instanceof Error && error.message === WEBHOOK_INPUT_ERROR ? WEBHOOK_INPUT_ERROR : WEBHOOK_ERROR);
+  }
+}
+
+function hiddenPrompt(label: string): Promise<string> {
+  return new Promise((resolvePrompt, reject) => {
+    const input = process.stdin;
+    const wasRaw = input.isRaw;
+    let value = "";
+    const finish = (result?: string) => {
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onEnd);
+      try {
+        input.setRawMode(wasRaw);
+      } catch {
+        result = undefined;
+      }
+      input.pause();
+      process.stderr.write("\n");
+      if (result === undefined) reject(new Error(WEBHOOK_ERROR));
+      else resolvePrompt(result);
+    };
+    const onEnd = () => finish();
+    const onData = (data: Buffer) => {
+      for (const char of data.toString("utf8")) {
+        if (char === "\r" || char === "\n") { finish(value); return; }
+        if (char === "\u0003" || char === "\u0004" || char === "\u001b") { finish(); return; }
+        if (char === "\u007f" || char === "\b") value = value.slice(0, -1);
+        else if (char >= " ") value += char;
+      }
+    };
+    input.setRawMode(true);
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onEnd);
+    process.stderr.write(label);
+    input.resume();
+  });
 }
 
 function warnIgnored(env: NodeJS.ProcessEnv): void {
