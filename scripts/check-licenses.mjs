@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const allowed = new Set([
   "MIT",
@@ -59,7 +59,7 @@ console.log(`Allowed production licenses: ${seen.size}`);
 
 function collectPaths(nodes) {
   for (const node of nodes) {
-    if (node.path && node.path.includes("node_modules")) paths.push(node.path);
+    if (node.path && node.path.includes("node_modules") && existsSync(node.path)) paths.push(node.path);
     if (node.dependencies) collectPaths(Object.values(node.dependencies));
   }
 }

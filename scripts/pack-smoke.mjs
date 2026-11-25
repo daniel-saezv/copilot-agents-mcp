@@ -58,11 +58,7 @@ try {
 }
 
 function assertPublishManifestHasBin() {
-  const npm = process.env.npm_execpath ? process.execPath : "npm";
-  const args = process.env.npm_execpath
-    ? [process.env.npm_execpath, "publish", "--dry-run"]
-    : ["publish", "--dry-run"];
-  const result = spawnSync(npm, args, {
+  const result = spawnSync("npm", ["publish", "--dry-run"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
