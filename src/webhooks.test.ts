@@ -145,7 +145,7 @@ describe("owner webhook registry", () => {
     }
   });
 
-  it("requires terminal override for legacy entries and never routes them", async () => {
+  it("requires explicit override for legacy entries and never routes them before migration", async () => {
     const path = await statePath();
     await withStateLock(path, (state) => {
       state.webhooks = { legacy: { url: "https://8.8.8.8/", keyFilePath: webhookKeyPath(path, "legacy"), registeredAt: "1970-01-01T00:00:01.000Z" } };
@@ -156,7 +156,13 @@ describe("owner webhook registry", () => {
     expect((await buildLocalStatusDiagnostics({ COPILOT_AGENTS_STATE_PATH: path })).text).toContain("needs re-registration");
     await expect(registerWebhook(path, "legacy", "https://8.8.8.8/", "private")).rejects.toBeInstanceOf(OwnerTokenError);
     await expect(removeWebhook(path, "legacy")).rejects.toBeInstanceOf(OwnerTokenError);
-    await expect(removeWebhook(path, "legacy", { forceReplace: true })).rejects.toBeInstanceOf(OwnerTokenError);
+    const token = await registerWebhook(path, "legacy", "https://8.8.8.8/", "private", { forceReplace: true, now: () => 1000 });
+    const migrated = await readState(path);
+    expect(resolveOwnerToken(migrated, token)).toBe("legacy");
+    expect(ownerWebhook(migrated, task)).toEqual(migrated.webhooks?.legacy);
+    expect((await listWebhooks(path))[0]?.needsReregistration).toBe(false);
+    await removeWebhook(path, "legacy", { forceReplace: true });
+    expect(await listWebhooks(path)).toEqual([]);
   });
 
   it("does not rotate a registration when preparing private token output fails", async () => {

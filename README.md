@@ -61,7 +61,7 @@ Watcher poll interval and task freshness are **fixed internally** (15s poll, 60s
 
 After `create_agent_task`, end your turn. The server returns `follow_up` and `next_step`: either rely on a webhook that wakes the owning agent live, or schedule `list_agent_tasks` (not before `check_after`).
 
-Version **0.3.0** replaces free-text owner identity with a CLI-minted `owner_token` and adds `set_completion_strategy`. Every tool advertises an output schema and returns matching JSON text and `structuredContent`. See [migration steps](CHANGELOG.md#migration-from-020) and [tool contracts and error codes](docs/tools.md).
+Version **0.3.1** allows non-interactive `--force-replace` for webhook migration and recovery. The 0.3.0 CLI-minted `owner_token` and `set_completion_strategy` contracts are unchanged. Every tool advertises an output schema and returns matching JSON text and `structuredContent`. See [migration steps](CHANGELOG.md#migration-from-020) and [tool contracts and error codes](docs/tools.md).
 
 On the first unconfigured creation or list call, a non-error `setup` field asks how the user wants follow-up. Ask in the user's current language, preserving its canonical English intent, then record `webhook` (recommended) or `check_later` with `set_completion_strategy`. The choice and one-time ask are remembered per owner (or `_default` for unowned calls). Creation never blocks; without a notification channel, schedule the first check after about ten minutes and later checks no more often than every five minutes. This works even when clients ignore server instructions or decline forms.
 
@@ -159,7 +159,13 @@ Registration mints `owner_token` (`cam_ot_` plus 32 random bytes encoded as base
 
 Replacing or removing an owner requires the current token via `--token-file` or a hidden prompt. Re-registering rotates the token; use a new `--token-out` path and update the agent's private token. Removal revokes the token's tool identity and deletes the webhook credentials, but retains a hash-only reservation so another agent cannot claim that label and steer its tasks. Keep the old token for re-registration, or use local recovery.
 
-`--force-replace` bypasses the old-token check only in a local terminal, for recovery or migration of 0.2.0 registrations. Legacy registrations are flagged by `webhook list` and `auth status` and must be re-registered. All clients and the watcher must share `COPILOT_AGENTS_STATE_PATH` (default `~/.copilot-agents-mcp/state.json`). This protects tool-level identity and accidental CLI hijacks, not against a process that can directly edit private local state.
+`--force-replace` is an explicit local override of the old-token check for recovery or migration of 0.2.0 registrations, including non-interactive registration and removal. Without a TTY, registration still requires `--url-file` and `--auth-file`. Use `--token-out` for non-interactive registration so agents never print the token:
+
+```bash
+copilot-agents-mcp webhook register --owner client-1 --url-file /private/path/url --auth-file /private/path/auth --force-replace --token-out /private/path/new-client-1-token
+```
+
+Legacy registrations are flagged by `webhook list` and `auth status` and must be re-registered. All clients and the watcher must share `COPILOT_AGENTS_STATE_PATH` (default `~/.copilot-agents-mcp/state.json`). This protects tool-level identity and accidental CLI hijacks, not against a process that can directly edit private local state.
 
 No token on creation means an unowned task, retaining global notification fallback or scheduled checks. An invalid token, or a missing/mismatched token when steering or aborting an owned task, returns `owner_token_invalid` before mutation, leaving the task untouched with no routing or global fallback. Unowned tasks can be aborted without a token. `owner` is no longer accepted on creation.
 

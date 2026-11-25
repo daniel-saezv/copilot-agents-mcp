@@ -134,7 +134,7 @@ function helpText(): string {
     "  Files contain the URL and complete Authorization header value; surrounding whitespace is trimmed.",
     "  Missing secret files require hidden terminal prompts. Secrets are never accepted as arguments.",
     "  Save the minted owner token: stdout by default, or a new mode0600 --token-out file.",
-    "  Replacing requires the current token; --force-replace is an interactive terminal-only override.",
+    "  Replacing requires the current token; --force-replace is an explicit local override that works non-interactively.",
     "copilot-agents-mcp webhook list",
     "  Show owner, host, key file path, and registration time (never URL or authorization).",
     "copilot-agents-mcp webhook remove --owner <id> [--token-file <path>] [--force-replace]",
@@ -251,7 +251,6 @@ export async function runWebhookCommand(command: WebhookCommand): Promise<void> 
       }
     } else {
       const terminal = process.stdin.isTTY && process.stderr.isTTY;
-      if (command.forceReplace && !terminal) throw new OwnerTokenError();
       const state = await readState(statePath);
       const existing = Object.hasOwn(state.webhooks ?? {}, command.owner)
         || (command.action === "register" && (Object.hasOwn(state.ownerTokenHashes ?? {}, command.owner)

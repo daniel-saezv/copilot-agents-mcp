@@ -6,6 +6,8 @@ The server exposes seven tools over stdio. See README for setup. Tool descriptio
 
 Version 0.3.0 replaces `create_agent_task.owner` with `owner_token` and uses it on `create_agent_task`, `steer_agent_task`, `abort_agent_task`, and `set_completion_strategy`; owned tasks require their matching token to steer or abort. `list_agent_tasks.owner` remains a shared label filter, not identity. Unknown input properties remain rejected. See [migration](../CHANGELOG.md#migration-from-020).
 
+Version 0.3.1 removes only the TTY requirement on the local CLI's explicit `--force-replace` override; tool token authorization is unchanged. For non-interactive migration, use `copilot-agents-mcp webhook register --owner <id> --url-file <f> --auth-file <f> --force-replace --token-out <path>`. Both private input files are required without a TTY; `--token-out` is recommended to write the token only to a new mode `0600` file, never stdout.
+
 Every successful call returns an object matching its advertised `outputSchema`, both as `structuredContent` and as compact JSON in `content[0].text`. Existing text consumers can keep parsing the same JSON; there is no new wrapper or format parameter. Absent/null values remain omitted. Errors use `isError: true` and JSON text, without success `structuredContent`.
 
 GitHub tools set `openWorldHint: true`. `get_agent_task`, `list_agent_tasks`, and `list_copilot_models` are read-only and idempotent hints (task reads can update the local cache and the one-time setup timestamp). Creation and steering are non-idempotent, non-destructive operations; cancellation is destructive and idempotent. `set_completion_strategy` only changes local preferences. Hints do not authorize actions.

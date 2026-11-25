@@ -8,6 +8,8 @@ Your webhook handler must wake the agent that owns the task live. A silent or mu
 
 For optional per-client registration, use `copilot-agents-mcp webhook register --owner <id>` and the hidden prompts (or `--url-file` / `--auth-file`). See the [webhook security model and client example](../README.md#optional-per-client-webhooks). Owner delivery contains only `task_id`, `state`, `repo`, and `pr_url`, uses a stable `Idempotency-Key`, pins validated public HTTPS addresses, and rejects redirects.
 
+For non-interactive migration or recovery, use `copilot-agents-mcp webhook register --owner <id> --url-file <f> --auth-file <f> --force-replace --token-out <path>`. `--force-replace` explicitly bypasses the current-token check for registration or removal without requiring a TTY. Registration still requires both private input files without a TTY; `--token-out` is recommended so the minted token goes only to a new mode `0600` file, never stdout. Without the override, replacement and removal require the current token via `--token-file` or a hidden prompt.
+
 Only tasks created after their owner's registration use it. Otherwise the existing global webhook below is used. Without either configuration, scheduled checks remain the default.
 
 Registration errors distinguish non-HTTPS URLs, non-public resolved addresses, hosts outside `COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS`, DNS failures, and invalid input. Correct the indicated setting and register again. Reasons never print the URL path/query or Authorization value. Delivery revalidates DNS and pins the connection to a validated public IP; these diagnostics do not relax that check.
