@@ -5,6 +5,7 @@
 # copilot-agents-mcp
 
 Local [Model Context Protocol](https://modelcontextprotocol.io/) server for launching and managing GitHub Copilot **cloud agent** tasks. It speaks MCP over **stdio only** and runs on your machine (Node.js **26+**).
+Use the same server command with any MCP-compatible client.
 
 ```mermaid
 flowchart LR
