@@ -12,7 +12,7 @@ Provider paths, fields, and triggers are in [references/providers.md](references
 ## What to do
 
 1. **Find the source of truth.** `scripts/setup` must exist at the repo root. If it does not, create it. The script is bash and runs `set -euo pipefail`. It changes to the repo root. `install_stack` sits between the markers `stack (project-setup)` and `end stack`. The script calls `install_stack` and exits 0. It is idempotent.
-2. **Fill `install_stack` when you know the stack.** If a lockfile or pinned versions exist and you have run the install command, put that command inside `install_stack`. Do not install a stack you have not identified. If there is no stack, leave the message that there is nothing to install.
+2. **Fill `install_stack` when you know the stack.** If a lockfile or pinned versions exist and you have run the install command, put that command inside `install_stack`. For a pnpm project, require pnpm and use `pnpm install --frozen-lockfile`. Do not install a stack you have not identified. If there is no stack, leave the message that there is nothing to install.
 3. **Detect providers.** Note which of these the repo has.
    - A `.cursor/` directory or `.cursor/environment.json`.
    - `.github/copilot-instructions.md` or `.github/workflows/copilot-setup-steps.yml`.

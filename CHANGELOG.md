@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Internal
+
+- Migrate development tooling and automation from npm to pnpm.
+
 ## 0.2.0
 
 - **Breaking** for global-webhook receivers (`COPILOT_AGENTS_NOTIFY_URL`): the body now contains only `task_id`, `state`, `repo`, and `pr_url`, not the full task. Call `get_agent_task` for details. The `Idempotency-Key` header is now sent.

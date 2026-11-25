@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const allowed = new Set([
   "MIT",
@@ -14,10 +14,11 @@ const allowed = new Set([
   "Python-2.0",
 ]);
 
-const paths = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], { encoding: "utf8" })
-  .trim()
-  .split("\n")
-  .filter((line) => line.includes("node_modules"));
+const roots = JSON.parse(
+  execFileSync("pnpm", ["list", "--prod", "--depth", "Infinity", "--json"], { encoding: "utf8" }),
+);
+const paths = [];
+collectPaths(roots);
 const seen = new Map();
 
 for (const packagePath of paths) {
@@ -55,3 +56,10 @@ if (blocked.length > 0) {
 }
 
 console.log(`Allowed production licenses: ${seen.size}`);
+
+function collectPaths(nodes) {
+  for (const node of nodes) {
+    if (node.path && node.path.includes("node_modules") && existsSync(node.path)) paths.push(node.path);
+    if (node.dependencies) collectPaths(Object.values(node.dependencies));
+  }
+}
