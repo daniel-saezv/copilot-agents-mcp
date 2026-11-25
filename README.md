@@ -154,6 +154,7 @@ For an owner without a registration, only the creation response adds: “No webh
 The registry stores the URL, registration time, and key file path in locked local state; the Authorization value lives separately in a mode `0600` file named `sha256(owner)` beside that state. `webhook list` shows only owner, URL host, key path, and registration time. `auth status` reports owner, host, and key presence/permissions, never the URL path/query or Authorization value.
 
 Only tasks created **after** registration route to that owner. Other tasks retain the existing global `COPILOT_AGENTS_NOTIFY_URL` / `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` fallback. Failed owner delivery does not forward secrets or task data to the global endpoint. Re-registration applies only to subsequent tasks.
+This owner-based routing is useful when multiple clients share the same local state.
 
 Owner endpoints must use public HTTPS. Registration and delivery validate every resolved IP, blocking local/private, CGNAT, link-local, metadata, unspecified, multicast, and broadcast destinations, including IPv4-mapped IPv6. Delivery pins a validated address while retaining the original TLS hostname, preventing DNS rebinding; redirects fail. `COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS` optionally narrows allowed hostnames (comma-separated); it never permits blocked IPs. Unset means any public HTTPS host.
 
