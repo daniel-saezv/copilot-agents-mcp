@@ -75,7 +75,7 @@ describe("tools", () => {
     await mcp.close();
   });
 
-  it("registers exactly the six supported tools", async () => {
+  it("registers exactly the seven supported tools", async () => {
     const statePath = await tempPath();
     const tools = await listedTools(deps(statePath, unusedClient(), () => {}));
     expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
@@ -194,7 +194,7 @@ describe("tools", () => {
       const meta = TOOLS.find((item) => item.name === tool.name);
       const readOnly = meta?.method === "GET";
       const destructive = tool.name === "abort_agent_task";
-      const idempotent = readOnly || tool.name === "abort_agent_task";
+      const idempotent = readOnly || tool.name === "abort_agent_task" || tool.name === "set_completion_strategy";
       if (tool.name === "create_agent_task") {
         expect(tool.annotations?.idempotentHint).toBe(false);
       } else if (tool.name === "steer_agent_task") {
@@ -205,7 +205,7 @@ describe("tools", () => {
         expect(tool.annotations?.destructiveHint).toBe(destructive);
       }
       expect(tool.annotations?.readOnlyHint).toBe(readOnly);
-      expect(tool.annotations?.openWorldHint).toBe(true);
+      expect(tool.annotations?.openWorldHint).toBe(tool.name !== "set_completion_strategy");
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe("object");
       for (const field of Object.values(tool.inputSchema.properties ?? {})) {
@@ -219,6 +219,7 @@ describe("tools", () => {
       { name: "steer_agent_task", method: "POST" },
       { name: "abort_agent_task", method: "POST" },
       { name: "list_copilot_models", method: "GET" },
+      { name: "set_completion_strategy", method: "POST" },
     ]);
     const dir = fileURLToPath(new URL("./__toolsnaps__/", import.meta.url));
     await mkdir(dir, { recursive: true });

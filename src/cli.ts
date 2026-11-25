@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { open, readFile, rm, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -27,10 +27,10 @@ import { NO_SESSION_MESSAGE, ToolFailure } from "./errors.ts";
 import { readSweModels } from "./swe-models.ts";
 import { buildServer, defaultLaunchWatcher, packageVersion } from "./server.ts";
 import { buildLocalStatusDiagnostics } from "./status-local.ts";
-import { defaultStatePath } from "./state.ts";
+import { defaultStatePath, readState } from "./state.ts";
 import { deliverTaskNotice } from "./notify.ts";
 import { acquireWatcher, releaseWatcher, runWatcher, watcherLockPath } from "./watch.ts";
-import { listWebhooks, registerWebhook, removeWebhook, WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
+import { listWebhooks, OwnerTokenError, registerWebhook, removeWebhook, WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
 import { validateOwner } from "./tasks.ts";
 import { WebhookValidationError } from "./webhook-http.ts";
 
@@ -38,7 +38,7 @@ export const WATCH_POLL_INTERVAL_MS = 15_000;
 
 export type ServeCommand = { command: "serve" };
 export type WatchCommand = { command: "watch" };
-export type WebhookCommand = { command: "webhook"; action: "register" | "remove"; owner: string; urlFile?: string; authFile?: string }
+export type WebhookCommand = { command: "webhook"; action: "register" | "remove"; owner: string; urlFile?: string; authFile?: string; tokenFile?: string; tokenOut?: string; forceReplace?: boolean }
   | { command: "webhook"; action: "list" };
 export type CliCommand = ServeCommand | WatchCommand | WebhookCommand | { command: "login" } | { command: "logout" } | { command: "status" } | { command: "version" };
 
@@ -80,18 +80,30 @@ function parseWebhookArgs(args: string[]): WebhookCommand {
   if (action === "list" && args.length === 1) return { command: "webhook", action };
   if (action !== "register" && action !== "remove") throw new Error(WEBHOOK_INPUT_ERROR);
   const values = new Map<string, string>();
-  for (let index = 1; index < args.length; index += 2) {
+  let forceReplace = false;
+  for (let index = 1; index < args.length; index += 1) {
     const flag = args[index];
+    if (flag === "--force-replace") {
+      if (forceReplace) throw new Error(WEBHOOK_INPUT_ERROR);
+      forceReplace = true;
+      continue;
+    }
     const value = args[index + 1];
     if (!flag || !value || value.startsWith("-") || values.has(flag)
-      || (flag !== "--owner" && !(action === "register" && (flag === "--url-file" || flag === "--auth-file")))) {
+      || (flag !== "--owner" && flag !== "--token-file" && !(action === "register" && (flag === "--url-file" || flag === "--auth-file" || flag === "--token-out")))) {
       throw new Error(WEBHOOK_INPUT_ERROR);
     }
     values.set(flag, value);
+    index += 1;
   }
   try {
     const owner = validateOwner(values.get("--owner") ?? "");
-    return { command: "webhook", action, owner, urlFile: values.get("--url-file"), authFile: values.get("--auth-file") };
+    return {
+      command: "webhook", action, owner,
+      urlFile: values.get("--url-file"), authFile: values.get("--auth-file"),
+      tokenFile: values.get("--token-file"), tokenOut: values.get("--token-out"),
+      forceReplace,
+    };
   } catch {
     throw new Error(WEBHOOK_INPUT_ERROR);
   }
@@ -118,12 +130,14 @@ function helpText(): string {
     "  Delete the keyring session.",
     "copilot-agents-mcp auth status",
     "  Show which credential is active without showing the token, plus local diagnostics (state, notify env, D-Bus).",
-    "copilot-agents-mcp webhook register --owner <id> [--url-file <path>] [--auth-file <path>]",
+    "copilot-agents-mcp webhook register --owner <id> [--url-file <path>] [--auth-file <path>] [--token-file <path>] [--token-out <new-path>] [--force-replace]",
     "  Files contain the URL and complete Authorization header value; surrounding whitespace is trimmed.",
     "  Missing secret files require hidden terminal prompts. Secrets are never accepted as arguments.",
+    "  Save the minted owner token: stdout by default, or a new mode0600 --token-out file.",
+    "  Replacing requires the current token; --force-replace is an interactive terminal-only override.",
     "copilot-agents-mcp webhook list",
     "  Show owner, host, key file path, and registration time (never URL or authorization).",
-    "copilot-agents-mcp webhook remove --owner <id>",
+    "copilot-agents-mcp webhook remove --owner <id> [--token-file <path>] [--force-replace]",
     "  Remove the registration and key file; safe to repeat.",
     "",
     "Environment: GITHUB_PERSONAL_ACCESS_TOKEN, COPILOT_AGENTS_GITHUB_APP_CLIENT_ID,",
@@ -218,7 +232,7 @@ async function main(): Promise<void> {
     else if (command.command === "logout") await logout();
     else if (command.command === "status") await status();
     else if (command.command === "version") console.log(packageVersion());
-    else if (command.command === "webhook") await webhook(command);
+    else if (command.command === "webhook") await runWebhookCommand(command);
     else await serve();
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Error.");
@@ -226,28 +240,66 @@ async function main(): Promise<void> {
   }
 }
 
-async function webhook(command: WebhookCommand): Promise<void> {
+export async function runWebhookCommand(command: WebhookCommand): Promise<void> {
+  let tokenOutput: FileHandle | undefined;
+  let outputCreated = false;
   try {
     const statePath = defaultStatePath();
     if (command.action === "list") {
       for (const item of await listWebhooks(statePath)) {
-        console.log(`${item.owner}\t${item.host}\t${item.keyFilePath}\t${item.registeredAt}`);
+        console.log(`${item.owner}\t${item.host}\t${item.keyFilePath}\t${item.registeredAt}${item.needsReregistration ? "\tneeds re-registration" : ""}`);
       }
-    } else if (command.action === "remove") {
-      await removeWebhook(statePath, command.owner);
-      console.log("Webhook removed.");
     } else {
-      if ((!command.urlFile || !command.authFile) && (!process.stdin.isTTY || !process.stderr.isTTY)) {
-        throw new Error(WEBHOOK_INPUT_ERROR);
+      const terminal = process.stdin.isTTY && process.stderr.isTTY;
+      if (command.forceReplace && !terminal) throw new OwnerTokenError();
+      const state = await readState(statePath);
+      const existing = Object.hasOwn(state.webhooks ?? {}, command.owner)
+        || (command.action === "register" && (Object.hasOwn(state.ownerTokenHashes ?? {}, command.owner)
+          || Object.values(state.tasks).some((task) => task.owner === command.owner)));
+      let token: string | undefined;
+      if (command.tokenFile) token = await readWebhookInput(command.tokenFile);
+      else if (existing && !command.forceReplace) {
+        if (!terminal) throw new OwnerTokenError();
+        token = await hiddenPrompt("Current owner token: ");
       }
-      const url = command.urlFile ? await readWebhookInput(command.urlFile) : await hiddenPrompt("Webhook URL: ");
-      const authorization = command.authFile ? await readWebhookInput(command.authFile) : await hiddenPrompt("Authorization header value: ");
-      await registerWebhook(statePath, command.owner, url, authorization);
-      console.log("Webhook registered.");
+      const options = { token, forceReplace: command.forceReplace };
+      if (command.action === "remove") {
+        await removeWebhook(statePath, command.owner, options);
+        console.log("Webhook removed.");
+      } else {
+        if ((!command.urlFile || !command.authFile) && !terminal) throw new Error(WEBHOOK_INPUT_ERROR);
+        const url = command.urlFile ? await readWebhookInput(command.urlFile) : await hiddenPrompt("Webhook URL: ");
+        const authorization = command.authFile ? await readWebhookInput(command.authFile) : await hiddenPrompt("Authorization header value: ");
+        if (command.tokenOut) {
+          tokenOutput = await open(command.tokenOut, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+          outputCreated = true;
+          await tokenOutput.chmod(0o600);
+        }
+        const output = tokenOutput;
+        const minted = await registerWebhook(statePath, command.owner, url, authorization, {
+          ...options,
+          prepareToken: output ? async (value) => {
+            await output.writeFile(`${value}\n`, "utf8");
+            await output.sync();
+          } : undefined,
+        });
+        outputCreated = false;
+        await tokenOutput?.close();
+        tokenOutput = undefined;
+        console.error("Webhook registered.");
+        if (!command.tokenOut) console.log(minted);
+      }
     }
   } catch (error) {
-    if (error instanceof WebhookValidationError) throw error;
+    if (error instanceof WebhookValidationError || error instanceof OwnerTokenError) throw error;
     throw new Error(error instanceof Error && error.message === WEBHOOK_INPUT_ERROR ? WEBHOOK_INPUT_ERROR : WEBHOOK_ERROR);
+  } finally {
+    try {
+      await tokenOutput?.close();
+      if (outputCreated && command.action === "register" && command.tokenOut) await rm(command.tokenOut, { force: true });
+    } catch {
+      throw new Error(WEBHOOK_ERROR);
+    }
   }
 }
 

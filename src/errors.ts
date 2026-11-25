@@ -45,6 +45,7 @@ export type GithubPermission = "Agent tasks" | "Pull requests" | "Contents: writ
 
 export type ErrorCode =
   | "invalid_argument"
+  | "owner_token_invalid"
   | "not_authenticated"
   | "forbidden"
   | "not_found"

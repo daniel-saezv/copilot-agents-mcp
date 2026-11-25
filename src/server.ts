@@ -51,6 +51,8 @@ import {
   type TrackedTask,
 } from "./state.ts";
 import { startDetachedWatcher } from "./watch.ts";
+import { OwnerTokenError, resolveOwnerToken } from "./webhooks.ts";
+import { completionSetup, completionSetupSchema, completionStrategySchema, setCompletionStrategy } from "./completion.ts";
 
 export function packageVersion(): string {
   const parsed = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
@@ -69,7 +71,8 @@ export type ServerDeps = {
 };
 
 const OWNER_FIELD =
-  "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.";
+  "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate task creation and steering.";
+const ownerTokenInput = z.string().optional().describe("Private owner token issued by local webhook register. Omit for unowned tasks; never paste tokens into chat.");
 
 const createInput = z.object({
   repo: z.string().describe("Required repository in owner/name form, e.g. octocat/hello-world; surrounding whitespace is trimmed."),
@@ -79,7 +82,7 @@ const createInput = z.object({
   head_ref: z.string().optional().describe("Existing branch. With base_ref, the agent commits to this branch. Omit to let GitHub choose."),
   custom_agent: z.string().optional().describe("Custom agent name without the extension. Omit to use GitHub's default agent."),
   create_pull_request: z.boolean().optional().describe("When true, the API creates a pull request. Omit to use GitHub's default."),
-  owner: z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).optional().describe(OWNER_FIELD),
+  owner_token: ownerTokenInput,
 }).strict();
 
 const followUpSchema = z.object({
@@ -102,11 +105,13 @@ const createOutput = z.object({
   pr_url: z.string().optional(),
   follow_up: followUpSchema,
   next_step: z.string(),
+  setup: completionSetupSchema.optional(),
 }).strict();
 
 const SERVER_INSTRUCTIONS = [
   "Copilot cloud tasks take minutes. Tools never wait.",
-  "Pass owner=<your stable agent name> on create_agent_task and list_agent_tasks; owner is a label, not authentication.",
+  "Use the private owner_token issued by local webhook register on create_agent_task and steer_agent_task. Without a token, creation is unowned; owned tasks require their matching token to steer.",
+  "If create_agent_task or list_agent_tasks returns setup, ask once and save the user's choice with set_completion_strategy. Never request webhook secrets or owner tokens in chat.",
   "A webhook is the RECOMMENDED completion path: configure `webhook register` locally before creating tasks; never pass webhook secrets through MCP.",
   "An eligible owner webhook or COPILOT_AGENTS_NOTIFY_URL enables watcher notifications. Wake on the webhook and call get_agent_task once.",
   "After create_agent_task, follow next_step and end your turn. check_later is the fallback: schedule list_agent_tasks at follow_up.check_after if possible, never poll in a loop.",
@@ -116,7 +121,7 @@ const SERVER_INSTRUCTIONS = [
 ].join(" ");
 
 const CREATE_TASK_GUIDANCE =
-  "Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.";
+  "Returns immediately with task_id. Follow next_step. If setup is present, ask once and record the answer with set_completion_strategy.";
 
 const getInput = z.object({
   task_id: z.string().describe("Required non-blank identifier returned by create_agent_task; surrounding whitespace is trimmed."),
@@ -138,6 +143,7 @@ const experimentalNotice = "[Experimental] Undocumented internal GitHub endpoint
 const steerInput = z.object({
   task_id: z.string().describe("Required non-blank task identifier returned by create_agent_task."),
   content: z.string().describe("Required non-blank follow-up instructions, trimmed before sending. Each call consumes credits; never include credentials."),
+  owner_token: ownerTokenInput,
 }).strict();
 
 const steerOutput = z.object({
@@ -217,6 +223,7 @@ const listOutput = z.object({
   next_check_after: z.string().optional(),
   warnings: z.array(z.string()).optional(),
   stale: z.boolean().optional(),
+  setup: completionSetupSchema.optional(),
 }).strict();
 
 export function buildServer(deps: ServerDeps): McpServer {
@@ -248,7 +255,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("list_agent_tasks")) {
     server.registerTool("list_agent_tasks", {
       title: "List tracked tasks",
-      description: "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a label, not a security boundary; this is not a GitHub-wide task search.",
+      description: "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a read-only label, not authentication; this is not a GitHub-wide task search. If setup is present, ask once and record the answer with set_completion_strategy.",
       inputSchema: listInput,
       outputSchema: listOutput,
       annotations: toolAnnotations("list_agent_tasks", "List tracked tasks"),
@@ -257,7 +264,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("steer_agent_task")) {
     server.registerTool("steer_agent_task", {
       title: "Steer task",
-      description: `${experimentalNotice} Send content to task_id when continuing or redirecting a task with an open pull request. Each call consumes credits and is not idempotent; the agent applies it after its current tool call. Returns task_id, accepted, and the pre-steer session_count, then watches the new turn when notifications are configured. Errors explain missing authentication, repository, or an absent/closed pull request.`,
+      description: `${experimentalNotice} Send content to task_id when continuing or redirecting a task with an open pull request. Owned tasks require their matching owner_token. Each call consumes credits and is not idempotent; the agent applies it after its current tool call. Returns task_id, accepted, and the pre-steer session_count, then watches the new turn when notifications are configured. Errors explain missing authentication, repository, or an absent/closed pull request.`,
       inputSchema: steerInput,
       outputSchema: steerOutput,
       annotations: toolAnnotations("steer_agent_task", "Steer task"),
@@ -281,6 +288,14 @@ export function buildServer(deps: ServerDeps): McpServer {
       annotations: toolAnnotations("list_copilot_models", "List Copilot models"),
     }, async () => run(async () => presentSweModelsResult(await deps.readModels())));
   }
+  server.registerTool("set_completion_strategy", {
+    title: "Set completion strategy",
+    description: "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. Returns strategy and next_step.",
+    inputSchema: z.object({ owner_token: ownerTokenInput, strategy: completionStrategySchema.describe("User's choice: webhook notifications or scheduled checks.") }).strict(),
+    outputSchema: z.object({ strategy: completionStrategySchema, next_step: z.string() }).strict(),
+    annotations: toolAnnotations("set_completion_strategy", "Set completion strategy"),
+  }, async (args) => run(() => withStateLock(deps.statePath, (state) =>
+    setCompletionStrategy(state, resolveOwnerToken(state, args.owner_token), args.strategy))));
   return server;
 }
 
@@ -290,13 +305,13 @@ function toolAnnotations(
 ) {
   const readOnly = name === "get_agent_task" || name === "list_agent_tasks" || name === "list_copilot_models";
   const destructive = name === "abort_agent_task";
-  const idempotent = readOnly || name === "abort_agent_task";
+  const idempotent = readOnly || name === "abort_agent_task" || name === "set_completion_strategy";
   return {
     title,
     readOnlyHint: readOnly,
     destructiveHint: destructive,
     idempotentHint: idempotent,
-    openWorldHint: true,
+    openWorldHint: name !== "set_completion_strategy",
   };
 }
 
@@ -304,7 +319,10 @@ async function run(action: () => Promise<object>) {
   try {
     return toolJson(await action() as Record<string, unknown>);
   } catch (error) {
-  if (error instanceof OwnerValidationError) {
+    if (error instanceof OwnerTokenError) {
+      return toolError(new CodedToolFailure("owner_token_invalid", "Invalid or missing owner_token. Use the matching token from local webhook register in private MCP client configuration.").toBody());
+    }
+    if (error instanceof OwnerValidationError) {
       return toolError(new CodedToolFailure("invalid_argument", error.message).toBody());
     }
     if (error instanceof CodedToolFailure) return toolError(error.toBody());
@@ -316,45 +334,44 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   const repo = required(args.repo, "repo");
   const prompt = required(args.prompt, "prompt");
   const model = required(args.model, "model");
-  const taskOwner = args.owner !== undefined ? validateOwner(args.owner) : undefined;
   const parsed = parseRepo(repo);
-  const blocked = await withStateLock(deps.statePath, (state) => {
+  const { task, taskOwner, localTask, followUpNow, channels, setup } = await withStateLock(deps.statePath, async (state) => {
+    const taskOwner = resolveOwnerToken(state, args.owner_token);
     const key = normalizeModel(model);
-    if (!state.models.rejected.includes(key)) return null;
-    return modelUnavailableMessage(model, state.models.accepted);
-  });
-  if (blocked) throw new CodedToolFailure("model_unavailable", blocked);
-  const token = deps.readToken();
-  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
-  const task = await deps.clientForToken(token).createTask({
-    owner: parsed.owner,
-    repo: parsed.repo,
-    prompt,
-    model,
-    ...(args.base_ref !== undefined ? { base_ref: args.base_ref } : {}),
-    ...(args.head_ref !== undefined ? { head_ref: args.head_ref } : {}),
-    ...(args.custom_agent !== undefined ? { custom_agent: args.custom_agent } : {}),
-    ...(args.create_pull_request !== undefined ? { create_pull_request: args.create_pull_request } : {}),
-  });
-  const localTask = initialTask({
-    id: task.id,
-    repo,
-    requestedModel: model,
-    state: task.state,
-    createdAt: task.created_at ?? null,
-    updatedAt: task.updated_at ?? null,
-    ...(taskOwner ? { owner: taskOwner } : {}),
-    htmlUrl: resolveTaskPageUrl(task) ?? null,
-  });
-  const followUpNow = Date.now();
-  const { channels, hasWebhookRegistration } = await withStateLock(deps.statePath, (state) => {
+    if (state.models.rejected.includes(key)) {
+      throw new CodedToolFailure("model_unavailable", modelUnavailableMessage(model, state.models.accepted));
+    }
+    const token = deps.readToken();
+    if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
+    const task = await deps.clientForToken(token).createTask({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      prompt,
+      model,
+      ...(args.base_ref !== undefined ? { base_ref: args.base_ref } : {}),
+      ...(args.head_ref !== undefined ? { head_ref: args.head_ref } : {}),
+      ...(args.custom_agent !== undefined ? { custom_agent: args.custom_agent } : {}),
+      ...(args.create_pull_request !== undefined ? { create_pull_request: args.create_pull_request } : {}),
+    });
+    const localTask = initialTask({
+      id: task.id,
+      repo,
+      requestedModel: model,
+      state: task.state,
+      createdAt: task.created_at ?? null,
+      updatedAt: task.updated_at ?? null,
+      ...(taskOwner ? { owner: taskOwner } : {}),
+      htmlUrl: resolveTaskPageUrl(task) ?? null,
+    });
+    const followUpNow = Date.now();
     const configured = notificationChannelsForTask(localTask, state);
     localTask.delivery_record = configured.length > 0 ? { status: "pending" } : null;
     localTask.check_after = followUpBlock(configured, false, followUpNow).check_after;
     state.tasks[task.id] = localTask;
     return {
+      task, taskOwner, localTask, followUpNow,
       channels: configured,
-      hasWebhookRegistration: taskOwner !== undefined && Object.hasOwn(state.webhooks ?? {}, taskOwner),
+      setup: completionSetup(state, taskOwner),
     };
   });
   const mapped = mapRawState(task.state);
@@ -370,16 +387,13 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   const session = resolveTaskPageUrl(task);
   const follow_up = followUpBlock(channels, watcher_started, followUpNow);
   const planMode = follow_up.mode;
-  let next_step = createFollowUpNextStep(
+  const next_step = createFollowUpNextStep(
     planMode,
     taskOwner,
     task.id,
     channels.length > 0 && !watcher_started,
     follow_up.check_after,
   );
-  if (taskOwner && !hasWebhookRegistration) {
-    next_step += "\nNo webhook: using check_later. Recommended: configure one with `webhook register`.";
-  }
   const stored = await withStateLock(deps.statePath, (state) => state.tasks[task.id] ?? null);
   const delivery = deliveryForTask(stored ?? localTask, channels);
   const body: Record<string, unknown> = {
@@ -393,6 +407,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     next_step,
   };
   if (taskOwner) body.owner = taskOwner;
+  if (setup) body.setup = setup;
   if (session) body.session_url = session;
   const createdPr = stored ? prUrl(stored) : undefined;
   if (createdPr) body.pr_url = createdPr;
@@ -503,11 +518,12 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
 }
 
 async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps) {
+  const owner = args.owner !== undefined ? validateOwner(args.owner) : undefined;
   const token = deps.readToken();
   const freshness = freshnessMs();
   const now = Date.now();
   const input = {
-    ...(args.owner !== undefined ? { owner: args.owner } : {}),
+    ...(owner !== undefined ? { owner } : {}),
     ...(args.task_ids ? { task_ids: args.task_ids } : {}),
     ...(args.status ? { status: args.status } : {}),
     ...(args.repo ? { repo: args.repo } : {}),
@@ -532,6 +548,7 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
   if (staleOnly) {
     const hasPending = matched.some((task) => !mapRawState(task.state).terminal);
     if (hasPending) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
+    const setup = await withStateLock(deps.statePath, (state) => completionSetup(state, owner));
     const counts = listCounts(matched);
     const checkAfter = aggregateNextCheckAfter(matched, now);
     const rows = page.map((task) => toListRow(task, { checkAfter: resolveNextCheckAfter(task, now) }));
@@ -544,6 +561,7 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
       next_step: listNextStep(counts, matchedEmpty, registryEmpty, checkAfter),
       warnings: staleWarnings,
       stale: true,
+      ...(setup ? { setup } : {}),
     };
   }
   const client = deps.clientForToken(token);
@@ -575,16 +593,23 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
   };
   if (!counts.all_terminal && counts.pending_count > 0) body.next_check_after = checkAfter;
   if (warnings.length > 0) body.warnings = warnings;
+  const setup = await withStateLock(deps.statePath, (state) => completionSetup(state, owner));
+  if (setup) body.setup = setup;
   return body;
 }
 
 async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const content = required(args.content, "content");
+  const known = await withStateLock(deps.statePath, (state) => {
+    const owner = resolveOwnerToken(state, args.owner_token);
+    const task = state.tasks[taskId] ?? null;
+    if (task?.owner && task.owner !== owner) throw new OwnerTokenError();
+    return task;
+  });
   const token = deps.readToken();
   if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
   const client = deps.clientForToken(token);
-  const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
   const remote = await client.getTask({
     taskId,
     ...(known?.repo ? parseRepo(known.repo) : {}),
@@ -599,10 +624,12 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
   if (opened.state !== "open") {
     throw new ToolFailure(`${TASK_PULL_REQUEST_NOT_OPEN}: pull request ${number} in ${repo} is not open.`);
   }
-  await client.steerTask(taskId, content);
   const sessionCount = taskSessionCount(remote);
   const steeredAt = new Date().toISOString();
-  await withStateLock(deps.statePath, (state) => {
+  await withStateLock(deps.statePath, async (state) => {
+    const owner = resolveOwnerToken(state, args.owner_token);
+    if (state.tasks[taskId]?.owner && state.tasks[taskId]?.owner !== owner) throw new OwnerTokenError();
+    await client.steerTask(taskId, content);
     const task = state.tasks[taskId] ?? initialTask({
       id: remote.id,
       repo,

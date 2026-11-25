@@ -1,12 +1,12 @@
 {
   "name": "list_agent_tasks",
   "title": "List tracked tasks",
-  "description": "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a label, not a security boundary; this is not a GitHub-wide task search.",
+  "description": "Check locally tracked tasks in one scheduled call, filtered by owner, task_ids, status, or repo. Returns compact rows (limit defaults to 20, maximum 50), counts across all matches, all_terminal, next_step, and next_check_after while pending. Stop checks when all_terminal is true. Refresh failures return stale rows and warnings; pending tasks require authentication. Owner is a read-only label, not authentication; this is not a GitHub-wide task search. If setup is present, ask once and record the answer with set_completion_strategy.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "owner": {
-        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
+        "description": "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate task creation and steering.",
         "type": "string"
       },
       "task_ids": {
@@ -134,6 +134,59 @@
       },
       "stale": {
         "type": "boolean"
+      },
+      "setup": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "required"
+          },
+          "question_intent": {
+            "type": "string"
+          },
+          "record_with": {
+            "type": "string",
+            "const": "set_completion_strategy"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "enum": [
+                    "webhook",
+                    "check_later"
+                  ]
+                },
+                "intent": {
+                  "type": "string"
+                },
+                "recommended": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "intent"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "ask_instruction": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "question_intent",
+          "record_with",
+          "options",
+          "ask_instruction"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [

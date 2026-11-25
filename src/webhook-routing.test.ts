@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,8 +26,8 @@ async function fixture() {
   await writeFile(keyFilePath, "routing-secret", { mode: 0o600 });
   await withStateLock(path, (state) => {
     state.webhooks = {
-      client: { url: "https://public.example/secret", keyFilePath, registeredAt: "2026-11-23T00:00:00Z" },
-      other: { url: "https://other.example/secret", keyFilePath, registeredAt: "2026-11-23T00:00:00Z" },
+      client: { url: "https://public.example/secret", keyFilePath, registeredAt: "2026-11-23T00:00:00Z", ownerTokenHash: createHash("sha256").update("client-token").digest("hex") },
+      other: { url: "https://other.example/secret", keyFilePath, registeredAt: "2026-11-23T00:00:00Z", ownerTokenHash: createHash("sha256").update("other-token").digest("hex") },
     };
   });
   const task = initialTask({
@@ -78,6 +79,20 @@ describe("owner webhook routing", () => {
     expect(await deliverTaskNotice({ ...task, owner: undefined }, path, {})).toEqual({ channels: [] });
   });
 
+  it("honors an owner's check_later choice in channels and delivery, without global fallback", async () => {
+    const { path, task } = await fixture();
+    await withStateLock(path, (state) => { state.completion_prefs = { client: { strategy: "check_later" } }; });
+    const ownerPost = vi.fn();
+    const globalPost = vi.fn<typeof fetch>();
+    const env = { COPILOT_AGENTS_NOTIFY_URL: "https://global.example" };
+    expect(notificationChannelsForTask(task, await readState(path), env)).toEqual([]);
+    expect(await deliverTaskNotice(task, path, env, globalPost, ownerPost)).toEqual({ channels: [] });
+    expect(ownerPost).not.toHaveBeenCalled();
+    expect(globalPost).not.toHaveBeenCalled();
+    await withStateLock(path, (state) => { state.completion_prefs = { _default: { strategy: "check_later" } }; });
+    expect(notificationChannelsForTask({ ...task, owner: undefined }, await readState(path), env)).toEqual(["webhook"]);
+  });
+
   it("watches owner tasks without global configuration and records delivery once", async () => {
     vi.stubEnv("COPILOT_AGENTS_NOTIFY_URL", "");
     const { path, task } = await fixture();
@@ -91,7 +106,7 @@ describe("owner webhook routing", () => {
     expect((await readState(path)).tasks[task.task_id]?.delivery_record).toEqual({ status: "delivered", delivered_via: "webhook" });
   });
 
-  it.each(["client", "unregistered"])("creates %s tasks with the appropriate follow_up and persists before watcher start", async (owner) => {
+  it.each(["client", undefined])("creates %s tasks with the appropriate follow_up and persists before watcher start", async (owner) => {
     vi.stubEnv("COPILOT_AGENTS_NOTIFY_URL", "");
     const { path, task } = await fixture();
     const github = createGitHubClient({ token: "test" });
@@ -108,12 +123,13 @@ describe("owner webhook routing", () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(clientTransport);
     try {
-      const result = await client.callTool({ name: "create_agent_task", arguments: { repo: "o/r", prompt: "tiny edit", model: "m", owner } });
+      const result = await client.callTool({ name: "create_agent_task", arguments: { repo: "o/r", prompt: "tiny edit", model: "m", ...(owner ? { owner_token: "client-token" } : {}) } });
       const body = result.structuredContent as Record<string, unknown> | undefined;
-      expect(body).toMatchObject({ owner, follow_up: { mode: owner === "client" ? "push" : "check_later" } });
-      const recommendation = "No webhook: using check_later. Recommended: configure one with `webhook register`.";
-      if (owner === "unregistered") expect(body?.next_step).toContain(recommendation);
-      else expect(body?.next_step).not.toContain(recommendation);
+      expect(body).toMatchObject({ follow_up: { mode: owner === "client" ? "push" : "check_later" } });
+      if (owner) expect(body?.owner).toBe(owner);
+      else expect(body).not.toHaveProperty("owner");
+      if (!owner) expect(body).toHaveProperty("setup");
+      else expect(body).not.toHaveProperty("setup");
       if (owner === "client") {
         expect(launchWatcher).toHaveBeenCalledOnce();
         expect(await atLaunch).toMatchObject({ task_id: task.task_id, owner });

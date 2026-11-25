@@ -89,7 +89,7 @@ export async function buildLocalStatusDiagnostics(
   try {
     const webhooks = await listWebhooks(statePath);
     for (const webhook of webhooks) {
-      lines.push(`Owner webhook: ${webhook.owner} — host: ${webhook.host} — key present: ${webhook.keyPresent ? "yes" : "no"} — mode0600: ${webhook.keyMode0600 ? "yes" : "no"}`);
+      lines.push(`Owner webhook: ${webhook.owner} — host: ${webhook.host} — key present: ${webhook.keyPresent ? "yes" : "no"} — mode0600: ${webhook.keyMode0600 ? "yes" : "no"}${webhook.needsReregistration ? " — needs re-registration" : ""}`);
     }
   } catch {
     lines.push("Owner webhooks: unavailable.");

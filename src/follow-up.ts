@@ -55,12 +55,10 @@ export function createFollowUpNextStep(
     return `${checkLaterBase(owner, taskId, checkAfterIso)} The notifier could not start.`;
   }
   if (mode === "push") {
-    const ownerHint = owner ? "" : " Pass owner=<your agent name> so your scheduled check sees only your tasks.";
-    return `Task queued; cloud tasks usually take 5-30 minutes. End your turn now. Do not wait and do not call get_agent_task in a loop.${ownerHint} A completion notice will be POSTed to the configured endpoint. If you are woken by it, call get_agent_task once for the result.`;
+    return "Task queued; cloud tasks usually take 5-30 minutes. End your turn now. Do not wait and do not call get_agent_task in a loop. A completion notice will be POSTed to the configured endpoint. If you are woken by it, call get_agent_task once for the result.";
   }
   const schedule = scheduleClause(owner, taskId, checkAfterIso);
-  const ownerHint = owner ? "" : " Pass owner=<your agent name> so your scheduled check sees only your tasks.";
-  return `Task queued; cloud tasks usually take 5-30 minutes. Nothing will notify you. End your turn now; do not wait or call tools in a loop.${ownerHint} ${schedule} Otherwise tell the user to ask you for the result later.`;
+  return `Task queued; cloud tasks usually take 5-30 minutes. Nothing will notify you. End your turn now; do not wait or call tools in a loop. ${schedule} Otherwise tell the user to ask you for the result later.`;
 }
 
 function scheduleClause(owner: string | undefined, taskId: string, checkAfterIso: string): string {

@@ -6,7 +6,8 @@ export type ToolName =
   | "list_agent_tasks"
   | "steer_agent_task"
   | "abort_agent_task"
-  | "list_copilot_models";
+  | "list_copilot_models"
+  | "set_completion_strategy";
 
 export const TOOL_NAMES: readonly ToolName[] = [
   "create_agent_task",
@@ -15,6 +16,7 @@ export const TOOL_NAMES: readonly ToolName[] = [
   "steer_agent_task",
   "abort_agent_task",
   "list_copilot_models",
+  "set_completion_strategy",
 ];
 
 export const TOOLS: readonly { name: ToolName; method: ToolMethod }[] = [
@@ -24,6 +26,7 @@ export const TOOLS: readonly { name: ToolName; method: ToolMethod }[] = [
   { name: "steer_agent_task", method: "POST" },
   { name: "abort_agent_task", method: "POST" },
   { name: "list_copilot_models", method: "GET" },
+  { name: "set_completion_strategy", method: "POST" },
 ];
 
 export function toolNames(): ToolName[] {
