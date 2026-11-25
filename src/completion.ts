@@ -28,10 +28,10 @@ export function completionSetup(state: StateFile, owner?: string, now = new Date
   });
   return {
     status: "required" as const,
-    question_intent: "How would you like me to follow up when your Copilot cloud tasks finish? Webhook notifications are recommended: the webhook handler must wake the agent that owns the task live (a silent or muted handler still receives the POST but completions are missed or arrive late). Webhook setup needs one-time local configuration with `copilot-agents-mcp webhook register`, with your webhook URL and Authorization value entered privately, never in chat; see Platform notes in the README for delivery settings. Alternatively, check_later needs no setup: schedule a first check after about ten minutes and later checks no more often than every five minutes, if scheduling is supported; otherwise ask for the result later. Results may arrive later with scheduled checks. I will remember your choice.",
+    question_intent: "How would you like me to follow up when your Copilot cloud tasks finish? Webhook notifications are recommended: they wake me automatically, but require one-time setup with `copilot-agents-mcp webhook register`, with your webhook URL and Authorization value entered privately, never in chat. Alternatively, check_later needs no setup: I can schedule a first check after about ten minutes and later checks no more often than every five minutes, if scheduling is supported; otherwise you can ask me for the result later. Results may arrive later with scheduled checks. I will remember your choice.",
     record_with: "set_completion_strategy" as const,
     options: [
-      { id: "webhook" as const, intent: "Notify through a webhook (recommended; one-time local CLI setup). The handler must wake the agent that owns the task live—silent handlers miss completions or deliver them late. See Platform notes in the README.", recommended: true },
+      { id: "webhook" as const, intent: "Notify me automatically through a webhook (recommended; requires one-time local CLI setup).", recommended: true },
       { id: "check_later" as const, intent: "Check later without setup: schedule a first check in about ten minutes, then at most every five minutes, or ask for the result later." },
     ],
     ask_instruction: "Ask the user in the user’s current language without changing the meaning; record the answer with set_completion_strategy.",

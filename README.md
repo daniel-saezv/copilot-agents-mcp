@@ -179,9 +179,9 @@ If the receiver uses a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` bef
 
 ### Platform notes
 
-Add one `### <Platform>` heading per host environment when webhook delivery must be configured in that platform's UI. Keep platform-neutral wording in MCP tool results and `setup` hints; put host-specific steps under the matching heading only.
+Add one `#### <Platform>` heading per host environment when webhook delivery must be configured in that platform's UI. Keep platform-neutral wording in MCP tool results and `setup` hints; put host-specific steps under the matching heading only.
 
-### Grok Bot
+#### Grok Bot
 
 The webhook-triggered routine must deliver into the **owning bot's own chat** (`deliverTo = app_chat`). `deliverTo = none` accepts the POST but does **not** wake that bot, so task completions are missed or delayed.
 
