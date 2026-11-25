@@ -71,7 +71,7 @@ export type ServerDeps = {
 };
 
 const OWNER_FIELD =
-  "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate task creation and steering.";
+  "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate creation, steering, cancellation (abort), and set_completion_strategy.";
 const ownerTokenInput = z.string().optional().describe("Private owner token issued by local webhook register. Omit for unowned tasks; never paste tokens into chat.");
 
 const createInput = z.object({
@@ -110,7 +110,7 @@ const createOutput = z.object({
 
 const SERVER_INSTRUCTIONS = [
   "Copilot cloud tasks take minutes. Tools never wait.",
-  "Use the private owner_token issued by local webhook register on create_agent_task and steer_agent_task. Without a token, creation is unowned; owned tasks require their matching token to steer.",
+  "Use the private owner_token issued by local webhook register on create_agent_task, steer_agent_task, abort_agent_task, and set_completion_strategy. Without a token, creation is unowned; owned tasks require their matching token to steer or abort.",
   "If create_agent_task or list_agent_tasks returns setup, ask once and save the user's choice with set_completion_strategy. Never request webhook secrets or owner tokens in chat.",
   "A webhook is the RECOMMENDED completion path: configure `webhook register` locally before creating tasks; never pass webhook secrets through MCP.",
   "An eligible owner webhook or COPILOT_AGENTS_NOTIFY_URL enables watcher notifications. Wake on the webhook and call get_agent_task once.",

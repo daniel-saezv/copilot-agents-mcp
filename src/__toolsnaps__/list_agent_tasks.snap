@@ -6,7 +6,7 @@
     "type": "object",
     "properties": {
       "owner": {
-        "description": "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate task creation and steering.",
+        "description": "Exact owner label for read-only filtering. Not authentication; use owner_token to authenticate creation, steering, cancellation (abort), and set_completion_strategy.",
         "type": "string"
       },
       "task_ids": {

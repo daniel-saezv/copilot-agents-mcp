@@ -4,7 +4,7 @@ The server exposes seven tools over stdio. See README for setup. Tool descriptio
 
 ## Contract and compatibility
 
-Version 0.3.0 replaces `create_agent_task.owner` with `owner_token` and requires that token to steer or abort owned tasks. `list_agent_tasks.owner` remains a shared label filter, not identity. Unknown input properties remain rejected. See [migration](../CHANGELOG.md#migration-from-020).
+Version 0.3.0 replaces `create_agent_task.owner` with `owner_token` and uses it on `create_agent_task`, `steer_agent_task`, `abort_agent_task`, and `set_completion_strategy`; owned tasks require their matching token to steer or abort. `list_agent_tasks.owner` remains a shared label filter, not identity. Unknown input properties remain rejected. See [migration](../CHANGELOG.md#migration-from-020).
 
 Every successful call returns an object matching its advertised `outputSchema`, both as `structuredContent` and as compact JSON in `content[0].text`. Existing text consumers can keep parsing the same JSON; there is no new wrapper or format parameter. Absent/null values remain omitted. Errors use `isError: true` and JSON text, without success `structuredContent`.
 
