@@ -1,6 +1,7 @@
 {
   "name": "copilot-agents-mcp",
   "version": "0.2.0",
+  "packageManager": "pnpm@12.23.0",
   "description": "Local MCP server for launching GitHub Copilot cloud agents.",
   "type": "module",
   "license": "MIT",
@@ -40,7 +41,7 @@
   "scripts": {
     "start": "node src/cli.ts",
     "build": "tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/cli.js',0o755)\"",
-    "prepare": "npm run build",
+    "prepare": "pnpm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

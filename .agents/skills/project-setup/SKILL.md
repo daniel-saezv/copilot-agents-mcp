@@ -13,7 +13,7 @@ Run this skill on the first task in a repository created from this template.
 2. **Run the commands.** Run install, build, test, and start. Record a command only after you have run it and seen the result.
 3. **Fill in "This project" in `AGENTS.md`.** Say what the project is, the stack, where the code lives, and the commands you ran. Add practices that belong to this stack. Add a CI/CD section with the existing workflows, the required pull request checks, and where the project deploys if it deploys.
 4. **Replace `README.md`.** Write the README for the project. Remove the template text. Do not describe skills or agents. Say what the project is, what it requires, and how to install, run, test, and deploy it. Add a **Set up the environment** section that runs `bash scripts/setup`. At most one line may point to `AGENTS.md` for agent rules.
-5. **Prepare the agent environment.** Follow the `agent-environment` skill. Put the install command you verified inside `install_stack` in `scripts/setup`. Provider wrappers do not repeat that command.
+5. **Prepare the agent environment.** Follow the `agent-environment` skill. Put the install command you verified inside `install_stack` in `scripts/setup`; for pnpm, use `pnpm install --frozen-lockfile`. Provider wrappers do not repeat that command.
 6. **Dependabot.** If the repo has a package manifest, add that ecosystem to `.github/dependabot.yml`. Keep the `github-actions` entry when it still applies.
 7. **CI.** If the stack has a build or test command, add a GitHub Actions workflow that runs it on each pull request. Do not add a generic workflow that fails because there is no stack. Leave `.github/workflows/skills.yml` in place. It validates `project-setup` and `agent-environment`.
 

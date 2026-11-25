@@ -172,10 +172,10 @@ If the receiver uses a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` bef
 
 ```bash
 bash scripts/setup
-npm test
-npm run typecheck
-npm run lint
-npm run build
+pnpm test
+pnpm run typecheck
+pnpm run lint
+pnpm run build
 ```
 
 See [AGENTS.md](AGENTS.md) for agent maintenance notes.

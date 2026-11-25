@@ -38,7 +38,7 @@ Local MCP server to launch GitHub Copilot cloud agents, read task status, notify
 
 ### Stack
 
-Node.js 26.13.1 (the package requires `>=26`) and npm 11.20.0. In development, Node runs `src/cli.ts` with type stripping. Node does not strip types inside `node_modules`, so `prepare` compiles to `dist/` with `tsc -p tsconfig.build.json` and the npm bin is `dist/cli.js`. Production dependencies: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8.20.0, and `ajv-formats` 3.0.1. Tests with Vitest 5.1.1. Lint with ESLint 10.15.0 and `typescript-eslint` 8.73.0. Types with TypeScript 6.0.3 (`tsc --noEmit`). `@types/node` 26.6.6.
+Node.js 26.13.1 (the package requires `>=26`) and pnpm 12.23.0. In development, Node runs `src/cli.ts` with type stripping. Node does not strip types inside `node_modules`, so `prepare` compiles to `dist/` with `tsc -p tsconfig.build.json` and the npm bin is `dist/cli.js`. Production dependencies: `@modelcontextprotocol/sdk` 1.32.2, `@napi-rs/keyring` 2.1.2, `zod` 4.6.7, `ajv` 8.20.0, and `ajv-formats` 3.0.1. Tests with Vitest 5.1.1. Lint with ESLint 10.15.0 and `typescript-eslint` 8.73.0. Types with TypeScript 6.0.3 (`tsc --noEmit`). `@types/node` 26.6.6.
 
 ### Structure
 
@@ -54,27 +54,27 @@ Node.js 26.13.1 (the package requires `>=26`) and npm 11.20.0. In development, N
 
 ```bash
 bash scripts/setup
-npm test
-npm run typecheck
-npm run lint
-npm run licenses
-npm audit --audit-level=low
-npm run build
+pnpm test
+pnpm run typecheck
+pnpm run lint
+pnpm run licenses
+pnpm audit --audit-level=low
+pnpm run build
 node src/cli.ts
 node dist/cli.js --help
 ```
 
-`bash scripts/setup` was run twice in a row on Node.js 26.13.1 and exited 0 both times. It runs `npm ci`, and `prepare` compiles `dist/`. `npm test`, `npm run typecheck`, and `npm run lint` exited 0 after shrinking the surface (stdio-only, six tools, webhook-only notifications). `npm run licenses` accepted production packages. `npm audit --audit-level=low` found 0 vulnerabilities. `npm run build` exited 0; `node dist/cli.js --help` printed help. `node scripts/pack-smoke.mjs` lists exactly six tools from `tools/list`.
+`bash scripts/setup` was run twice in a row on Node.js 26.13.1 and exited 0 both times. It runs `pnpm install --frozen-lockfile`, and `prepare` compiles `dist/`. `pnpm test`, `pnpm run typecheck`, and `pnpm run lint` exited 0 after shrinking the surface (stdio-only, six tools, webhook-only notifications). `pnpm run licenses` accepted production packages. `pnpm audit --audit-level=low` found 0 vulnerabilities. `pnpm run build` exited 0; `node dist/cli.js --help` printed help. `node scripts/pack-smoke.mjs` lists exactly six tools from `tools/list`.
 
 ### Stack-specific practices
 
-Relative imports use the `.ts` extension. Each tool schema sets `additionalProperties: false`. GitHub responses are validated client-side before use. The PAT is supplied via `GITHUB_PERSONAL_ACCESS_TOKEN`. The GitHub App session lives in the keyring, not in files. `GH_TOKEN` and `GITHUB_TOKEN` are not read. `npm audit --audit-level=low` and the license check are part of CI. Zod 4.6.7 and Vitest 5.1.1 are pinned in this range because earlier versions carried `npm audit` warnings.
+Relative imports use the `.ts` extension. Each tool schema sets `additionalProperties: false`. GitHub responses are validated client-side before use. The PAT is supplied via `GITHUB_PERSONAL_ACCESS_TOKEN`. The GitHub App session lives in the keyring, not in files. `GH_TOKEN` and `GITHUB_TOKEN` are not read. `pnpm audit --audit-level=low` and the license check are part of CI. Zod 4.6.7 and Vitest 5.1.1 are pinned in this range because earlier versions carried `npm audit` warnings.
 
 ### CI/CD
 
 Workflows run on each pull request and each push to `main`:
 
-- `.github/workflows/ci.yml`: Node 26. `npm ci`, types, lint, tests, `npm audit --audit-level=low`, licenses, and CodeQL (`javascript-typescript`). Actions are pinned by SHA.
+- `.github/workflows/ci.yml`: Node 26 and pnpm. `pnpm install --frozen-lockfile`, types, lint, tests, `pnpm audit --audit-level=low`, licenses, and CodeQL (`javascript-typescript`). Actions are pinned by SHA.
 - `.github/workflows/skills.yml`: validates `project-setup` and `agent-environment` with `skills-ref`. Node 26.
 - `.github/workflows/copilot-setup-steps.yml`: installs Node 26 and runs `bash scripts/setup` when that script or the workflow changes.
 - `.github/workflows/release.yml`: on `v*` tags, checks tag vs `package.json` version, runs `node scripts/pack-smoke.mjs` in `verify`, then stages the package on npm with `npm stage publish --provenance --access public` via OIDC (no tokens). The maintainer (Gamusino) approves the staged version on [npmjs.com](https://www.npmjs.com/) with 2FA before it goes live.
@@ -85,6 +85,6 @@ The branch protection API returned 403, so required checks are not recorded here
 
 `.cursor/environment.json` only calls `bash scripts/setup`. There is no `start`: the default server stays on stdio.
 
-To test: `npm test`, `npm run typecheck`, and `npm run lint`. To list tools, run `node src/cli.ts` over stdio (MCP client or `node scripts/pack-smoke.mjs`).
+To test: `pnpm test`, `pnpm run typecheck`, and `pnpm run lint`. To list tools, run `node src/cli.ts` over stdio (MCP client or `node scripts/pack-smoke.mjs`).
 
 Secrets you can add in Cursor, with no values here: `GITHUB_PERSONAL_ACCESS_TOKEN` (needed to create a task, read a task, or list models without `login`; not needed for CI or `tools/list`), `COPILOT_AGENTS_NOTIFY_URL` and `COPILOT_AGENTS_NOTIFY_AUTHORIZATION`. `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID` is optional and not a secret: when unset, the client ID embedded in the code is used. `COPILOT_AGENTS_GITHUB_API_BASE_URL` overrides `https://api.github.com` for local fakes and E2E.

@@ -5,12 +5,12 @@ cd "$(dirname "$0")/.."
 
 # --- stack (project-setup) ---
 install_stack() {
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "scripts/setup: Node.js 26 or later and npm are required." >&2
+  if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+    echo "scripts/setup: Node.js 26 or later and pnpm are required." >&2
     exit 1
   fi
   node -e 'const [major] = process.versions.node.split(".").map(Number); if (major < 26) { console.error("scripts/setup: Node.js 26 or later is required. Found " + process.versions.node); process.exit(1); }'
-  npm ci
+  pnpm install --frozen-lockfile
 }
 # --- end stack ---
 

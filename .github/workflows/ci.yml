@@ -16,32 +16,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
-          cache: npm
+          cache: pnpm
 
       - name: Install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Tests
-        run: npm test
+        run: pnpm test
 
       - name: Package smoke test
         run: node scripts/pack-smoke.mjs
 
       - name: Audit
-        run: npm audit --audit-level=low
+        run: pnpm audit --audit-level=low
 
       - name: Licenses
-        run: npm run licenses
+        run: pnpm run licenses
 
   codeql:
     runs-on: ubuntu-latest
