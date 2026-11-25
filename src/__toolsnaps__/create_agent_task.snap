@@ -1,7 +1,7 @@
 {
   "name": "create_agent_task",
   "title": "Launch Copilot task",
-  "description": "Launch a GitHub Copilot cloud agent with repo, prompt, and model; use list_copilot_models to discover IDs. Returns status, delivery, follow_up, and next_step. May fail for authentication, repository access or policy, invalid input, or an unavailable model; previously rejected models skip the API and list accepted models observed so far. Returns immediately with task_id. Pass owner=<your agent name> unless this server runs a single agent. Follow next_step.",
+  "description": "Launch a GitHub Copilot cloud agent with repo, prompt, and model; use list_copilot_models to discover IDs. Returns status, delivery, follow_up, and next_step. May fail for authentication, repository access or policy, invalid input, or an unavailable model; previously rejected models skip the API and list accepted models observed so far. Returns immediately with task_id. Follow next_step. If setup is present, ask once and record the answer with set_completion_strategy.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -33,12 +33,9 @@
         "description": "When true, the API creates a pull request. Omit to use GitHub's default.",
         "type": "boolean"
       },
-      "owner": {
-        "description": "Stable agent name (e.g. your bot's name). Required for multi-agent setups: pass owner=<your agent name> on every create so list_agent_tasks with that owner shows only your tasks. Not a security boundary.",
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 64,
-        "pattern": "^[A-Za-z0-9._-]+$"
+      "owner_token": {
+        "description": "Private owner token issued by local webhook register. Omit for unowned tasks; never paste tokens into chat.",
+        "type": "string"
       }
     },
     "required": [
@@ -137,6 +134,59 @@
       },
       "next_step": {
         "type": "string"
+      },
+      "setup": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "required"
+          },
+          "question_intent": {
+            "type": "string"
+          },
+          "record_with": {
+            "type": "string",
+            "const": "set_completion_strategy"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "enum": [
+                    "webhook",
+                    "check_later"
+                  ]
+                },
+                "intent": {
+                  "type": "string"
+                },
+                "recommended": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "intent"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "ask_instruction": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "question_intent",
+          "record_with",
+          "options",
+          "ask_instruction"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [

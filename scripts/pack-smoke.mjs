@@ -15,24 +15,39 @@ const expectedTools = [
   "get_agent_task",
   "list_agent_tasks",
   "list_copilot_models",
+  "set_completion_strategy",
   "steer_agent_task",
 ];
 
-assertPublishManifestHasBin();
+assertPackManifestHasBin();
 
-const packed = JSON.parse(run("npm", ["pack", "--json"], { cwd: root }));
-const filename = packed[0]?.filename;
-if (typeof filename !== "string" || !filename.endsWith(".tgz")) {
-  throw new Error("npm pack did not return a tarball.");
-}
-assertTarballPackageJsonHasBin(join(root, filename));
-
-const tarball = join(root, filename);
 const dir = mkdtempSync(join(tmpdir(), "copilot-pack-"));
+const tarball = join(dir, "package.tgz");
 
 try {
-  run("npm", ["init", "-y"], { cwd: dir });
-  run("npm", ["install", "--ignore-scripts", "--no-fund", "--no-audit", tarball], { cwd: dir });
+  const packed = JSON.parse(run("pnpm", ["pack", "--out", tarball, "--json"], { cwd: root }));
+  if (typeof packed.filename !== "string" || !packed.filename.endsWith(".tgz")) {
+    throw new Error("pnpm pack did not return a tarball.");
+  }
+  const intendedFiles = new Set([
+    "CHANGELOG.md",
+    "docs/tools.md",
+    "fixtures/openapi/create-task.request.json",
+    "fixtures/openapi/create-task.response.json",
+    "fixtures/openapi/get-task.response.json",
+    "LICENSE",
+    "package.json",
+    "README.md",
+  ]);
+  for (const file of packed.files) {
+    if (!/^dist\/[a-z][a-z-]*\.js$/.test(file.path) && !intendedFiles.has(file.path)) {
+      throw new Error(`Unexpected package file: ${file.path}.`);
+    }
+  }
+  console.log(`pack files ${packed.files.map((file) => file.path).join(", ")}`);
+  assertTarballPackageJsonHasBin(tarball);
+  run("pnpm", ["init"], { cwd: dir });
+  run("pnpm", ["add", "--ignore-scripts", tarball], { cwd: dir });
 
   const binLink = join(dir, "node_modules", ".bin", "copilot-agents-mcp");
   if (!existsSync(binLink)) {
@@ -54,11 +69,10 @@ try {
   console.log(`tools/list ${names.join(", ")}`);
 } finally {
   rmSync(dir, { recursive: true, force: true });
-  rmSync(tarball, { force: true });
 }
 
-function assertPublishManifestHasBin() {
-  const result = spawnSync("npm", ["publish", "--dry-run"], {
+function assertPackManifestHasBin() {
+  const result = spawnSync("pnpm", ["pack", "--dry-run"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
@@ -66,14 +80,14 @@ function assertPublishManifestHasBin() {
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
   if (/bin\[.+\].*invalid and removed/i.test(output)) {
     throw new Error(
-      `npm publish --dry-run rejected package.json bin (see @npmcli/package-json normalizePackageBin / secureAndUnixifyPath):\n${output}`,
+      `pnpm pack --dry-run rejected package.json bin:\n${output}`,
     );
   }
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0 && !/requires you to be logged in/i.test(output)) {
-    throw new Error(output || `npm publish --dry-run exited ${result.status}.`);
+  if (result.status !== 0) {
+    throw new Error(output || `pnpm pack --dry-run exited ${result.status}.`);
   }
 }
 

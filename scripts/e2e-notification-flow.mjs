@@ -139,7 +139,6 @@ try {
     repo: "octocat/hello-world",
     prompt: "e2e stdio demo",
     model: "mai-code-2",
-    owner: "e2e-agent",
   });
   const createMs = Math.round(performance.now() - started);
   const createBody = JSON.parse(textOf(created));
@@ -160,10 +159,11 @@ try {
   log(`get_agent_task_delivery_after_webhook: ${statusBody.delivery}`);
   log(`get_agent_task_status: ${statusBody.status}`);
 
-  const listed = await callTool(client, "list_agent_tasks", { owner: "e2e-agent" });
+  const listed = await callTool(client, "list_agent_tasks", { task_ids: [taskId] });
   const listBody = JSON.parse(textOf(listed));
   log(`list_agent_tasks_all_terminal: ${listBody.all_terminal}`);
   log(`list_agent_tasks_count: ${listBody.tasks?.length ?? 0}`);
+  if (listBody.tasks?.length !== 1) throw new Error("Expected one tracked task.");
   if (!listBody.all_terminal) throw new Error("Expected all_terminal after task completed.");
   await client.close();
 

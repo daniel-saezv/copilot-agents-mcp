@@ -1,6 +1,6 @@
 {
   "name": "copilot-agents-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packageManager": "pnpm@12.23.0",
   "description": "Local MCP server for launching GitHub Copilot cloud agents.",
   "type": "module",
@@ -28,6 +28,8 @@
   "files": [
     "dist",
     "fixtures/openapi",
+    "docs/tools.md",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md"
   ],

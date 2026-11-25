@@ -18,6 +18,7 @@ export function activeNotificationChannels(_platform: NodeJS.Platform, baseEnv: 
 }
 
 export function notificationChannelsForTask(task: TrackedTask, state: StateFile, env: NodeJS.ProcessEnv = process.env): NotifyChannel[] {
+  if (task.owner && state.completion_prefs?.[task.owner]?.strategy === "check_later") return [];
   return ownerWebhook(state, task) ? ["webhook"] : activeNotificationChannels(process.platform, env);
 }
 
@@ -28,7 +29,9 @@ export async function deliverTaskNotice(
   fetchImpl: typeof fetch = fetch,
   ownerPost: typeof postOwnerNotice = postOwnerNotice,
 ): Promise<DeliveredNotice> {
-  const registration = ownerWebhook(await readState(statePath), task);
+  const state = await readState(statePath);
+  if (task.owner && state.completion_prefs?.[task.owner]?.strategy === "check_later") return { channels: [] };
+  const registration = ownerWebhook(state, task);
   if (!registration) return deliverNotice(toDeliveryNotice(task), env, fetchImpl);
   try {
     const authorization = await readFile(registration.keyFilePath, "utf8");

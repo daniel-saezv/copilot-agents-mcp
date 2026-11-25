@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -140,6 +140,7 @@ describe("webhook CLI secrets", () => {
     const auth = "AUTH_MARKER_SECRET";
     const urlFile = join(dir, "url");
     const authFile = join(dir, "auth");
+    const tokenFile = join(dir, "owner-token");
     await writeFile(urlFile, `${url}\n`);
     await writeFile(authFile, `${auth}\n`);
     const env: NodeJS.ProcessEnv = {
@@ -150,20 +151,28 @@ describe("webhook CLI secrets", () => {
       COPILOT_AGENTS_NOTIFY_URL: url,
       COPILOT_AGENTS_NOTIFY_AUTHORIZATION: auth,
     };
+    let registered = false;
     const run = (args: string[], expectedStatus = 0) => {
+      if (registered && args[0] === "webhook" && (args[1] === "register" || args[1] === "remove") && args.includes("--owner") && !args.includes("--help")) {
+        args = [...args, "--token-file", tokenFile];
+      }
       const child = spawnSync(process.execPath, [cliEntry, ...args], { env, input: `${url}\n${auth}\n`, encoding: "utf8" });
       const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
       expect(child.status).toBe(expectedStatus);
       for (const marker of [url, auth, "URL_PATH_SECRET", "URL_QUERY_SECRET", "AUTH_MARKER_SECRET", "PAT_MARKER_SECRET", "SECRET_MISSING_PATH"]) {
         expect(output).not.toContain(marker);
       }
+      expect(output).not.toContain("cam_ot_");
       const parsedUrl = new URL(url);
       for (const secret of [parsedUrl.pathname, parsedUrl.search, auth]) {
         for (const fragment of fragmentsOf(secret, 10)) expect(output).not.toContain(fragment);
       }
       return output;
     };
-    expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile])).toContain("Webhook registered.");
+    expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile, "--token-out", tokenFile])).toContain("Webhook registered.");
+    registered = true;
+    const ownerToken = (await readFile(tokenFile, "utf8")).trim();
+    expect(ownerToken).toMatch(/^cam_ot_[A-Za-z0-9_-]{43}$/);
     const listing = run(["webhook", "list"]);
     expect(listing).toContain("owner\t8.8.8.8\t");
     expect(listing).toContain(`\t${join(dir, createHash("sha256").update("owner").digest("hex"))}\t`);
@@ -206,14 +215,36 @@ describe("webhook CLI secrets", () => {
     expect(run(["webhook", "remove", "--owner", "owner"])).toContain("Webhook removed.");
     expect(run(["webhook", "list"])).toBe("");
   }, 20_000);
+
+  it.skipIf(!nodeOk)("marks legacy registrations in webhook list and auth status without exposing secrets", async () => {
+    const dir = testDir(".legacy-webhook-cli-");
+    const statePath = join(dir, "state.json");
+    const keyFilePath = join(dir, createHash("sha256").update("legacy").digest("hex"));
+    await writeFile(statePath, JSON.stringify({
+      tasks: {}, models: { accepted: [], rejected: [] },
+      webhooks: { legacy: { url: "https://8.8.8.8/URL_SECRET?query=QUERY_SECRET", keyFilePath, registeredAt: "1970-01-01T00:00:00.000Z" } },
+    }));
+    await writeFile(keyFilePath, "AUTH_SECRET", { mode: 0o600 });
+    for (const args of [["webhook", "list"], ["auth", "status"]]) {
+      const child = spawnSync(process.execPath, [cliEntry, ...args], {
+        env: { ...process.env, COPILOT_AGENTS_STATE_PATH: statePath, GITHUB_PERSONAL_ACCESS_TOKEN: "PAT_SECRET" },
+        encoding: "utf8",
+      });
+      expect(child.status).toBe(0);
+      const output = `${child.stdout}${child.stderr}`;
+      expect(output).toContain("legacy");
+      expect(output).toContain("needs re-registration");
+      for (const secret of ["URL_SECRET", "QUERY_SECRET", "AUTH_SECRET", "PAT_SECRET"]) expect(output).not.toContain(secret);
+    }
+  });
 });
-describe("MCP surface unchanged", () => {
-  it("still exposes exactly six tools on tools/list", async () => {
+describe("MCP surface", () => {
+  it("exposes exactly seven tools on tools/list", async () => {
     const dir = testDir(".auth-status-mcp-");
     const statePath = join(dir, "state.json");
     const names = await listedToolNames(minimalDeps(statePath));
     expect(names).toEqual([...TOOL_NAMES].sort());
-    expect(names).toHaveLength(6);
+    expect(names).toHaveLength(7);
   });
 
   it("does not embed auth status diagnostics in server instructions", async () => {

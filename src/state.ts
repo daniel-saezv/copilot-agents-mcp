@@ -67,7 +67,13 @@ export type Catalog = { accepted: string[]; rejected: string[] };
 export type StateFile = {
   tasks: Record<string, TrackedTask>;
   models: Catalog;
-  webhooks?: Record<string, { url: string; keyFilePath: string; registeredAt: string }>;
+  webhooks?: Record<string, { url: string; keyFilePath: string; registeredAt: string; ownerTokenHash?: string }>;
+  ownerTokenHashes?: Record<string, string>;
+  completion_prefs?: Record<string, {
+    strategy?: "webhook" | "check_later";
+    decided_at?: string;
+    asked_at?: string;
+  }>;
 };
 
 export type TaskStatus = {

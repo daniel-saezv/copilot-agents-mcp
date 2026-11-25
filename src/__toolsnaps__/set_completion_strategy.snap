@@ -1,0 +1,58 @@
+{
+  "name": "set_completion_strategy",
+  "title": "Set completion strategy",
+  "description": "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. Returns strategy and next_step.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner_token": {
+        "description": "Private owner token issued by local webhook register. Omit for unowned tasks; never paste tokens into chat.",
+        "type": "string"
+      },
+      "strategy": {
+        "type": "string",
+        "enum": [
+          "webhook",
+          "check_later"
+        ],
+        "description": "User's choice: webhook notifications or scheduled checks."
+      }
+    },
+    "required": [
+      "strategy"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "strategy": {
+        "type": "string",
+        "enum": [
+          "webhook",
+          "check_later"
+        ]
+      },
+      "next_step": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "strategy",
+      "next_step"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false
+  },
+  "annotations": {
+    "title": "Set completion strategy",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+  },
+  "execution": {
+    "taskSupport": "forbidden"
+  }
+}
