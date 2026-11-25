@@ -4,7 +4,7 @@ The server exposes seven tools over stdio. See README for setup. Tool descriptio
 
 ## Contract and compatibility
 
-Version 0.3.0 replaces `create_agent_task.owner` with `owner_token` and requires that token to steer owned tasks. `list_agent_tasks.owner` remains a shared label filter, not identity. Unknown input properties remain rejected. See [migration](../CHANGELOG.md#migration-from-020).
+Version 0.3.0 replaces `create_agent_task.owner` with `owner_token` and requires that token to steer or abort owned tasks. `list_agent_tasks.owner` remains a shared label filter, not identity. Unknown input properties remain rejected. See [migration](../CHANGELOG.md#migration-from-020).
 
 Every successful call returns an object matching its advertised `outputSchema`, both as `structuredContent` and as compact JSON in `content[0].text`. Existing text consumers can keep parsing the same JSON; there is no new wrapper or format parameter. Absent/null values remain omitted. Errors use `isError: true` and JSON text, without success `structuredContent`.
 
@@ -72,7 +72,9 @@ Required: non-blank `task_id` and `content`. Optional: `owner_token`, required f
 
 Experimental: request cancellation via the internal steer endpoint.
 
-Required: non-blank `task_id`. Returns `task_id`, `accepted`, and optional `status`, `terminal`, and `reason`. Already-finished tasks return `accepted: false` with `reason: "already finished"`. Acceptance is a cancellation request, not proof it has finished. The internal endpoint has not been verified against live GitHub.
+Required: non-blank `task_id`. Optional: `owner_token`, required for an owned task, including already-finished tasks. The server verifies the same token hash as steering and revalidates under the state lock before cancellation or cache changes. A wrong, missing, or mismatched token returns `owner_token_invalid` without an upstream abort request or state change; tokens are never echoed. Unowned tasks need no token.
+
+Returns `task_id`, `accepted`, and optional `status`, `terminal`, and `reason`. Already-finished tasks return `accepted: false` with `reason: "already finished"`. Acceptance is a cancellation request, not proof it has finished. The internal endpoint has not been verified against live GitHub.
 
 ## `list_copilot_models`
 
@@ -91,7 +93,7 @@ Upstream HTTP status, not arbitrary response text, determines API refusal codes.
 | Code | Meaning / next action |
 | --- | --- |
 | `invalid_argument` | Invalid local input or upstream 400/422. Check repository, refs, prompt, and model before retrying. |
-| `owner_token_invalid` | Invalid, rotated, missing for an owned steer, or mismatched owner token. Use the current privately stored CLI token; no owner routing or global fallback occurs on rejection. |
+| `owner_token_invalid` | Invalid, rotated, missing for owned steering/cancellation, or mismatched owner token. Use the current privately stored CLI token; rejection leaves the task untouched and does not invoke upstream steering/cancellation. |
 | `not_authenticated` | Missing session or upstream 401. Run `copilot-agents-mcp login` in the same session or configure `GITHUB_PERSONAL_ACCESS_TOKEN`. |
 | `forbidden` | Upstream 403. Check repository permissions; on creation, Copilot coding agent may not be enabled or the model may not be allowed. |
 | `not_found` | Upstream 404. Verify task/repository identifiers and access, including app installation. |

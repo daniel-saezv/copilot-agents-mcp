@@ -154,6 +154,7 @@ const steerOutput = z.object({
 
 const abortInput = z.object({
   task_id: z.string().describe("Required non-blank task identifier returned by create_agent_task."),
+  owner_token: ownerTokenInput,
 }).strict();
 
 const abortOutput = z.object({
@@ -273,7 +274,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   if (enabled.has("abort_agent_task")) {
     server.registerTool("abort_agent_task", {
       title: "Abort task",
-      description: `${experimentalNotice} Request cancellation of task_id via the internal steer endpoint; not verified against live GitHub. Use only to stop work, not to read status. Returns accepted, status, and terminal; accepted=false with reason when already finished. Acceptance does not mean cancellation has completed. Check authentication and task access on errors.`,
+      description: `${experimentalNotice} Request cancellation of task_id via the internal steer endpoint; not verified against live GitHub. Owned tasks require their matching owner_token. Use only to stop work, not to read status. Returns accepted, status, and terminal; accepted=false with reason when already finished. Acceptance does not mean cancellation has completed. Check authentication and task access on errors.`,
       inputSchema: abortInput,
       outputSchema: abortOutput,
       annotations: toolAnnotations("abort_agent_task", "Abort task"),
@@ -660,9 +661,14 @@ function isAbortNoSessionError(message: string): boolean {
 
 async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
+  const known = await withStateLock(deps.statePath, (state) => {
+    const owner = resolveOwnerToken(state, args.owner_token);
+    const task = state.tasks[taskId] ?? null;
+    if (task?.owner && task.owner !== owner) throw new OwnerTokenError();
+    return task;
+  });
   const token = deps.readToken();
   if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
-  const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
   if (known && isFinalState(known.state)) {
     const mapped = mapRawState(known.state);
     return {
@@ -675,8 +681,22 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   }
   const client = deps.clientForToken(token);
   try {
-    await client.abortTask(taskId);
+    return await withStateLock(deps.statePath, async (state) => {
+      const owner = resolveOwnerToken(state, args.owner_token);
+      const task = state.tasks[taskId];
+      if (task?.owner && task.owner !== owner) throw new OwnerTokenError();
+      await client.abortTask(taskId);
+      if (task) task.last_fetched_at = null;
+      const mapped = mapRawState(task?.state ?? "in_progress");
+      return {
+        task_id: taskId,
+        accepted: true,
+        status: mapped.status,
+        terminal: mapped.terminal,
+      };
+    });
   } catch (error) {
+    if (error instanceof OwnerTokenError) throw error;
     const message = failureMessage(error);
     if (isAbortNoSessionError(message) && known?.repo) {
       const parsed = parseRepo(known.repo);
@@ -686,6 +706,8 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
         repo: parsed.repo,
       });
       const tracked = await withStateLock(deps.statePath, (state) => {
+        const owner = resolveOwnerToken(state, args.owner_token);
+        if (state.tasks[taskId]?.owner && state.tasks[taskId]?.owner !== owner) throw new OwnerTokenError();
         const row = observe(state, remote, {
           repo: known.repo,
           requestedModel: state.tasks[taskId]?.requested_model ?? known.requested_model ?? null,
@@ -706,18 +728,6 @@ async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
     }
     throw error;
   }
-  await withStateLock(deps.statePath, (state) => {
-    const task = state.tasks[taskId];
-    if (task) task.last_fetched_at = null;
-  });
-  const current = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
-  const mapped = mapRawState(current?.state ?? "in_progress");
-  return {
-    task_id: taskId,
-    accepted: true,
-    status: mapped.status,
-    terminal: mapped.terminal,
-  };
 }
 
 function pullArtifact(task: AgentTask): { id: number; number: number | null } | null {

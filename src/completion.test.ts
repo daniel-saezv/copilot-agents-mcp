@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -19,7 +19,7 @@ afterEach(async () => {
 
 async function fixture(elicitation = false, existingPath?: string) {
   vi.stubEnv("COPILOT_AGENTS_NOTIFY_URL", "");
-  const dir = await mkdtemp(join(tmpdir(), "completion-test-"));
+  const dir = await mkdtemp(join(process.cwd(), ".completion-test-"));
   dirs.push(dir);
   const path = existingPath ?? join(dir, "state.json");
   const github: GitHubClient = {
@@ -34,8 +34,9 @@ async function fixture(elicitation = false, existingPath?: string) {
     abortTask: vi.fn(),
   };
   const launchWatcher = vi.fn();
+  const readToken = vi.fn(() => "github-credential");
   const server = buildServer({
-    statePath: path, readToken: () => "github-credential", clientForToken: () => github,
+    statePath: path, readToken, clientForToken: () => github,
     readModels: async () => { throw new Error("unused"); }, launchWatcher,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -52,7 +53,7 @@ async function fixture(elicitation = false, existingPath?: string) {
     return { result, body, text };
   };
   const close = async () => { await client.close(); await server.close(); };
-  return { path, github, launchWatcher, call, close, elicit };
+  return { path, github, launchWatcher, readToken, call, close, elicit };
 }
 
 const createArgs = { repo: "o/r", prompt: "tiny edit", model: "m" };
@@ -69,6 +70,17 @@ async function owner(path: string, label = "client", ownerToken = token) {
       id: "owned-task", repo: "o/r", requestedModel: "m", state: "completed", owner: "client",
       createdAt: "2026-11-25T00:00:00Z", updatedAt: null,
     });
+  });
+}
+
+async function workingTask(path: string, owned = true) {
+  await withStateLock(path, (state) => {
+    const task = state.tasks["owned-task"] = initialTask({
+      id: "owned-task", repo: "o/r", requestedModel: "m", state: "in_progress",
+      ...(owned ? { owner: "client" } : {}),
+      createdAt: "2026-11-25T00:00:00Z", updatedAt: null,
+    });
+    task.last_fetched_at = "2026-11-25T00:00:01Z";
   });
 }
 
@@ -219,6 +231,177 @@ describe("completion setup and owner capabilities", () => {
       expect(f.github.steerTask).not.toHaveBeenCalled();
       expect(f.launchWatcher).not.toHaveBeenCalled();
       expect((await readState(f.path)).tasks["owned-task"]?.steer).toBeFalsy();
+    } finally { await f.close(); }
+  });
+
+  it.each([true, false])("accepts abort of a working task with owned=%s and clears freshness", async (owned) => {
+    const f = await fixture();
+    try {
+      await owner(f.path);
+      await workingTask(f.path, owned);
+      const accepted = await f.call("abort_agent_task", {
+        task_id: "owned-task", ...(owned ? { owner_token: token } : {}),
+      });
+      expect(accepted.result.isError).toBeUndefined();
+      expect(accepted.body).toEqual({ task_id: "owned-task", accepted: true, status: "working", terminal: false });
+      expect(accepted.text).not.toContain(token);
+      expect(f.github.abortTask).toHaveBeenCalledExactlyOnceWith("owned-task");
+      expect(f.github.getTask).not.toHaveBeenCalled();
+      expect((await readState(f.path)).tasks["owned-task"]).toMatchObject({ state: "in_progress", last_fetched_at: null });
+      expect(f.launchWatcher).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it.each([
+    { owner_token: undefined, state: "in_progress" },
+    { owner_token: "wrong-private-token", state: "in_progress" },
+    { owner_token: "other-owner-token", state: "in_progress" },
+    { owner_token: undefined, state: "completed" },
+    { owner_token: "wrong-private-token", state: "completed" },
+    { owner_token: "other-owner-token", state: "completed" },
+  ])("refuses abort with $owner_token for $state before any other work", async ({ owner_token, state }) => {
+    const f = await fixture();
+    const log = vi.spyOn(console, "error");
+    try {
+      await owner(f.path);
+      await owner(f.path, "other", "other-owner-token");
+      if (state === "in_progress") await workingTask(f.path);
+      const before = await readFile(f.path, "utf8");
+      const args = { task_id: "owned-task", ...(owner_token ? { owner_token } : {}) };
+      const refused = await f.call("abort_agent_task", args);
+      const steering = await f.call("steer_agent_task", { ...args, content: "continue" });
+      expect(refused.result.isError).toBe(true);
+      expect(refused.body).toEqual(steering.body);
+      expect(refused.body).toMatchObject({ error: { code: "owner_token_invalid" } });
+      for (const secret of [token, "wrong-private-token", "other-owner-token", "hidden-query"]) {
+        expect(refused.text).not.toContain(secret);
+        expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+      }
+      expect(await readFile(f.path, "utf8")).toBe(before);
+      expect(f.readToken).not.toHaveBeenCalled();
+      expect(f.github.getTask).not.toHaveBeenCalled();
+      expect(f.github.getPullRequest).not.toHaveBeenCalled();
+      expect(f.github.abortTask).not.toHaveBeenCalled();
+      expect(f.github.steerTask).not.toHaveBeenCalled();
+      expect(f.launchWatcher).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it("returns already finished for an owned task only with its matching token", async () => {
+    const f = await fixture();
+    try {
+      await owner(f.path);
+      const before = await readFile(f.path, "utf8");
+      const finished = await f.call("abort_agent_task", { task_id: "owned-task", owner_token: token });
+      expect(finished.result.isError).toBeUndefined();
+      expect(finished.body).toEqual({
+        task_id: "owned-task", accepted: false, reason: "already finished", status: "completed", terminal: true,
+      });
+      expect(await readFile(f.path, "utf8")).toBe(before);
+      expect(f.github.abortTask).not.toHaveBeenCalled();
+      expect(f.github.getTask).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it.each(["token", "task owner"])("revalidates the %s between initial authorization and upstream abort", async (changed) => {
+    const f = await fixture();
+    try {
+      await owner(f.path);
+      await workingTask(f.path);
+      let rotatedState = "";
+      f.readToken.mockImplementation(() => {
+        const state = JSON.parse(readFileSync(f.path, "utf8")) as Awaited<ReturnType<typeof readState>>;
+        if (changed === "token" && state.webhooks?.client) state.webhooks.client.ownerTokenHash = createHash("sha256").update("rotated-capability").digest("hex");
+        else if (state.tasks["owned-task"]) state.tasks["owned-task"].owner = "other";
+        rotatedState = `${JSON.stringify(state, null, 2)}\n`;
+        writeFileSync(f.path, rotatedState);
+        return "github-credential";
+      });
+      const refused = await f.call("abort_agent_task", { task_id: "owned-task", owner_token: token });
+      expect(refused.result.isError).toBe(true);
+      expect(refused.body).toMatchObject({ error: { code: "owner_token_invalid" } });
+      expect(refused.text).not.toContain(token);
+      expect(await readFile(f.path, "utf8")).toBe(rotatedState);
+      expect(f.github.abortTask).not.toHaveBeenCalled();
+      expect(f.github.getTask).not.toHaveBeenCalled();
+      expect(f.launchWatcher).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it("keeps upstream abort and freshness invalidation atomic against concurrent token rotation", async () => {
+    const f = await fixture();
+    let finish!: () => void;
+    let rotation: Promise<void> | undefined;
+    try {
+      await owner(f.path);
+      await workingTask(f.path);
+      let started!: () => void;
+      const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+      const finishRequest = new Promise<void>((resolve) => { finish = resolve; });
+      f.github.abortTask = vi.fn().mockImplementation(async () => { started(); await finishRequest; });
+      const abort = f.call("abort_agent_task", { task_id: "owned-task", owner_token: token });
+      await requestStarted;
+      let rotated = false;
+      rotation = withStateLock(f.path, (state) => {
+        expect(state.tasks["owned-task"]?.last_fetched_at).toBeNull();
+        if (state.webhooks?.client) state.webhooks.client.ownerTokenHash = createHash("sha256").update("rotated-capability").digest("hex");
+        rotated = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(rotated).toBe(false);
+      expect((await readState(f.path)).tasks["owned-task"]?.last_fetched_at).toBe("2026-11-25T00:00:01Z");
+      finish();
+      expect((await abort).body).toEqual({ task_id: "owned-task", accepted: true, status: "working", terminal: false });
+      await rotation;
+      expect(rotated).toBe(true);
+      expect(f.github.abortTask).toHaveBeenCalledExactlyOnceWith("owned-task");
+    } finally { finish?.(); await rotation; await f.close(); }
+  });
+
+  it.each([true, false])("authorizes no-active-session fallback observation with owned=%s", async (owned) => {
+    const f = await fixture();
+    try {
+      await owner(f.path);
+      await workingTask(f.path, owned);
+      f.github.abortTask = vi.fn().mockRejectedValue(new Error("cannot abort: no active session"));
+      const finished = await f.call("abort_agent_task", {
+        task_id: "owned-task", ...(owned ? { owner_token: token } : {}),
+      });
+      expect(finished.result.isError).toBeUndefined();
+      expect(finished.body).toEqual({
+        task_id: "owned-task", accepted: false, reason: "already finished", status: "completed", terminal: true,
+      });
+      expect(f.github.abortTask).toHaveBeenCalledExactlyOnceWith("owned-task");
+      expect(f.github.getTask).toHaveBeenCalledExactlyOnceWith({ taskId: "owned-task", owner: "o", repo: "r" });
+      expect((await readState(f.path)).tasks["owned-task"]).toMatchObject({
+        state: "completed", last_fetched_at: expect.any(String), ...(owned ? { owner: "client" } : {}),
+      });
+    } finally { await f.close(); }
+  });
+
+  it.each(["token", "task owner"])("revalidates the %s before no-active-session fallback changes local state", async (changed) => {
+    const f = await fixture();
+    try {
+      await owner(f.path);
+      await workingTask(f.path);
+      f.github.abortTask = vi.fn().mockRejectedValue(new Error("cannot abort: no active session"));
+      let rotatedState = "";
+      f.github.getTask = vi.fn().mockImplementation(async () => {
+        await withStateLock(f.path, (state) => {
+          if (changed === "token" && state.webhooks?.client) state.webhooks.client.ownerTokenHash = createHash("sha256").update("rotated-capability").digest("hex");
+          else if (state.tasks["owned-task"]) state.tasks["owned-task"].owner = "other";
+        });
+        rotatedState = await readFile(f.path, "utf8");
+        return { id: "owned-task", state: "completed", session_count: 1 };
+      });
+      const refused = await f.call("abort_agent_task", { task_id: "owned-task", owner_token: token });
+      expect(refused.result.isError).toBe(true);
+      expect(refused.body).toMatchObject({ error: { code: "owner_token_invalid" } });
+      expect(refused.text).not.toContain(token);
+      expect(await readFile(f.path, "utf8")).toBe(rotatedState);
+      expect(f.github.abortTask).toHaveBeenCalledExactlyOnceWith("owned-task");
+      expect(f.github.getTask).toHaveBeenCalledExactlyOnceWith({ taskId: "owned-task", owner: "o", repo: "r" });
+      expect(f.launchWatcher).not.toHaveBeenCalled();
     } finally { await f.close(); }
   });
 

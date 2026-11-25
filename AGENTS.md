@@ -49,7 +49,7 @@ Node.js 26.13.1 (the package requires `>=26`) and pnpm 12.23.0. In development, 
 - `src/swe-models.ts` validates and reads `GET /agents/swe/models`. The base URL comes from GraphQL and is not hard-coded. `policy` and `policy.state` are optional in tool output when upstream omits them. `token_prices` is required unless the model includes `billing.multiplier`.
 - `src/state.ts`, `src/watch.ts`, and `src/notify.ts` keep local state and notify once per turn. After an accepted steer they store `session_count` and the timestamp, restart the watcher, and the notification includes `session_id`.
 - `fixtures/` holds OpenAPI examples. `src/__toolsnaps__/` pins `tools/list`.
-- `src/webhooks.ts` mints owner tokens for CLI registration, stores only hashes, and resolves tool identity. Creation, owned steering, and completion preferences use `owner_token`; `list_agent_tasks.owner` is only a shared label filter. Legacy registrations need re-registration.
+- `src/webhooks.ts` mints owner tokens for CLI registration, stores only hashes, and resolves tool identity. Creation, owned steering/cancellation, and completion preferences use `owner_token`; `list_agent_tasks.owner` is only a shared label filter. Legacy registrations need re-registration.
 
 ### Verified commands
 

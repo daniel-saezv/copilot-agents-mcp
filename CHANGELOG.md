@@ -4,14 +4,14 @@
 
 ### Breaking
 
-- `create_agent_task` replaces the free-text `owner` argument with `owner_token`. Owned tasks also require that token on `steer_agent_task`; `set_completion_strategy` accepts the same token. `list_agent_tasks.owner` remains a shared, case-insensitive label filter, not identity.
+- `create_agent_task` replaces the free-text `owner` argument with `owner_token`. Owned tasks also require that token on `steer_agent_task` and `abort_agent_task`; `set_completion_strategy` accepts the same token. `list_agent_tasks.owner` remains a shared, case-insensitive label filter, not identity.
 - Owner webhook registrations now require a server-minted token. Existing 0.2.0 registrations need re-registration and no longer enable owner delivery. Replacing or removing a registration requires its current token or a local TTY-only `--force-replace` override.
 
 ### Migration from 0.2.0
 
 1. Run `copilot-agents-mcp webhook register --owner <label> --force-replace --token-out /private/path/owner-token` in a terminal for each existing owner. Enter the webhook URL and Authorization value through the hidden prompts; never paste them in chat.
 2. Store the minted token privately. `--token-out` creates a new mode `0600` file and refuses to overwrite an existing path; without it, the CLI shows the token once on stdout. Only its SHA-256 hash is stored in state.
-3. Replace `owner` with `owner_token` on `create_agent_task`. Pass the same token on `steer_agent_task` and `set_completion_strategy`; continue using the label only as a `list_agent_tasks.owner` filter. No environment variable supplies owner identity.
+3. Replace `owner` with `owner_token` on `create_agent_task`. Pass the same token on `steer_agent_task`, `abort_agent_task`, and `set_completion_strategy`; continue using the label only as a `list_agent_tasks.owner` filter. No environment variable supplies owner identity.
 4. To rotate, re-run registration with `--token-file /private/path/current-token` and a new `--token-out` path. Update the agent's private token. Removal likewise needs `--token-file` or a hidden prompt; reserve `--force-replace` for local recovery.
 
 ### Added
@@ -19,7 +19,7 @@
 - A once-per-owner `setup` result on creation or listing asks how the user wants completion follow-up. Clients ask in the user's current language and record `webhook` or `check_later` with `set_completion_strategy`. The hint does not block creation and works without elicitation or server instructions.
 - Completion preferences and the one-time ask timestamp persist under the state lock. Unowned calls use `_default`; until a channel is configured, follow-up remains scheduled checks.
 - `webhook list` and `auth status` flag legacy registrations without exposing credentials.
-- Removal retains a hash-only label reservation to prevent takeover of existing tasks. Owned creation and steering serialize authorization and mutation against token rotation.
+- Removal retains a hash-only label reservation to prevent takeover of existing tasks. Owned creation, steering, and cancellation serialize authorization and mutation against token rotation.
 
 ### Preserved
 
