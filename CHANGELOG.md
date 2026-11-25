@@ -1,11 +1,22 @@
 # Changelog
 
+## 0.3.1
+
+### Changed
+
+- `webhook register` and `webhook remove --force-replace` no longer require a TTY for the override. The isatty check adds no real security on hosts where agents have shells (a pty wrapper bypasses it) and blocks legitimate non-interactive migration of legacy 0.2.0 registrations. `--force-replace` remains an explicit, deliberate local flag.
+- Hidden prompts remain available with a TTY; non-interactive registration still requires `--url-file` and `--auth-file`. Token minting, hash-only storage, current-token checks without the override, removal tombstones, and tool authorization are unchanged.
+
+### Non-interactive migration
+
+Run `copilot-agents-mcp webhook register --owner <id> --url-file <f> --auth-file <f> --force-replace --token-out <path>` for each legacy owner. Keep input files private. Use `--token-out` so agents never print the minted token: it creates a new mode `0600` file and refuses existing paths. Pass the new token privately as `owner_token` on owned tools.
+
 ## 0.3.0
 
 ### Breaking
 
 - `create_agent_task` replaces the free-text `owner` argument with `owner_token`. Owned tasks also require that token on `steer_agent_task` and `abort_agent_task`; `set_completion_strategy` accepts the same token. `list_agent_tasks.owner` remains a shared, case-insensitive label filter, not identity.
-- Owner webhook registrations now require a server-minted token. Existing 0.2.0 registrations need re-registration and no longer enable owner delivery. Replacing or removing a registration requires its current token or a local TTY-only `--force-replace` override.
+- Owner webhook registrations now require a server-minted token. Existing 0.2.0 registrations need re-registration and no longer enable owner delivery. Replacing or removing a registration requires its current token or an explicit local `--force-replace` override (usable non-interactively since 0.3.1).
 
 ### Migration from 0.2.0
 

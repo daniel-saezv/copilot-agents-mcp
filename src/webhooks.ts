@@ -12,7 +12,7 @@ export const WEBHOOK_INPUT_ERROR = "Invalid webhook input. Use a valid --owner, 
 
 export class OwnerTokenError extends Error {
   constructor() {
-    super("A valid owner token is required. Legacy registrations need re-registration with an interactive --force-replace.");
+    super("A valid owner token is required. Legacy registrations need re-registration with --force-replace.");
     this.name = "OwnerTokenError";
   }
 }
@@ -39,10 +39,7 @@ export function resolveOwnerToken(state: StateFile, token?: string): string | un
 export type OwnerTokenOptions = { token?: string; forceReplace?: boolean };
 
 function authorizeChange(state: StateFile, owner: string, options?: OwnerTokenOptions): void {
-  if (options?.forceReplace) {
-    if (!process.stdin.isTTY || !process.stderr.isTTY) throw new OwnerTokenError();
-    return;
-  }
+  if (options?.forceReplace) return;
   const registered = Object.hasOwn(state.webhooks ?? {}, owner);
   const removed = Object.hasOwn(state.ownerTokenHashes ?? {}, owner);
   if (!registered && !removed && !Object.values(state.tasks).some((task) => task.owner === owner)) return;

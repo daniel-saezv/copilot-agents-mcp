@@ -48,7 +48,7 @@ async function setup() {
 }
 
 describe("owner token CLI", () => {
-  it("parses only private token files and a flag-only terminal override", () => {
+  it("parses only private token files and a flag-only local override", () => {
     expect(parseArgs(["webhook", "register", "--owner", "owner", "--token-file", "in", "--token-out", "out", "--force-replace"])).toMatchObject({
       tokenFile: "in", tokenOut: "out", forceReplace: true,
     });
@@ -102,6 +102,7 @@ describe("owner token CLI", () => {
     await expect(runWebhookCommand(command)).rejects.toBeInstanceOf(OwnerTokenError);
     await expect(runWebhookCommand({ ...command, tokenFile, tokenOut })).rejects.toBeInstanceOf(OwnerTokenError);
     await expect(stat(tokenOut)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(runWebhookCommand({ command: "webhook", action: "remove", owner: "owner" })).rejects.toBeInstanceOf(OwnerTokenError);
     await expect(runWebhookCommand({ command: "webhook", action: "remove", owner: "owner", tokenFile })).rejects.toBeInstanceOf(OwnerTokenError);
     expect(await readFile(statePath, "utf8")).toBe(before);
     await writeFile(tokenFile, `${token}\n`);
@@ -136,26 +137,57 @@ describe("owner token CLI", () => {
     }
   });
 
-  it("allows force replacement/removal only on a terminal, including legacy migration", async () => {
+  it.each(["legacy", "tokenized"])("force-replaces a %s owner without a terminal and writes the token privately", async (kind) => {
+    const { command, dir, statePath, stdout, stderr } = await setup();
+    let previousToken: string | undefined;
+    if (kind === "legacy") {
+      await withStateLock(statePath, (state) => {
+        state.webhooks = { owner: { url: "https://8.8.8.8/", keyFilePath: webhookKeyPath(statePath, "owner"), registeredAt: "1970-01-01T00:00:00.000Z" } };
+      });
+    } else {
+      previousToken = await registerWebhook(statePath, "owner", "https://8.8.8.8/", "original");
+    }
+    terminal(false);
+    const tokenOut = join(dir, "owner-token");
+    await runWebhookCommand({ ...command, forceReplace: true, tokenOut });
+    const token = (await readFile(tokenOut, "utf8")).trim();
+    expect(token).toMatch(/^cam_ot_[A-Za-z0-9_-]{43}$/);
+    expect((await stat(tokenOut)).mode & 0o777).toBe(0o600);
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledExactlyOnceWith("Webhook registered.");
+    const state = await readState(statePath);
+    expect(resolveOwnerToken(state, token)).toBe("owner");
+    if (previousToken) expect(() => resolveOwnerToken(state, previousToken)).toThrow(OwnerTokenError);
+    expect(await readFile(statePath, "utf8")).not.toContain(token);
+    expect(await readFile(webhookKeyPath(statePath, "owner"), "utf8")).toBe("AUTH_SECRET");
+    const before = await readFile(statePath, "utf8");
+    await expect(runWebhookCommand({ ...command, forceReplace: true, tokenOut })).rejects.toThrow("Could not complete webhook operation.");
+    expect(await readFile(statePath, "utf8")).toBe(before);
+    expect(await readFile(tokenOut, "utf8")).toBe(`${token}\n`);
+  });
+
+  it.each(["legacy", "tokenized", "_default"])("force-removes a %s owner without a terminal", async (kind) => {
+    const { statePath } = await setup();
+    const owner = kind === "_default" ? "_default" : "owner";
+    if (kind === "tokenized") {
+      await registerWebhook(statePath, owner, "https://8.8.8.8/", "original");
+    } else {
+      await withStateLock(statePath, (state) => {
+        state.webhooks = { [owner]: { url: "https://8.8.8.8/", keyFilePath: webhookKeyPath(statePath, owner), registeredAt: "1970-01-01T00:00:00.000Z" } };
+      });
+    }
+    terminal(false);
+    const hash = (await readState(statePath)).webhooks?.[owner]?.ownerTokenHash ?? "";
+    await runWebhookCommand({ command: "webhook", action: "remove", owner, forceReplace: true });
+    expect((await readState(statePath)).webhooks).toEqual({});
+    expect((await readState(statePath)).ownerTokenHashes?.[owner]).toBe(hash);
+    await expect(stat(webhookKeyPath(statePath, owner))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["urlFile", "authFile"] as const)("still requires %s for non-terminal force registration", async (file) => {
     const { command, statePath } = await setup();
-    await withStateLock(statePath, (state) => {
-      state.webhooks = { owner: { url: "https://8.8.8.8/", keyFilePath: webhookKeyPath(statePath, "owner"), registeredAt: "1970-01-01T00:00:00.000Z" } };
-    });
     terminal(false);
-    await expect(runWebhookCommand({ ...command, forceReplace: true })).rejects.toBeInstanceOf(OwnerTokenError);
-    expect((await readState(statePath)).webhooks?.owner?.ownerTokenHash).toBeUndefined();
-    terminal(true);
-    await runWebhookCommand({ ...command, forceReplace: true });
-    expect((await readState(statePath)).webhooks?.owner?.ownerTokenHash).toMatch(/^[a-f0-9]{64}$/);
-    terminal(false);
-    await expect(runWebhookCommand({ command: "webhook", action: "remove", owner: "owner", forceReplace: true })).rejects.toBeInstanceOf(OwnerTokenError);
-    terminal(true);
-    await runWebhookCommand({ command: "webhook", action: "remove", owner: "owner", forceReplace: true });
-    expect((await readState(statePath)).webhooks).toEqual({});
-    await withStateLock(statePath, (state) => {
-      state.webhooks = { _default: { url: "https://8.8.8.8/", keyFilePath: webhookKeyPath(statePath, "_default"), registeredAt: "1970-01-01T00:00:00.000Z" } };
-    });
-    await runWebhookCommand({ command: "webhook", action: "remove", owner: "_default", forceReplace: true });
-    expect((await readState(statePath)).webhooks).toEqual({});
+    await expect(runWebhookCommand({ ...command, [file]: undefined, forceReplace: true })).rejects.toThrow("Invalid webhook input.");
+    expect((await readState(statePath)).webhooks).toBeUndefined();
   });
 });
