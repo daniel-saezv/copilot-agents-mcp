@@ -78,4 +78,4 @@ jobs:
         run: pnpm run build
 
       - name: Stage on npm with OIDC trusted publishing
-        run: pnpm stage publish --provenance
+        run: pnpm stage publish --provenance --access public --no-git-checks
