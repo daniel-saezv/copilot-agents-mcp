@@ -40,8 +40,10 @@ jobs:
       - name: Package smoke test
         run: node scripts/pack-smoke.mjs
 
-      - name: Assert detached checkout
-        run: test "$(git rev-parse --abbrev-ref HEAD)" = HEAD
+      - name: Detach HEAD (match release tag checkout)
+        run: |
+          git checkout --detach
+          test "$(git rev-parse --abbrev-ref HEAD)" = HEAD
 
       - name: Stage publish dry run
         run: pnpm stage publish --dry-run --provenance --access public --no-git-checks --json
