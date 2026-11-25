@@ -1,13 +1,13 @@
 {
   "name": "abort_agent_task",
   "title": "Abort task",
-  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Send {type: \"abort\"} to the steer endpoint, as VS Code does in tasksClient.ts, to stop the task. This has not been verified against GitHub.",
+  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Request cancellation of task_id via the internal steer endpoint; not verified against live GitHub. Use only to stop work, not to read status. Returns accepted, status, and terminal; accepted=false with reason when already finished. Acceptance does not mean cancellation has completed. Check authentication and task access on errors.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Task identifier."
+        "description": "Required non-blank task identifier returned by create_agent_task."
       }
     },
     "required": [

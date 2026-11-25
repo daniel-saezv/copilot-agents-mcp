@@ -4,11 +4,11 @@ import { lstat, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readState, withStateLock, type StateFile, type TrackedTask } from "./state.ts";
 import { validateOwner } from "./tasks.ts";
-import { validateWebhookUrl } from "./webhook-http.ts";
+import { validateWebhookUrl, WebhookValidationError } from "./webhook-http.ts";
 
 export type WebhookRegistration = NonNullable<StateFile["webhooks"]>[string];
 export const WEBHOOK_ERROR = "Could not complete webhook operation.";
-export const WEBHOOK_INPUT_ERROR = "Webhook registration requires secret files or an interactive terminal.";
+export const WEBHOOK_INPUT_ERROR = "Invalid webhook input. Use a valid --owner, secret files (--url-file and --auth-file) or hidden terminal prompts, and a nonempty single-line Authorization value.";
 
 export function webhookKeyPath(statePath: string, owner: string): string {
   const digest = createHash("sha256").update(validateOwner(owner)).digest("hex");
@@ -31,8 +31,12 @@ export async function registerWebhook(
 ): Promise<void> {
   try {
     owner = validateOwner(owner);
+  } catch {
+    throw new Error(WEBHOOK_INPUT_ERROR);
+  }
+  if (!authorization.trim() || /[\r\n]/.test(authorization)) throw new Error(WEBHOOK_INPUT_ERROR);
+  try {
     await validateWebhookUrl(url, options?.env ?? process.env);
-    if (!authorization.trim() || /[\r\n]/.test(authorization)) throw new Error(WEBHOOK_ERROR);
     await withStateLock(statePath, async (state) => {
       const keyFilePath = webhookKeyPath(statePath, owner);
       const staging = `${keyFilePath}.${randomUUID()}`;
@@ -57,7 +61,8 @@ export async function registerWebhook(
         configurable: true,
       });
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WebhookValidationError) throw error;
     throw new Error(WEBHOOK_ERROR);
   }
 }

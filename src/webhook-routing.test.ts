@@ -62,7 +62,11 @@ describe("owner webhook routing", () => {
     expect(await deliverTaskNotice({ ...task, ...change }, path, env, globalPost, ownerPost)).toEqual({ channels: ["webhook"] });
     expect(ownerPost).not.toHaveBeenCalled();
     expect(globalPost).toHaveBeenCalledWith(env.COPILOT_AGENTS_NOTIFY_URL, expect.objectContaining({
-      headers: { "content-type": "application/json", authorization: "global-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "global-secret",
+        "Idempotency-Key": "task-1:completed",
+      },
     }));
     expect(notificationChannelsForTask({ ...task, ...change }, await readState(path), {})).toEqual([]);
   });

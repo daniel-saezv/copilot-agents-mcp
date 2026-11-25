@@ -67,6 +67,10 @@ describe("tools", () => {
     expect(instructions).toContain("Tools never wait");
     expect(instructions).toContain("list_agent_tasks");
     expect(instructions).toContain("COPILOT_AGENTS_NOTIFY_URL");
+    expect(instructions).toContain("RECOMMENDED");
+    expect(instructions).toContain("check_later");
+    expect(instructions).toContain("end your turn");
+    expect(instructions).toContain("never poll in a loop");
     await client.close();
     await mcp.close();
   });
@@ -203,6 +207,10 @@ describe("tools", () => {
       expect(tool.annotations?.readOnlyHint).toBe(readOnly);
       expect(tool.annotations?.openWorldHint).toBe(true);
       expect(tool.inputSchema.additionalProperties).toBe(false);
+      expect(tool.outputSchema?.type).toBe("object");
+      for (const field of Object.values(tool.inputSchema.properties ?? {})) {
+        expect((field as { description?: string }).description).toBeTruthy();
+      }
     }
     expect(TOOLS).toEqual([
       { name: "create_agent_task", method: "POST" },
@@ -237,6 +245,54 @@ describe("tools", () => {
     expect(body.error.code).toBe("not_authenticated");
     expect(body.error.message).toContain("npx copilot-agents-mcp login");
     expect(body.error.message).toContain("keyring");
+  });
+
+  it("preserves JSON text and structured output across compact, verbose, and stale task results", async () => {
+    const statePath = await tempPath();
+    const remote: AgentTask = {
+      ...taskWithPull(7),
+      state: "completed",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      sessions: [{
+        id: "session-1",
+        state: "completed",
+        head_ref: "copilot/demo",
+        usage: { type: "ai_credits", amount: 1_000_000_000 },
+      }],
+      artifacts: [
+        ...(taskWithPull(7).artifacts ?? []),
+        { type: "branch", data: { head_ref: "copilot/demo", base_ref: "main" } },
+      ],
+    };
+    const github = { ...unusedClient(), async getTask() { return remote; } };
+    for (const verbose of [false, true]) {
+      const result = await callTool(statePath, github, "get_agent_task", {
+        task_id: remote.id,
+        repo: "octocat/hello-world",
+        verbose,
+      });
+      expect(result.isError).toBeUndefined();
+      const body = JSON.parse(textOf(result));
+      expect(result.structuredContent).toEqual(body);
+      expect(body).toMatchObject({ task_id: remote.id, terminal: true, status: "completed" });
+      if (verbose) {
+        expect(body.pull_request).toEqual({ number: 7 });
+        expect(body.usage).toEqual({ type: "ai_credits", amount: 1_000_000_000, amount_human: 1 });
+        expect(body.branch).toEqual({ head_ref: "copilot/demo", base_ref: "main" });
+      } else {
+        expect(body).not.toHaveProperty("usage");
+      }
+    }
+    for (const name of ["get_agent_task", "list_agent_tasks"]) {
+      const args = name === "get_agent_task" ? { task_id: remote.id, verbose: true } : {};
+      const result = await callTool(statePath, unusedClient(), name, args, () => {}, undefined, () => null);
+      expect(result.isError).toBeUndefined();
+      const body = JSON.parse(textOf(result));
+      expect(result.structuredContent).toEqual(body);
+      expect(body.stale).toBe(true);
+      expect(body.warnings).not.toHaveLength(0);
+    }
   });
 
   it("blocks an already rejected model without calling the API", async () => {
@@ -894,7 +950,7 @@ describe("PR #18 review regressions", () => {
     expect(gets).toBeGreaterThanOrEqual(2);
   });
 
-  it("abort_agent_task refetches when upstream rejects abort for a finished task", async () => {
+  it.each(["mock", "json", "text"] as const)("abort_agent_task refetches when upstream rejects abort for a finished task (%s)", async (mode) => {
     const statePath = await tempPath();
     await withStateLock(statePath, (state) => {
       state.tasks["task-1"] = {
@@ -911,7 +967,14 @@ describe("PR #18 review regressions", () => {
     });
     let gets = 0;
     let aborted = 0;
-    const client: GitHubClient = {
+    const finished = {
+      id: "task-1",
+      state: "completed",
+      created_at: "2026-11-23T22:00:00.000Z",
+      updated_at: "2026-11-23T22:05:03.000Z",
+      artifacts: [],
+    };
+    const client: GitHubClient = mode === "mock" ? {
       ...unusedClient(),
       async abortTask() {
         aborted += 1;
@@ -919,15 +982,20 @@ describe("PR #18 review regressions", () => {
       },
       async getTask() {
         gets += 1;
-        return {
-          id: "task-1",
-          state: "completed",
-          created_at: "2026-11-23T22:00:00.000Z",
-          updated_at: "2026-11-23T22:05:03.000Z",
-          artifacts: [],
-        };
+        return finished;
       },
-    };
+    } : createGitHubClient({
+      token: "test-token",
+      fetch: async (_input, init) => {
+        if (init?.method === "POST") {
+          aborted += 1;
+          const message = "cannot abort: no active session";
+          return new Response(mode === "json" ? JSON.stringify({ message }) : message, { status: 422 });
+        }
+        gets += 1;
+        return new Response(JSON.stringify(finished), { status: 200 });
+      },
+    });
     const result = await callTool(statePath, client, "abort_agent_task", { task_id: "task-1" });
     expect(result.isError).toBeUndefined();
     expect(aborted).toBe(1);
@@ -1208,4 +1276,3 @@ function taskFetch(example: AgentTask, pulls: (url: string) => Response): typeof
     return new Response(JSON.stringify(example), { status: 200 });
   }) as typeof fetch;
 }
-

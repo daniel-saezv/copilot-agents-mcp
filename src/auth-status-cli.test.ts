@@ -9,7 +9,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs, supportsNode } from "./cli.ts";
-import { WEBHOOK_ERROR, WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
+import { WEBHOOK_INPUT_ERROR } from "./webhooks.ts";
+import { WebhookValidationError } from "./webhook-http.ts";
 import { TOOL_NAMES } from "./selection.ts";
 import { buildServer, type ServerDeps } from "./server.ts";
 import { createGitHubClient } from "./github.ts";
@@ -129,7 +130,7 @@ describe("webhook CLI secrets", () => {
       ["AUTH_SECRET"],
       ["register", "--owner"],
     ]) {
-      expect(() => parseArgs(["webhook", ...args])).toThrow(new Error(WEBHOOK_ERROR));
+      expect(() => parseArgs(["webhook", ...args])).toThrow(new Error(WEBHOOK_INPUT_ERROR));
     }
   });
 
@@ -141,7 +142,7 @@ describe("webhook CLI secrets", () => {
     const authFile = join(dir, "auth");
     await writeFile(urlFile, `${url}\n`);
     await writeFile(authFile, `${auth}\n`);
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       NO_COLOR: "1",
       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_PAT_MARKER_SECRET",
@@ -153,7 +154,7 @@ describe("webhook CLI secrets", () => {
       const child = spawnSync(process.execPath, [cliEntry, ...args], { env, input: `${url}\n${auth}\n`, encoding: "utf8" });
       const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
       expect(child.status).toBe(expectedStatus);
-      for (const marker of [url, auth, "URL_PATH_SECRET", "URL_QUERY_SECRET", "AUTH_MARKER_SECRET", "PAT_MARKER_SECRET"]) {
+      for (const marker of [url, auth, "URL_PATH_SECRET", "URL_QUERY_SECRET", "AUTH_MARKER_SECRET", "PAT_MARKER_SECRET", "SECRET_MISSING_PATH"]) {
         expect(output).not.toContain(marker);
       }
       const parsedUrl = new URL(url);
@@ -169,18 +170,34 @@ describe("webhook CLI secrets", () => {
     expect(run(["auth", "status"])).toContain("key present: yes — mode0600: yes");
     expect(run(["webhook", "register", "--owner", "owner"], 1)).toContain(WEBHOOK_INPUT_ERROR);
     expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile], 1)).toContain(WEBHOOK_INPUT_ERROR);
-    expect(run(["webhook", "register", "--owner", "owner", "--url-file", join(dir, "missing"), "--auth-file", authFile], 1)).toContain(WEBHOOK_ERROR);
+    expect(run(["webhook", "register", "--owner", "owner", "--url-file", join(dir, "SECRET_MISSING_PATH"), "--auth-file", authFile], 1)).toContain(WEBHOOK_INPUT_ERROR);
     await writeFile(authFile, `${auth}\r\nInjected: AUTH_MARKER_SECRET`);
-    expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile], 1)).toContain(WEBHOOK_ERROR);
+    expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile], 1)).toContain(WEBHOOK_INPUT_ERROR);
     await writeFile(authFile, auth);
-    await writeFile(urlFile, "https://127.0.0.1/URL_PATH_SECRET?key=URL_QUERY_SECRET");
-    expect(run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile], 1)).toContain(WEBHOOK_ERROR);
+    const credentialUrl = new URL(url);
+    credentialUrl.username = "USER_SECRET";
+    credentialUrl.password = "PASSWORD_SECRET";
+    for (const [invalidUrl, reason, allowedHosts] of [
+      ["http://8.8.8.8/URL_PATH_SECRET?key=URL_QUERY_SECRET", "https", undefined],
+      ["https://127.0.0.1/URL_PATH_SECRET?key=URL_QUERY_SECRET", "nonPublic", undefined],
+      [url, "allowedHost", "other.example.com"],
+      ["https://webhook-secret.invalid/URL_PATH_SECRET?key=URL_QUERY_SECRET", "dns", undefined],
+      [credentialUrl.href, "input", undefined],
+      ["URL_PATH_SECRET?key=URL_QUERY_SECRET", "input", undefined],
+    ] as const) {
+      await writeFile(urlFile, invalidUrl);
+      if (allowedHosts === undefined) delete env.COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS;
+      else env.COPILOT_AGENTS_NOTIFY_ALLOWED_HOSTS = allowedHosts;
+      const output = run(["webhook", "register", "--owner", "owner", "--url-file", urlFile, "--auth-file", authFile], 1);
+      expect(output).toContain(new WebhookValidationError(reason).message);
+      for (const marker of ["USER_SECRET", "PASSWORD_SECRET", "webhook-secret.invalid"]) expect(output).not.toContain(marker);
+    }
     for (const args of [
       ["webhook", "register", "--owner", "owner", "--url", url, "--auth", auth],
       ["webhook", "register", "--owner", auth, "--version"],
       ["webhook", "list", "--version", url],
       ["webhook", auth],
-    ]) expect(run(args, 1)).toContain(WEBHOOK_ERROR);
+    ]) expect(run(args, 1)).toContain(WEBHOOK_INPUT_ERROR);
     expect(run([url, auth], 1)).toContain("Unknown argument.");
     expect(run([auth, url], 1)).toContain("Unknown argument.");
     expect(run(["webhook", "--help"])).toContain("webhook register");
@@ -188,7 +205,7 @@ describe("webhook CLI secrets", () => {
     expect(run(["webhook", "remove", "--owner", "owner"])).toContain("Webhook removed.");
     expect(run(["webhook", "remove", "--owner", "owner"])).toContain("Webhook removed.");
     expect(run(["webhook", "list"])).toBe("");
-  });
+  }, 20_000);
 });
 describe("MCP surface unchanged", () => {
   it("still exposes exactly six tools on tools/list", async () => {

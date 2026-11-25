@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AccessTokenSource } from "./auth.ts";
-import { missingPermission, ModelsError, redact } from "./errors.ts";
+import { apiFailure, ModelsError } from "./errors.ts";
 
 export const GRAPHQL_URL = "https://api.github.com/graphql";
 export const ENDPOINTS_QUERY = "query { viewer { copilotEndpoints { api } } }";
@@ -115,7 +115,7 @@ export async function readSweModels(options: {
     models = validateSweModels(body);
   } catch (error) {
     if (error instanceof ModelsError) {
-      throw new ModelsError(`GET ${url} returned HTTP 200 with an invalid format: ${error.message}`);
+      throw new ModelsError(`The Copilot models API returned HTTP 200 with an invalid format: ${error.message}`);
     }
     throw error;
   }
@@ -138,7 +138,7 @@ async function readApiBase(fetchImpl: typeof fetch, holder: { token: string }, t
   });
   const api = readApi(body);
   if (api === null) {
-    throw new ModelsError(`POST ${GRAPHQL_URL} returned HTTP 200 with an invalid format: missing data.viewer.copilotEndpoints.api`);
+    throw new ModelsError("GitHub endpoint discovery returned HTTP 200 with an invalid format: missing data.viewer.copilotEndpoints.api");
   }
   return api;
 }
@@ -160,7 +160,6 @@ async function readJson(
   init: RequestInit,
   retried = false,
 ): Promise<unknown> {
-  const method = init.method ?? "GET";
   const token = holder.token;
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
@@ -173,16 +172,19 @@ async function readJson(
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "network error";
-    throw new ModelsError(redact(`Could not call ${method} ${url}: ${message}`, token));
+    throw modelsNetworkError(error);
+  }
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw modelsNetworkError(error);
   }
   if (response.status === 401 && tokens && !retried) {
-    await response.text();
     holder.token = await tokens.refresh(token);
     return readJson(fetchImpl, holder, tokens, url, init, true);
   }
   if (response.status !== 200) {
-    const text = await response.text();
     let parsed: unknown = null;
     if (text) {
       try {
@@ -191,16 +193,21 @@ async function readJson(
         parsed = null;
       }
     }
-    const missing = missingPermission(response.status, response.headers, parsed ?? text, "Agent tasks");
-    const base = `${method} ${url} returned HTTP ${response.status}.`;
-    throw new ModelsError(redact(missing ? `${missing} ${base}` : base, token));
+    const failure = apiFailure(response.status, response.headers, parsed ?? text, { permission: "Agent tasks" });
+    throw new ModelsError(failure.message, failure);
   }
-  const text = await response.text();
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new ModelsError(`${method} ${url} returned HTTP 200 with a non-JSON body.`);
+    throw new ModelsError("The Copilot API returned HTTP 200 with a non-JSON body.");
   }
+}
+
+function modelsNetworkError(error: unknown): ModelsError {
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return new ModelsError("The Copilot API request timed out. Try listing models again.", { code: "upstream_timeout", retryable: true });
+  }
+  return new ModelsError("Could not read the Copilot API response. Check your network connection and try listing models again.", { code: "upstream_error", retryable: true });
 }
 
 function readModel(item: unknown, index: number): SweModel {

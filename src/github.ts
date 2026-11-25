@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Ajv, type AnySchema } from "ajv";
 import addFormatsDefault from "ajv-formats";
 import type { AccessTokenSource } from "./auth.ts";
-import { GitHubError, API_VERSION, formatApiError, missingPermission, redact, withMissingAppInstall, type GithubPermission } from "./errors.ts";
+import { GitHubError, API_VERSION, apiFailure, type GithubPermission } from "./errors.ts";
 
 export type AgentSession = {
   id?: string;
@@ -273,9 +273,9 @@ async function callGitHub(options: GitHubCall): Promise<unknown> {
   const first = await sendGitHub(options, firstToken);
   if (first.response.status === 401 && options.tokens) {
     const nextToken = await options.tokens.refresh(firstToken);
-    return acceptGitHub(options, await sendGitHub(options, nextToken), nextToken);
+    return acceptGitHub(options, await sendGitHub(options, nextToken));
   }
-  return acceptGitHub(options, first, firstToken);
+  return acceptGitHub(options, first);
 }
 
 async function sendGitHub(options: GitHubCall, token: string): Promise<{ response: Response; parsed: unknown; text: string }> {
@@ -299,23 +299,21 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
-      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`, { code: "upstream_timeout", retryable: true });
     }
-    const message = error instanceof Error ? error.message : "network error";
-    throw new GitHubError(redact(`Could not call the GitHub API: ${message}`, token));
+    throw new GitHubError("Could not call the GitHub API. Check your network connection and GitHub service status.", { code: "upstream_error", retryable: true });
   }
   let text: string;
   try {
     text = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
-      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`, { code: "upstream_timeout", retryable: true });
     }
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`);
+      throw new GitHubError(`The GitHub API call timed out after ${timeoutMs} milliseconds.`, { code: "upstream_timeout", retryable: true });
     }
-    const message = error instanceof Error ? error.message : "network error";
-    throw new GitHubError(redact(`Could not read the GitHub API response: ${message}`, token));
+    throw new GitHubError("Could not read the GitHub API response. Check your network connection and read the task's current status before trying again.", { code: "upstream_error", retryable: true });
   }
   let parsed: unknown = null;
   if (text) {
@@ -328,16 +326,15 @@ async function sendGitHub(options: GitHubCall, token: string): Promise<{ respons
   return { response, parsed, text };
 }
 
-function acceptGitHub(options: GitHubCall, sent: { response: Response; parsed: unknown; text: string }, token: string): unknown {
+function acceptGitHub(options: GitHubCall, sent: { response: Response; parsed: unknown; text: string }): unknown {
   const { response, parsed, text } = sent;
   if (!response.ok) {
-    const detail = parsed === null && text
-      ? `HTTP ${response.status}`
-      : formatApiError(response.status, response.headers, parsed);
-    const missing = missingPermission(response.status, response.headers, parsed ?? text, options.permission);
-    const message = missing ? `${missing} ${detail}` : detail;
-    const annotated = withMissingAppInstall(message, response.status, options.path, options.tokens !== undefined);
-    throw new GitHubError(redact(annotated, token));
+    const failure = apiFailure(response.status, response.headers, parsed ?? text, {
+      permission: options.permission,
+      createTask: options.method === "POST" && options.path.endsWith("/tasks"),
+      appRepository: options.tokens !== undefined && options.path.startsWith("/agents/repos/"),
+    });
+    throw new GitHubError(failure.message, failure);
   }
   if (options.acceptEmpty && response.status === 202) return undefined;
   if (parsed === null) throw new GitHubError(`The GitHub response is not JSON (HTTP ${response.status}).`);

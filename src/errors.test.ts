@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redact, redactTokenShapes } from "./errors.ts";
+import { apiFailure, failureToError, GitHubError, ModelsError, redact, redactTokenShapes } from "./errors.ts";
 
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -69,5 +69,63 @@ describe("redactTokenShapes", () => {
 describe("redact", () => {
   it("replaces an exact secret substring", () => {
     expect(redact("key=abc123", "abc123")).toBe("key=[redacted]");
+  });
+
+  describe("API failures", () => {
+    it("keeps explicit status codes through error serialization instead of guessing from hints", () => {
+      for (const ErrorClass of [GitHubError, ModelsError]) {
+        const failure = apiFailure(422, new Headers(), { message: "Not Found" });
+        expect(failureToError(new ErrorClass(failure.message, failure)).error).toMatchObject({
+          code: "invalid_argument",
+          retryable: false,
+        });
+      }
+    });
+
+    it("preserves only recognized validation fields and codes", () => {
+      const failure = apiFailure(422, new Headers(), {
+        message: "private-message",
+        errors: [
+          { field: "prompt", code: "missing_field", message: "private-message" },
+          { field: "private-field", code: "invalid" },
+          { field: "model", code: "private-code" },
+          "private-error",
+        ],
+      });
+      expect(failure.message).toContain("Validation Failed: prompt missing_field");
+      expect(JSON.stringify(failure)).not.toContain("private-");
+    });
+
+    it("keeps known permission hints but rejects arbitrary header names and values", () => {
+      const failure = apiFailure(403, new Headers({
+        "x-accepted-github-permissions": "contents=write, metadata=read, private-header=read, pull_requests=private-value",
+      }), { message: "private-message" }, { permission: "Agent tasks" });
+      expect(failure.code).toBe("forbidden");
+      expect(failure.message).toContain("Missing permissions: Contents: write and Metadata: read.");
+      expect(JSON.stringify(failure)).not.toContain("private-");
+    });
+
+    it("preserves only the exact safe abort-refusal signal", () => {
+      const message = "cannot abort: no active session";
+      expect(apiFailure(422, new Headers(), { message }).message).toContain(message);
+      for (const unsafe of [`private-secret ${message}`, `${message} private-secret`]) {
+        const failure = apiFailure(422, new Headers(), { message: unsafe });
+        expect(failure.message).not.toContain("private-secret");
+        expect(failure.message).not.toContain(message);
+      }
+    });
+
+    it("recognizes an exhausted 403 even when its reset time is missing", () => {
+      const failure = apiFailure(403, new Headers({ "x-ratelimit-remaining": "0" }), { message: "forbidden" });
+      expect(failure).toMatchObject({ code: "rate_limited", retryable: true });
+      expect(failure).not.toHaveProperty("retry_after_s");
+    });
+
+    it.each(["not-a-number", "9".repeat(400)])("does not copy invalid retry metadata", (retry) => {
+      const failure = apiFailure(429, new Headers({ "retry-after": retry }), { message: "private-message" });
+      expect(failure).toMatchObject({ code: "rate_limited", retryable: true });
+      expect(failure).not.toHaveProperty("retry_after_s");
+      expect(failure.message).not.toContain(retry);
+    });
   });
 });

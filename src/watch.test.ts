@@ -387,13 +387,14 @@ describe("watcher", () => {
   it("resumes a pending task and posts to the local receiver", async () => {
     const statePath = await tempState();
     await save(statePath, task("task-1", "in_progress", "grok-4.7"));
-    const received: Array<{ authorization: string | undefined; body: unknown }> = [];
+    const received: Array<{ authorization: string | undefined; idempotencyKey: string | string[] | undefined; body: unknown }> = [];
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on("data", (chunk: Buffer) => chunks.push(chunk));
       req.on("end", () => {
         received.push({
           authorization: req.headers.authorization,
+          idempotencyKey: req.headers["idempotency-key"],
           body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
         });
         res.writeHead(204);
@@ -449,23 +450,50 @@ describe("watcher", () => {
     }
     expect(received).toHaveLength(1);
     expect(received[0]?.authorization).toBe("Bearer aviso");
-    expect(received[0]?.body).toMatchObject({
+    expect(received[0]?.idempotencyKey).toBe("task-1:completed");
+    expect(received[0]?.body).toEqual({
       task_id: "task-1",
       repo: "octocat/hello-world",
       state: "completed",
-      requested_model: "grok-4.7",
-      resolved_model: "sweagent-capi:grok-4.7",
-      pull_request: { id: 42, number: 7, html_url: "https://github.com/octocat/hello-world/pull/7" },
-      branch: { head_ref: "copilot/demo", base_ref: "main" },
-      error: null,
-      usage: { type: "ai_credits", amount: 344_355_000, amount_human: 0.344355 },
-      created_at: "2026-11-22T00:00:00Z",
-      completed_at: "2026-11-22T00:05:00Z",
+      pr_url: "https://github.com/octocat/hello-world/pull/7",
     });
   });
 });
 
 describe("webhook notification", () => {
+  it.each([null, "https://github.com/octocat/hello-world/pull/7"])("excludes task details from the global payload with pr_url %s", async (prUrl) => {
+    let posted = false;
+    const notice = {
+      ...sampleNotice(),
+      pull_request: prUrl ? { id: 42, number: 7, html_url: prUrl } : null,
+      error: "private-error-detail",
+      session_id: "private-session-id",
+      requested_model: "private-model",
+      branch: { head_ref: "private-branch", base_ref: "main" },
+    };
+    const delivered = await deliverNotice(notice, {
+      COPILOT_AGENTS_NOTIFY_URL: "https://notification.example/hook",
+      COPILOT_AGENTS_NOTIFY_AUTHORIZATION: "global-auth-value",
+    }, async (_url, init) => {
+      posted = true;
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("global-auth-value");
+      expect(headers.get("idempotency-key")).toBe("task-1:completed");
+      expect(headers.get("content-type")).toBe("application/json");
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toEqual({
+        task_id: "task-1", state: "completed", repo: "octocat/hello-world", pr_url: prUrl,
+      });
+      for (const key of Object.keys(notice)) {
+        if (!["task_id", "state", "repo"].includes(key)) expect(body).not.toHaveProperty(key);
+      }
+      expect(String(init?.body)).not.toContain("private-");
+      return new Response(null, { status: 204 });
+    });
+    expect(delivered.channels).toEqual(["webhook"]);
+    expect(posted).toBe(true);
+  });
+
   it("returns webhook when NOTIFY_URL is set", () => {
     expect(activeNotificationChannels("linux", { COPILOT_AGENTS_NOTIFY_URL: "http://127.0.0.1/hook" })).toEqual(["webhook"]);
     expect(activeNotificationChannels("linux", {})).toEqual([]);
@@ -568,7 +596,9 @@ describe("credits and pull request", () => {
     expect((await readState(statePath)).tasks["task-1"]?.notified_at).toBeTruthy();
     const log = await readFile(logPath, "utf8");
     expect(log).toContain("Could not resolve pull request 42 for task-1");
-    expect(log).toContain("boom");
+    expect(log).toContain("HTTP 500");
+    expect(log).toContain("Check GitHub service status");
+    expect(log).not.toContain("boom");
     expect(log).not.toContain("test-token");
   });
 });

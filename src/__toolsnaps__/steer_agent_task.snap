@@ -1,17 +1,17 @@
 {
   "name": "steer_agent_task",
   "title": "Steer task",
-  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Each steer consumes credits. The agent applies the instruction after its current tool call finishes. Send an instruction to a task with an open pull request.",
+  "description": "[Experimental] Undocumented internal GitHub endpoint that can change without notice. Send content to task_id when continuing or redirecting a task with an open pull request. Each call consumes credits and is not idempotent; the agent applies it after its current tool call. Returns task_id, accepted, and the pre-steer session_count, then watches the new turn when notifications are configured. Errors explain missing authentication, repository, or an absent/closed pull request.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "task_id": {
         "type": "string",
-        "description": "Task identifier."
+        "description": "Required non-blank task identifier returned by create_agent_task."
       },
       "content": {
         "type": "string",
-        "description": "Instructions to send to the task."
+        "description": "Required non-blank follow-up instructions, trimmed before sending. Each call consumes credits; never include credentials."
       }
     },
     "required": [

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { API_VERSION, formatApiError } from "./errors.ts";
+import { API_VERSION, failureToError, formatApiError, GitHubError, toolError } from "./errors.ts";
 import { assertSchema, createGitHubClient, officialSchema } from "./github.ts";
 
 const token = "test-token";
@@ -74,7 +74,7 @@ describe("OpenAPI contract", () => {
     assertSchema(officialSchema("get-task.response.json"), example, "read task");
   });
 
-  it("flattens a 422 and a rate limit without copying the token", async () => {
+  it("reports safe validation details and a rate limit without copying the token", async () => {
     const limited = createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify({ message: "API rate limit exceeded for test-token" }), {
@@ -83,7 +83,7 @@ describe("OpenAPI contract", () => {
       })),
     });
     await expect(limited.getTask({ taskId: "task-1" })).rejects.toThrow(/Retry after 12 seconds/);
-    await expect(limited.getTask({ taskId: "task-1" })).rejects.toThrow(/\[redacted\]/);
+    await expect(limited.getTask({ taskId: "task-1" })).rejects.not.toThrow(token);
     const invalid = createGitHubClient({
       token,
       fetch: mockFetch(() => new Response(JSON.stringify({
@@ -191,7 +191,7 @@ describe("internal task API", () => {
     await expect(client.abortTask("missing-task")).rejects.toThrow("not found");
   });
 
-  it("names the repository for an app 404 and preserves GitHub's message for a PAT", async () => {
+  it("suggests app installation for a repository 404 without copying repository identifiers", async () => {
     const notFound = () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
     const missingIntegration = () => new Response(JSON.stringify({ message: "Integration not found" }), { status: 404 });
     const app = createGitHubClient({
@@ -207,7 +207,7 @@ describe("internal task API", () => {
       fetch: mockFetch(() => notFound()),
     });
     await expect(app.getTask({ owner: "octocat", repo: "ghost-repo", taskId: "task-1" })).rejects.toThrow(
-      "Repository octocat/ghost-repo was not found or is not accessible.",
+      "Resource not found or is not accessible.",
     );
     const appMissing = createGitHubClient({
       token: "ghu_app",
@@ -222,15 +222,15 @@ describe("internal task API", () => {
       fetch: mockFetch(() => missingIntegration()),
     });
     await expect(appMissing.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(
-      "Install the app for octocat/hello-world: https://github.com/apps/copilot-agents-mcp/installations/new. Integration not found",
+      "Install the app for the repository: https://github.com/apps/copilot-agents-mcp/installations/new.",
     );
-    await expect(app.steerTask("task-1", "continue")).rejects.toThrow("Not Found");
+    await expect(app.steerTask("task-1", "continue")).rejects.toThrow(/not found/i);
     await expect(app.steerTask("task-1", "continue")).rejects.not.toThrow(/installations\/new/);
     const pat = createGitHubClient({
       token,
       fetch: mockFetch(() => notFound()),
     });
-    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow("Not Found");
+    await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.toThrow(/not found/i);
     await expect(pat.getTask({ owner: "octocat", repo: "hello-world", taskId: "task-1" })).rejects.not.toThrow(/Install the app/);
   });
 
@@ -352,6 +352,152 @@ describe("timeouts", () => {
       prompt: "x",
       model: "mai-code-2",
     })).rejects.toThrow(/timed out after 50 milliseconds/);
+  });
+});
+
+describe("HTTP error contract", () => {
+  const input = { owner: "octocat", repo: "hello-world", prompt: "Fix it", model: "test-model" };
+
+  it.each([
+    [400, "invalid_argument", false, /Check the task arguments/],
+    [401, "not_authenticated", false, /login/],
+    [403, "forbidden", false, /Copilot coding agent may not be enabled for this repository/],
+    [404, "not_found", false, /Check the repository or task ID and your access/],
+    [408, "upstream_timeout", true, /current status/],
+    [409, "conflict", false, /current status/],
+    [422, "invalid_argument", false, /Check the task arguments/],
+    [429, "rate_limited", true, /Wait before trying again/],
+    [500, "upstream_error", true, /GitHub service status/],
+    [503, "upstream_error", true, /GitHub service status/],
+    [504, "upstream_timeout", true, /current status/],
+    [418, "upstream_error", false, /GitHub service status/],
+  ] as const)("maps HTTP %s independently of misleading response text", async (status, code, retryable, hint) => {
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch(() => new Response(JSON.stringify({ message: "HTTP 404 Not Found; forbidden; invalid argument" }), { status })),
+    });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(GitHubError);
+    const body = failureToError(failure);
+    expect(body.error).toMatchObject({ code, retryable });
+    expect(body.error.message).toMatch(hint);
+    expect(body.error.message).toContain(`HTTP ${status}`);
+    expect(body.error).not.toHaveProperty("retry_after_s");
+  });
+
+  it.each(["forbidden", JSON.stringify({ message: "forbidden" })])("explains a bare create refusal: %s", async (body) => {
+    const client = createGitHubClient({ token, fetch: mockFetch(() => new Response(body, { status: 403 })) });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    expect(failureToError(failure).error).toMatchObject({
+      code: "forbidden",
+      retryable: false,
+      message: expect.stringMatching(/enable it.*model policy/),
+    });
+  });
+
+  it.each([403, 422])("adds model policy guidance for HTTP %s without changing its code", async (status) => {
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch(() => new Response(JSON.stringify({ message: "The model is not allowed for agent tasks" }), { status })),
+    });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    expect(failureToError(failure).error).toMatchObject({
+      code: status === 403 ? "forbidden" : "invalid_argument",
+      message: expect.stringContaining("Use list_copilot_models"),
+    });
+  });
+
+  it("does not suggest enabling the coding agent for pull request refusals", async () => {
+    const client = createGitHubClient({ token, fetch: mockFetch(() => new Response("forbidden", { status: 403 })) });
+    const failure: unknown = await client.getPullRequest({ owner: "octocat", repo: "hello-world", number: 7 }).catch((error: unknown) => error);
+    expect(failureToError(failure).error.code).toBe("forbidden");
+    expect(failureToError(failure).error.message).not.toContain("coding agent");
+  });
+
+  it("preserves rate-limit metadata for a 403 with a misleading response message", async () => {
+    const client = createGitHubClient({
+      token,
+      fetch: mockFetch(() => new Response(JSON.stringify({ message: "forbidden" }), {
+        status: 403,
+        headers: { "retry-after": "12" },
+      })),
+    });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    expect(failureToError(failure).error).toMatchObject({ code: "rate_limited", retryable: true, retry_after_s: 12 });
+    expect(failureToError(failure).error.message).not.toContain("coding agent");
+  });
+
+  it.each([403, 404, 422, 429, 500])("omits untrusted bodies, paths, query strings, and headers for HTTP %s", async (status) => {
+    const secrets = [
+      "opaque-auth-secret",
+      "ghs_synthetic.jwt.signature",
+      "opaque-response-secret",
+      "private-owner",
+      "private-repository",
+      "private-task",
+      "private-query",
+      "private-header",
+    ];
+    const client = createGitHubClient({
+      token: secrets[0] ?? "",
+      tokens: { async current() { return secrets[0] ?? ""; }, async refresh() { throw new Error("unexpected refresh"); } },
+      baseUrl: "******example.test/private-query?private-query=",
+      fetch: mockFetch(() => new Response(JSON.stringify({
+        message: secrets.join(" "),
+        errors: [
+          { message: secrets.join(" ") },
+          { field: secrets.join(" "), code: "invalid" },
+          { field: "prompt", code: secrets.join(" ") },
+        ],
+        documentation_url: "https://example.test/private-query",
+      }), {
+        status,
+        headers: { "x-accepted-github-permissions": "private-header=read, contents=private-header", "retry-after": "private-header" },
+      })),
+    });
+    const failure: unknown = await client.getTask({
+      owner: "private-owner", repo: "private-repository", taskId: "private-task",
+    }).catch((error: unknown) => error);
+    const output = JSON.stringify(toolError(failureToError(failure)));
+    for (const secret of secrets) expect(output).not.toContain(secret);
+    expect(output).not.toContain("documentation_url");
+  });
+
+  it.each(["fetch", "body"] as const)("omits network exception details from %s failures", async (where) => {
+    const secret = "Authorization: ****** https://example.test/private/path?query-secret";
+    const client = createGitHubClient({
+      token,
+      fetch: async () => {
+        if (where === "fetch") throw new Error(secret);
+        const response = new Response();
+        response.text = async () => { throw new Error(secret); };
+        return response;
+      },
+    });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    expect(failureToError(failure).error).toMatchObject({ code: "upstream_error", retryable: true });
+    const output = JSON.stringify(toolError(failureToError(failure)));
+    for (const fragment of ["Authorization", "Bearer", "opaque-auth-secret", "example.test", "private/path", "query-secret"]) {
+      expect(output).not.toContain(fragment);
+    }
+  });
+
+  it("does not echo either credential after a failed authentication refresh", async () => {
+    let calls = 0;
+    const client = createGitHubClient({
+      token: "initial-secret",
+      tokens: { async current() { return "initial-secret"; }, async refresh() { return "refreshed-secret"; } },
+      fetch: mockFetch(() => {
+        calls += 1;
+        return new Response(JSON.stringify({ message: "initial-secret refreshed-secret" }), { status: 401 });
+      }),
+    });
+    const failure: unknown = await client.createTask(input).catch((error: unknown) => error);
+    const output = JSON.stringify(toolError(failureToError(failure)));
+    expect(calls).toBe(2);
+    expect(failureToError(failure).error.code).toBe("not_authenticated");
+    expect(output).not.toContain("initial-secret");
+    expect(output).not.toContain("refreshed-secret");
   });
 });
 
