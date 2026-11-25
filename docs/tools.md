@@ -85,3 +85,4 @@ Upstream HTTP status, not arbitrary response text, determines API refusal codes.
 | `model_unavailable` | Previously rejected model. Choose another model from accepted observations or discovery. |
 
 `retryable` describes the failure, not permission to repeat a non-idempotent operation. `retry_after_s` is optional. Refusal hints never include raw response bodies, credentials, Authorization values, or secret URL paths/queries.
+
