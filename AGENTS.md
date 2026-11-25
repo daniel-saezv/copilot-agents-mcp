@@ -77,7 +77,7 @@ Workflows run on each pull request and each push to `main`:
 - `.github/workflows/ci.yml`: Node 26 and pnpm. `pnpm install --frozen-lockfile`, types, lint, tests, `pnpm audit --audit-level=low`, licenses, and CodeQL (`javascript-typescript`). Actions are pinned by SHA.
 - `.github/workflows/skills.yml`: validates `project-setup` and `agent-environment` with `skills-ref`. Node 26.
 - `.github/workflows/copilot-setup-steps.yml`: installs Node 26 and runs `bash scripts/setup` when that script or the workflow changes.
-- `.github/workflows/release.yml`: on `v*` tags, checks tag vs `package.json` version, runs `node scripts/pack-smoke.mjs` in `verify`, then stages the package on npm with `npm stage publish --provenance --access public` via OIDC (no tokens). The maintainer (Gamusino) approves the staged version on [npmjs.com](https://www.npmjs.com/) with 2FA before it goes live.
+- `.github/workflows/release.yml`: on `v*` tags, checks tag vs `package.json` version, runs `node scripts/pack-smoke.mjs` in `verify`, then stages the package on npm with `pnpm stage publish --provenance` via OIDC (no tokens). The maintainer (Gamusino) approves the staged version on [npmjs.com](https://www.npmjs.com/) with 2FA before it goes live.
 
 The branch protection API returned 403, so required checks are not recorded here. The workflows above run on each PR. Consider requiring the `test` and `codeql` jobs from `ci.yml` before merge if they are not already required. The project is not deployed. npm releases use staged publishing (see `release.yml`). Distribution is `npx -y copilot-agents-mcp` from the npm registry.
 

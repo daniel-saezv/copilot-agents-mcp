@@ -40,6 +40,9 @@ jobs:
       - name: Package smoke test
         run: node scripts/pack-smoke.mjs
 
+      - name: Stage publish dry run
+        run: pnpm stage publish --dry-run --no-git-checks --json
+
       - name: Audit
         run: pnpm audit --audit-level=low
 

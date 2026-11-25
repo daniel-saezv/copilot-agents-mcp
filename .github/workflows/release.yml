@@ -77,10 +77,5 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Ensure npm CLI for staged publishing
-        run: |
-          npm install -g "npm@^11.15.0"
-          npm --version
-
       - name: Stage on npm with OIDC trusted publishing
-        run: npm stage publish --provenance --access public
+        run: pnpm stage publish --provenance
