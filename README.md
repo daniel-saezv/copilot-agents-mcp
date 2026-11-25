@@ -56,10 +56,10 @@ Watcher poll interval and task freshness are **fixed internally** (15s poll, 60s
 | `steer_agent_task` | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Send content to task_id when continuing or redirecting a task with an open pull request. Owned tasks require their matching owner_token. Each call consumes credits and is not idempotent; the agent applies it after its current tool call. Returns task_id, accepted, and the pre-steer session_count, then watches the new turn when notifications are configured. Errors explain missing authentication, repository, or an absent/closed pull request. |
 | `abort_agent_task` | no | [Experimental] Undocumented internal GitHub endpoint that can change without notice. Request cancellation of task_id via the internal steer endpoint; not verified against live GitHub. Owned tasks require their matching owner_token. Use only to stop work, not to read status. Returns accepted, status, and terminal; accepted=false with reason when already finished. Acceptance does not mean cancellation has completed. Check authentication and task access on errors. |
 | `list_copilot_models` | yes | Discover model IDs before create_agent_task. Reads /agents/swe/models and returns source metadata plus models with ID, name, vendor, preview, token prices or billing multiplier, and optional promotion/policy. No parameters. Availability remains subject to repository policy. Errors explain missing authentication, upstream access/network failures, or an invalid upstream response. |
-| `set_completion_strategy` | no | Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. Returns strategy and next_step. |
+| `set_completion_strategy` | no | Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. For webhook, the receiver must wake the agent that owns the task live—silent or muted handlers miss completions or deliver them late; see Platform notes in the README. Returns strategy and next_step. |
 <!-- END AUTOMATED TOOLS -->
 
-After `create_agent_task`, end your turn. The server returns `follow_up` and `next_step`: either wake on a webhook or schedule `list_agent_tasks` (not before `check_after`).
+After `create_agent_task`, end your turn. The server returns `follow_up` and `next_step`: either rely on a webhook that wakes the owning agent live, or schedule `list_agent_tasks` (not before `check_after`).
 
 Version **0.3.0** replaces free-text owner identity with a CLI-minted `owner_token` and adds `set_completion_strategy`. Every tool advertises an output schema and returns matching JSON text and `structuredContent`. See [migration steps](CHANGELOG.md#migration-from-020) and [tool contracts and error codes](docs/tools.md).
 
@@ -85,7 +85,8 @@ For a shared connector, use [per-client webhooks](#optional-per-client-webhooks)
 3. On headless Linux, set `DBUS_SESSION_BUS_ADDRESS` (for example `unix:path=/tmp/xdg-runtime-box/bus`) so GitHub App `login` can use the keyring; otherwise set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server env.
 4. **Webhook routine (recommended):** Create a **Routine** with a **Webhook** trigger in the Grok Bot UI. The **human who owns the routine** configures the MCP server’s masked secret fields; the bot cannot read those values itself. Set `COPILOT_AGENTS_NOTIFY_URL` to the routine’s **webhook URL** from the panel (`https://…`).
 5. Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the literal string `Bearer <routine-key>`: the word `Bearer` exactly once, one space, then the routine’s **Authorization key** from the panel. The server sends this value verbatim as the HTTP `Authorization` header. Do **not** paste the webhook URL here—that belongs only in `COPILOT_AGENTS_NOTIFY_URL`.
-6. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
+6. Configure routine delivery per [Grok Bot](#grok-bot) in Platform notes so the owning bot wakes (`deliverTo = app_chat`, not `none`).
+7. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
 
 ### (b) Claude Code and Claude Desktop
 
@@ -172,11 +173,21 @@ Owner endpoints must use public HTTPS. Registration and delivery validate every 
 
 Owner and global POST bodies contain only `task_id`, `state`, `repo`, and `pr_url` (nullable), with a stable `Idempotency-Key: <task_id>:<status>` per task and terminal status. Receivers should deduplicate this key and call `get_agent_task` for details. Delivery records remain in local state; inspect `get_agent_task.delivery` and use scheduled checks if delivery fails.
 
+Receiving the POST is not enough: your webhook handler must **wake the agent that owns the task live**. A silent or muted handler may still accept the completion payload but the owning agent is not notified, so completions are missed or surface only when someone checks later. Platform-specific delivery settings are in [Platform notes](#platform-notes) below.
+
 If the receiver uses a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` before starting the server/watcher process that sends webhooks. Setting it only on the receiver does not configure the sender's trust.
+
+### Platform notes
+
+Add one `### <Platform>` heading per host environment when webhook delivery must be configured in that platform's UI. Keep platform-neutral wording in MCP tool results and `setup` hints; put host-specific steps under the matching heading only.
+
+### Grok Bot
+
+The webhook-triggered routine must deliver into the **owning bot's own chat** (`deliverTo = app_chat`). `deliverTo = none` accepts the POST but does **not** wake that bot, so task completions are missed or delayed.
 
 ### Example client: Grok Bot routine
 
-1. Each bot creates its own webhook-trigger routine.
+1. Each bot creates its own webhook-trigger routine (see [Grok Bot](#grok-bot) platform notes for `deliverTo`).
 2. The owner copies that routine's URL and complete Authorization value into the hidden prompts of `copilot-agents-mcp webhook register --owner <botName>`. Never paste either into chat.
 3. Store its minted token privately and have that bot launch a tiny task using `owner_token`, such as a one-line documentation correction. Do not use shared connector environment variables as identity.
 4. Verify end-to-end that its routine receives the terminal notice and calls `get_agent_task` once for the result. Confirm another bot's routine is not triggered. No release or merge is needed.
