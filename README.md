@@ -79,7 +79,7 @@ Run the same stdio command everywhere:
 2. Optional: set `COPILOT_AGENTS_STATE_PATH` in the server environment so this bot does not share state with other agents.
 3. On headless Linux, set `DBUS_SESSION_BUS_ADDRESS` (for example `unix:path=/tmp/xdg-runtime-box/bus`) so GitHub App `login` can use the keyring; otherwise set `GITHUB_PERSONAL_ACCESS_TOKEN` in the server env.
 4. **Webhook routine (recommended):** Create a **Routine** with a **Webhook** trigger in the Grok Bot UI. The **human who owns the routine** configures the MCP server’s masked secret fields; the bot cannot read those values itself. Set `COPILOT_AGENTS_NOTIFY_URL` to the routine’s **webhook URL** from the panel (`https://…`).
-5. Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the literal string `Bearer <routine-key>`: the word `Bearer` exactly once, one space, then the routine’s **Authorization key** from the panel. The server sends this value verbatim as the HTTP `Authorization` header. Do **not** paste the webhook URL here—that belongs only in `COPILOT_AGENTS_NOTIFY_URL`.
+5. Set `COPILOT_AGENTS_NOTIFY_AUTHORIZATION` to the word `Bearer` exactly once, followed by one space and the routine’s **Authorization key** from the panel. The server sends this value verbatim as the HTTP `Authorization` header. Do **not** paste the webhook URL here—that belongs only in `COPILOT_AGENTS_NOTIFY_URL`.
 6. When a Copilot task reaches a terminal state, the background watcher POSTs JSON to the routine; the bot can wake and call `get_agent_task` once. Without the webhook, follow the `check_later` text in `next_step`.
 
 ### (b) Claude Code and Claude Desktop
