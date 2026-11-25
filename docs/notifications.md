@@ -2,6 +2,8 @@
 
 Delivery is **at-least-once** bookkeeping in local state. `get_agent_task.delivery` (`not_configured` | `pending` | `delivered` | `failed`) does not wake your agent by itself.
 
+Your webhook handler must wake the agent that owns the task live. A silent or muted handler can still receive the completion POST without notifying that agent, so completions are missed or arrive late. See [Platform notes](../README.md#platform-notes) in the README for host-specific delivery settings (no duplication here).
+
 ## Webhook
 
 For optional per-client registration, use `copilot-agents-mcp webhook register --owner <id>` and the hidden prompts (or `--url-file` / `--auth-file`). See the [webhook security model and client example](../README.md#optional-per-client-webhooks). Owner delivery contains only `task_id`, `state`, `repo`, and `pr_url`, uses a stable `Idempotency-Key`, pins validated public HTTPS addresses, and rejects redirects.

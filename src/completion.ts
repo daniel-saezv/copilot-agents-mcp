@@ -49,7 +49,7 @@ export function setCompletionStrategy(state: StateFile, owner: string | undefine
   return {
     strategy,
     next_step: strategy === "webhook"
-      ? "Configure a webhook locally with `copilot-agents-mcp webhook register --owner <client-name>` using hidden terminal prompts or private input files. Save the owner token in private MCP client configuration; never paste it or webhook secrets into chat. Registration applies only to eligible tasks; use check_later until registration is complete."
+      ? "Configure a webhook locally with `copilot-agents-mcp webhook register --owner <client-name>` using hidden terminal prompts or private input files. Save the owner token in private MCP client configuration; never paste it or webhook secrets into chat. The webhook handler must wake the agent that owns the task live; silent or muted handlers miss completions or deliver them late. See Platform notes in the README. Registration applies only to eligible tasks; use check_later until registration is complete."
       : "End your turn. Schedule list_agent_tasks no sooner than check_after if supported; otherwise ask the user to request the result later. Never poll in a loop.",
   };
 }

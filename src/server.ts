@@ -291,7 +291,7 @@ export function buildServer(deps: ServerDeps): McpServer {
   }
   server.registerTool("set_completion_strategy", {
     title: "Set completion strategy",
-    description: "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. Returns strategy and next_step.",
+    description: "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. For webhook, the receiver must wake the agent that owns the task live—silent or muted handlers miss completions or deliver them late; see Platform notes in the README. Returns strategy and next_step.",
     inputSchema: z.object({ owner_token: ownerTokenInput, strategy: completionStrategySchema.describe("User's choice: webhook notifications or scheduled checks.") }).strict(),
     outputSchema: z.object({ strategy: completionStrategySchema, next_step: z.string() }).strict(),
     annotations: toolAnnotations("set_completion_strategy", "Set completion strategy"),
