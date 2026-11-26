@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentSession, AgentTask } from "./github.ts";
@@ -350,7 +351,7 @@ export async function withDirectoryLock<T>(
 ): Promise<T> {
   await acquire(
     lock,
-    options?.timeoutMs ?? 10_000,
+    options?.timeoutMs ?? 35_000,
     options?.busyMessage ?? "Could not save local state: the file is in use.",
   );
   try {
@@ -395,13 +396,22 @@ function parseState(text: string): StateFile {
 
 async function writeState(statePath: string, state: StateFile): Promise<void> {
   await mkdir(dirname(statePath), { recursive: true });
-  const tmp = `${statePath}.tmp`;
+  const tmp = `${statePath}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   try {
-    await rename(tmp, statePath);
-  } catch {
-    await rm(statePath, { force: true });
-    await rename(tmp, statePath);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await rename(tmp, statePath);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await delay(25);
+      }
+    }
+    throw lastError;
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
   }
 }
 
@@ -429,7 +439,15 @@ async function lockAlive(lock: string): Promise<boolean> {
   try {
     const pid = Number((await readFile(join(lock, "pid"), "utf8")).trim());
     return Number.isInteger(pid) && processAlive(pid);
-  } catch {
+  } catch (error) {
+    if (isCode(error, "ENOENT")) {
+      try {
+        const info = await stat(lock);
+        if (Date.now() - info.mtimeMs < 2_000) return true;
+      } catch {
+        return false;
+      }
+    }
     return false;
   }
 }

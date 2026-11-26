@@ -53,7 +53,8 @@ export type ErrorCode =
   | "upstream_timeout"
   | "upstream_error"
   | "model_unavailable"
-  | "conflict";
+  | "conflict"
+  | "internal_error";
 
 export type ErrorBody = {
   error: {
@@ -144,7 +145,8 @@ function classifyMessage(message: string): ErrorCode {
   if (/HTTP 429/.test(message) || /rate limit/i.test(message)) return "rate_limited";
   if (/HTTP 504|timeout/i.test(message)) return "upstream_timeout";
   if (/HTTP \d+/.test(message)) return "upstream_error";
-  return "invalid_argument";
+  if (/^(?:owner|limit) must /i.test(message)) return "invalid_argument";
+  return "internal_error";
 }
 
 function retryAfterFromMessage(message: string): number | undefined {

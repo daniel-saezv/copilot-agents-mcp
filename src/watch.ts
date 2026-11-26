@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
 import { appendWatcherLog, notificationChannelsForTask, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { shouldSpawnWatcher } from "./delivery.ts";
-import { awaitingSteer, fillPullRequest, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
+import { awaitingSteer, fillPullRequest, headRefOf, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
   client: Pick<GitHubClient, "getTask" | "findPullRequest">;
@@ -56,7 +56,7 @@ async function refreshPending(options: {
 
 async function notifyFinal(
   options: {
-    client: Pick<GitHubClient, "findPullRequest">;
+    client: Pick<GitHubClient, "getTask" | "findPullRequest">;
     statePath: string;
     deliver: (notice: TaskNotice, task: TrackedTask) => Promise<DeliveredNotice>;
   },
@@ -75,7 +75,19 @@ async function notifyFinal(
       return task;
     });
     if (!tracked) continue;
-    await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line));
+    let headRef = tracked.branch?.head_ref;
+    if (tracked.pull_request && tracked.pull_request.number === null && !headRef) {
+      const slash = tracked.repo.indexOf("/");
+      const owner = slash > 0 ? tracked.repo.slice(0, slash) : undefined;
+      const repo = slash > 0 ? tracked.repo.slice(slash + 1) : undefined;
+      try {
+        const remote = await options.client.getTask({ taskId, owner, repo });
+        headRef = headRefOf(remote, tracked);
+      } catch {
+        // Fall through to fillPullRequest, which logs the missing head_ref.
+      }
+    }
+    await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line), headRef);
     const claimed = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
       if (!task || !readyToNotify(task)) return null;
@@ -174,7 +186,15 @@ async function watcherAlive(lockDir: string): Promise<boolean> {
     } catch (error) {
       return isCode(error, "EPERM");
     }
-  } catch {
+  } catch (error) {
+    if (isCode(error, "ENOENT")) {
+      try {
+        const info = await stat(lockDir);
+        if (Date.now() - info.mtimeMs < 2_000) return true;
+      } catch {
+        return false;
+      }
+    }
     return false;
   }
 }

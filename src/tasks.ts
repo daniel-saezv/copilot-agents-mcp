@@ -144,7 +144,7 @@ export function filterTasks(state: StateFile, input: ListAgentTasksInput, now = 
   let rows = Object.values(state.tasks).filter((task) => listVisible(task, now));
   if (idSet) rows = rows.filter((task) => idSet.has(task.task_id));
   if (ownerFilter) rows = rows.filter((task) => ownerMatches(task.owner, ownerFilter));
-  if (repoFilter) rows = rows.filter((task) => task.repo === repoFilter);
+  if (repoFilter) rows = rows.filter((task) => task.repo.toLowerCase() === repoFilter.toLowerCase());
   if (status !== "all") {
     rows = rows.filter((task) => {
       const mapped = mapRawState(task.state);
