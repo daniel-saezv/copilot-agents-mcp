@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { acquireDirectoryLock, releaseDirectoryLock } from "./dir-lock.ts";
+import { acquireDirectoryLock, releaseDirectoryLock } from "./lock.ts";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 import { resolveTaskPageUrl } from "./task-urls.ts";
@@ -363,7 +363,7 @@ export async function withDirectoryLock<T>(
 }
 
 export async function withStateLock<T>(statePath: string, fn: (state: StateFile) => Promise<T> | T): Promise<T> {
-  return withDirectoryLock(`${statePath}.lock`, async () => {
+  return withDirectoryLock(`${statePath}.lock.sqlite`, async () => {
     const state = await readState(statePath);
     const result = await fn(state);
     await writeState(statePath, state);

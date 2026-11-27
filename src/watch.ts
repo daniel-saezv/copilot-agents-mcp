@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
 import { appendWatcherLog, notificationChannelsForTask, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { shouldSpawnWatcher } from "./delivery.ts";
-import { acquireDirectoryLock, releaseDirectoryLock } from "./dir-lock.ts";
+import { acquireDirectoryLock, releaseDirectoryLock } from "./lock.ts";
 import { awaitingSteer, fillPullRequest, headRefOf, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
@@ -148,7 +149,7 @@ function steerPending(task: TrackedTask): boolean {
 }
 
 export function watcherLockPath(statePath: string): string {
-  return `${statePath}.watcher`;
+  return join(dirname(statePath), "watcher.lock.sqlite");
 }
 
 const heldWatchers = new Map<string, string>();
