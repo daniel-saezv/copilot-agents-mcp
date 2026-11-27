@@ -1,8 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const EMPTY_LOCK_GRACE_MS = 2_000;
+
+type DirectoryLockHook = () => Promise<void>;
+
+export const directoryLockTestHooks: {
+  beforePublish: DirectoryLockHook | null;
+  beforeTakeEmpty: DirectoryLockHook | null;
+  beforeRestore: DirectoryLockHook | null;
+} = {
+  beforePublish: null,
+  beforeTakeEmpty: null,
+  beforeRestore: null,
+};
 
 export async function acquireDirectoryLock(
   lock: string,
@@ -30,6 +42,7 @@ export async function acquireDirectoryLock(
       }
       continue;
     }
+    if (directoryLockTestHooks.beforePublish !== null) await directoryLockTestHooks.beforePublish();
     try {
       await writeFile(join(lock, "owner"), owner, { flag: "wx" });
     } catch (error) {
@@ -81,6 +94,7 @@ async function inspect(lock: string): Promise<Inspection> {
 }
 
 async function steal(lock: string, expected: string | null): Promise<boolean> {
+  if (expected === null) return removeAbandonedEmpty(lock);
   const claim = `${process.pid}\n${randomUUID()}\n`;
   if (!await claimStale(lock, claim)) return false;
   const grave = `${lock}.stale-${process.pid}-${randomUUID()}`;
@@ -106,6 +120,31 @@ async function steal(lock: string, expected: string | null): Promise<boolean> {
     return false;
   } finally {
     if (!consumed) await dropClaim(lock, claim);
+  }
+}
+
+async function removeAbandonedEmpty(lock: string): Promise<boolean> {
+  if (directoryLockTestHooks.beforeTakeEmpty !== null) await directoryLockTestHooks.beforeTakeEmpty();
+  if (await readMaybe(join(lock, "owner")) !== null) return false;
+  try {
+    const info = await stat(lock);
+    if (Date.now() - info.mtimeMs < EMPTY_LOCK_GRACE_MS) return false;
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return false;
+    throw error;
+  }
+  const claim = await readMaybe(join(lock, "claim"));
+  if (claim !== null) {
+    if (ownerAlive(claim)) return false;
+    if (!await removeFileIfContent(join(lock, "claim"), claim)) return false;
+  }
+  if (await readMaybe(join(lock, "owner")) !== null) return false;
+  try {
+    await rmdir(lock);
+    return true;
+  } catch (error) {
+    if (isCode(error, "ENOENT") || isCode(error, "ENOTEMPTY")) return false;
+    throw error;
   }
 }
 
@@ -154,11 +193,13 @@ async function removeFileIfContent(path: string, expected: string): Promise<bool
 }
 
 async function restoreDir(grave: string, lock: string): Promise<void> {
+  if (directoryLockTestHooks.beforeRestore !== null) await directoryLockTestHooks.beforeRestore();
   try {
     await rename(grave, lock);
   } catch (error) {
-    if (isCode(error, "ENOENT") || isCode(error, "EEXIST") || isCode(error, "ENOTEMPTY")) return;
-    throw error;
+    if (isCode(error, "ENOENT")) return;
+    if (!isCode(error, "EEXIST") && !isCode(error, "ENOTEMPTY")) throw error;
+    await rm(grave, { recursive: true, force: true });
   }
 }
 

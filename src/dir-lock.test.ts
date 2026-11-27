@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import { acquireDirectoryLock, directoryLockTestHooks, releaseDirectoryLock } from "./dir-lock.ts";
 import { readState, withStateLock } from "./state.ts";
 import { acquireWatcher, releaseWatcher, watcherLockPath } from "./watch.ts";
 
@@ -15,6 +16,9 @@ const iterations = 200;
 const directories: string[] = [];
 
 afterEach(async () => {
+  directoryLockTestHooks.beforePublish = null;
+  directoryLockTestHooks.beforeTakeEmpty = null;
+  directoryLockTestHooks.beforeRestore = null;
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -69,6 +73,85 @@ describe("directory lock", () => {
     await releaseWatcher(watcher);
     expect(await exists(watcher)).toBe(true);
   });
+
+  it("does not grant two holders or leave a stale directory when publish stalls on an empty lock", async () => {
+    const dir = await tempDir();
+    const lock = join(dir, "lock");
+    const publishGate = deferred();
+    const takeGate = deferred();
+    const restoreGate = deferred();
+    const publishStarted = deferred();
+    const takeStarted = deferred();
+    const restoreStarted = deferred();
+    let pausedPublish = false;
+    let pausedTake = false;
+    const held: Array<{ owner: string } | null> = [];
+
+    directoryLockTestHooks.beforePublish = async () => {
+      if (pausedPublish) return;
+      pausedPublish = true;
+      publishStarted.resolve();
+      await publishGate.promise;
+    };
+    directoryLockTestHooks.beforeTakeEmpty = async () => {
+      if (pausedTake) return;
+      pausedTake = true;
+      takeStarted.resolve();
+      await takeGate.promise;
+    };
+    directoryLockTestHooks.beforeRestore = async () => {
+      restoreStarted.resolve();
+      await restoreGate.promise;
+    };
+
+    const options = { timeoutMs: 2_000, pollMs: 20 };
+    const pending: Array<Promise<{ owner: string } | null>> = [];
+    try {
+      const first = acquireDirectoryLock(lock, options);
+      pending.push(first);
+      await publishStarted.promise;
+      const aged = new Date(Date.now() - 10_000);
+      await utimes(lock, aged, aged);
+      const second = acquireDirectoryLock(lock, options);
+      pending.push(second);
+      const sawTake = await Promise.race([
+        takeStarted.promise.then(() => true),
+        second.then(() => false),
+      ]);
+      expect(sawTake).toBe(true);
+
+      publishGate.resolve();
+      held[0] = await first;
+      takeGate.resolve();
+      const restoring = await Promise.race([
+        restoreStarted.promise.then(() => true),
+        second.then(() => false),
+      ]);
+      if (restoring) {
+        const third = acquireDirectoryLock(lock, options);
+        pending.push(third);
+        held[2] = await third;
+        restoreGate.resolve();
+      }
+      held[1] = await second;
+      expect(held[0]).not.toBeNull();
+      await expectExclusive(dir, lock, held);
+    } finally {
+      publishGate.resolve();
+      takeGate.resolve();
+      restoreGate.resolve();
+      directoryLockTestHooks.beforePublish = null;
+      directoryLockTestHooks.beforeTakeEmpty = null;
+      directoryLockTestHooks.beforeRestore = null;
+      const settled = await Promise.all(pending.map((attempt) => attempt.catch(() => null)));
+      const released = new Set<string>();
+      for (const owner of [...held, ...settled]) {
+        if (!owner || released.has(owner.owner)) continue;
+        released.add(owner.owner);
+        await releaseDirectoryLock(lock, owner.owner);
+      }
+    }
+  }, 20_000);
 });
 
 async function runWorkers(kind: "state" | "watcher", dir: string): Promise<{ count: number; overlaps: number; errors: string[]; detail: string }> {
@@ -142,6 +225,37 @@ async function exists(path: string): Promise<boolean> {
   } catch (error) {
     if (isCode(error, "ENOENT")) return false;
     throw error;
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function expectExclusive(
+  dir: string,
+  lock: string,
+  held: Array<{ owner: string } | null | undefined>,
+): Promise<void> {
+  const owners = held.flatMap((item) => item ? [item.owner] : []);
+  let canonical: string | null = null;
+  try {
+    canonical = await readFile(join(lock, "owner"), "utf8");
+  } catch (error) {
+    if (!isCode(error, "ENOENT")) throw error;
+  }
+  const names = await readdir(dir);
+  const detail = `holders=${owners.length} canonical=${canonical ?? "absent"} entries=${names.join(",") || "none"}`;
+  expect(owners.length, detail).toBeLessThanOrEqual(1);
+  expect(owners.every((owner) => owner === canonical), detail).toBe(true);
+  expect(names.some((name) => name.includes(".stale-")), detail).toBe(false);
+  if (canonical !== null && owners.length === 0) {
+    const pid = Number(canonical.split("\n", 1)[0]);
+    expect(pid, detail).not.toBe(process.pid);
   }
 }
 

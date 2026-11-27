@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Taking an empty directory lock uses `rmdir`, so a stalled acquire cannot overlap another holder or leave a `.stale-*` directory. If a displaced lock cannot be renamed back, that copy is deleted.
+
 ## 0.3.1
 
 ### Changed
