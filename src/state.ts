@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { acquireDirectoryLock, releaseDirectoryLock } from "./dir-lock.ts";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 import { resolveTaskPageUrl } from "./task-urls.ts";
@@ -349,15 +350,15 @@ export async function withDirectoryLock<T>(
   fn: () => Promise<T>,
   options?: { timeoutMs?: number; busyMessage?: string },
 ): Promise<T> {
-  await acquire(
-    lock,
-    options?.timeoutMs ?? 35_000,
-    options?.busyMessage ?? "Could not save local state: the file is in use.",
-  );
+  const held = await acquireDirectoryLock(lock, {
+    timeoutMs: options?.timeoutMs ?? 35_000,
+    pollMs: 50,
+  });
+  if (!held) throw new Error(options?.busyMessage ?? "Could not save local state: the file is in use.");
   try {
     return await fn();
   } finally {
-    await rm(lock, { recursive: true, force: true });
+    await releaseDirectoryLock(lock, held.owner);
   }
 }
 
@@ -412,53 +413,6 @@ async function writeState(statePath: string, state: StateFile): Promise<void> {
     throw lastError;
   } finally {
     await rm(tmp, { force: true }).catch(() => {});
-  }
-}
-
-async function acquire(lock: string, timeoutMs: number, busyMessage: string): Promise<void> {
-  await mkdir(dirname(lock), { recursive: true });
-  const started = Date.now();
-  for (;;) {
-    try {
-      await mkdir(lock);
-      await writeFile(join(lock, "pid"), String(process.pid));
-      return;
-    } catch (error) {
-      if (!isCode(error, "EEXIST")) throw error;
-      if (!(await lockAlive(lock))) {
-        await rm(lock, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() - started > timeoutMs) throw new Error(busyMessage);
-      await delay(50);
-    }
-  }
-}
-
-async function lockAlive(lock: string): Promise<boolean> {
-  try {
-    const pid = Number((await readFile(join(lock, "pid"), "utf8")).trim());
-    return Number.isInteger(pid) && processAlive(pid);
-  } catch (error) {
-    if (isCode(error, "ENOENT")) {
-      try {
-        const info = await stat(lock);
-        if (Date.now() - info.mtimeMs < 2_000) return true;
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  }
-}
-
-function processAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isCode(error, "EPERM");
   }
 }
 
