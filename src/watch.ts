@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
@@ -149,7 +148,7 @@ function steerPending(task: TrackedTask): boolean {
 }
 
 export function watcherLockPath(statePath: string): string {
-  return join(dirname(statePath), "watcher.lock.sqlite");
+  return `${statePath}.watcher.lock.sqlite`;
 }
 
 const heldWatchers = new Map<string, string>();

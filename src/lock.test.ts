@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { authLockPath } from "./auth.ts";
-import { acquireDirectoryLock, releaseDirectoryLock } from "./lock.ts";
+import { acquireDirectoryLock, isLocked, releaseDirectoryLock } from "./lock.ts";
 import { readState, withDirectoryLock, withStateLock } from "./state.ts";
 import { watcherLockPath } from "./watch.ts";
 
@@ -104,8 +104,47 @@ describe("sqlite lock", () => {
     expect((await readState(statePath)).models.accepted).toEqual(["kept"]);
     expect(await readFile(join(legacy, "pid"), "utf8")).toBe("1\n");
     expect(await exists(`${statePath}.lock.sqlite`)).toBe(true);
-    expect(watcherLockPath(statePath)).toBe(join(dir, "watcher.lock.sqlite"));
+    expect(watcherLockPath(statePath)).toBe(`${statePath}.watcher.lock.sqlite`);
     expect(authLockPath(statePath)).toBe(join(dir, "auth.lock.sqlite"));
+  });
+
+  it("holds watcher locks for two state files in one directory at the same time", async () => {
+    const dir = await tempDir();
+    const first = spawnHolder(join(dir, "botA.json"), "watch-hold");
+    const second = spawnHolder(join(dir, "botB.json"), "watch-hold");
+    await Promise.all([first.held, second.held]);
+    expect(first.child.exitCode).toBeNull();
+    expect(second.child.exitCode).toBeNull();
+    expect(watcherLockPath(join(dir, "botA.json"))).toBe(join(dir, "botA.json.watcher.lock.sqlite"));
+    expect(watcherLockPath(join(dir, "botB.json"))).toBe(join(dir, "botB.json.watcher.lock.sqlite"));
+    const done = Promise.all([childExit(first.child), childExit(second.child)]);
+    releaseHolder(first.child);
+    releaseHolder(second.child);
+    const [statusA, statusB] = await done;
+    expect(statusA, first.stderr()).toBe(0);
+    expect(statusB, second.stderr()).toBe(0);
+  }, 15_000);
+
+  it("recognizes SQLITE_BUSY and SQLITE_LOCKED by code, including extended codes", () => {
+    expect(isLocked({ errcode: 5, message: "nope" })).toBe(true);
+    expect(isLocked({ errcode: 6, message: "nope" })).toBe(true);
+    expect(isLocked({ errcode: (1 << 8) | 5, message: "nope" })).toBe(true);
+    expect(isLocked({ errstr: 6, message: "database is locked" })).toBe(true);
+    expect(isLocked({ errstr: "SQLITE_BUSY", message: "nope" })).toBe(true);
+    expect(isLocked({ errcode: 26, message: "database is locked" })).toBe(false);
+    expect(isLocked({ message: "database is locked" })).toBe(false);
+  });
+
+  it("names the lock path when the file is not a database and leaves the file in place", async () => {
+    const dir = await tempDir();
+    const lock = join(dir, "state.json.lock.sqlite");
+    await writeFile(lock, "not a database");
+    const started = Date.now();
+    await expect(acquireDirectoryLock(lock, { timeoutMs: 5_000, pollMs: 20 })).rejects.toThrow(
+      `Could not open lock ${lock}: file is not a database`,
+    );
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await readFile(lock, "utf8")).toBe("not a database");
   });
 });
 
@@ -120,6 +159,28 @@ async function heldChild(execArgv: string[] = []): Promise<{ lock: string; child
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
   await waitForHeld(child, stderr);
   return { lock, child, stderr: () => Buffer.concat(stderr).toString("utf8") };
+}
+
+function spawnHolder(target: string, kind: "hold" | "watch-hold"): { child: ChildProcess; stderr: () => string; held: Promise<void> } {
+  const stderr: Buffer[] = [];
+  const child = spawn(process.execPath, [worker, kind, target], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  children.push(child);
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return { child, stderr: () => Buffer.concat(stderr).toString("utf8"), held: waitForHeld(child, stderr) };
+}
+
+function releaseHolder(child: ChildProcess): void {
+  child.stdin?.write("release\n");
+  child.stdin?.end();
+}
+
+function childExit(child: ChildProcess): Promise<number | null> {
+  return new Promise((resolve) => {
+    child.once("exit", (code) => resolve(code));
+    if (child.exitCode !== null || child.signalCode !== null) resolve(child.exitCode);
+  });
 }
 
 function waitForHeld(child: ChildProcess, stderr: Buffer[]): Promise<void> {

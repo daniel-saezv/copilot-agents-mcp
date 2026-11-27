@@ -8,13 +8,14 @@ const kind = process.argv[2];
 const target = process.argv[3];
 const iterations = Number(process.argv[4]);
 
-if (kind === "hold") {
+if (kind === "hold" || kind === "watch-hold") {
   if (!target) {
-    process.stderr.write("usage: lock.worker.ts hold <lock>\n");
+    process.stderr.write("usage: lock.worker.ts hold <lock> | watch-hold <state>\n");
     process.exit(1);
   }
   try {
-    await hold(target);
+    if (kind === "hold") await hold(target);
+    else await watchHold(target);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
     process.exit(1);
@@ -33,6 +34,14 @@ if (kind === "hold") {
   }
 }
 
+async function watchHold(statePath: string): Promise<void> {
+  const lock = watcherLockPath(statePath);
+  if (!await acquireWatcher(lock)) throw new Error("watcher lock timed out");
+  await signalHeld();
+  await waitForRelease();
+  await releaseWatcher(lock);
+}
+
 async function hold(lock: string): Promise<void> {
   const held = await acquireDirectoryLock(lock, { timeoutMs: 5_000, pollMs: 20 });
   if (!held) throw new Error("could not acquire lock");
@@ -43,15 +52,23 @@ async function hold(lock: string): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve));
     gc({ execution: "sync", type: "major" });
   }
-  await new Promise<void>((resolve) => {
+  await signalHeld();
+  await waitForRelease();
+  await releaseDirectoryLock(lock, held.owner);
+}
+
+function signalHeld(): Promise<void> {
+  return new Promise((resolve) => {
     process.stdout.write("held\n", () => resolve());
   });
+}
+
+async function waitForRelease(): Promise<void> {
   let text = "";
   for await (const chunk of process.stdin) {
     text += chunk.toString("utf8");
-    if (text.includes("release")) break;
+    if (text.includes("release")) return;
   }
-  await releaseDirectoryLock(lock, held.owner);
 }
 
 async function run(
