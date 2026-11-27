@@ -9,10 +9,16 @@ type DirectoryLockHook = () => Promise<void>;
 export const directoryLockTestHooks: {
   beforePublish: DirectoryLockHook | null;
   beforeTakeEmpty: DirectoryLockHook | null;
+  beforeOwnerlessTakeover: DirectoryLockHook | null;
+  beforeOwnerlessRename: DirectoryLockHook | null;
+  beforeOwnerlessSettle: DirectoryLockHook | null;
   beforeRestore: DirectoryLockHook | null;
 } = {
   beforePublish: null,
   beforeTakeEmpty: null,
+  beforeOwnerlessTakeover: null,
+  beforeOwnerlessRename: null,
+  beforeOwnerlessSettle: null,
   beforeRestore: null,
 };
 
@@ -159,22 +165,42 @@ async function ownerlessPastGrace(lock: string): Promise<boolean> {
 async function takeoverOwnerless(lock: string): Promise<boolean> {
   if (!await ownerlessPastGrace(lock)) return false;
   if (ownerAlive(await readMaybe(join(lock, "claim")))) return false;
+  if (directoryLockTestHooks.beforeOwnerlessTakeover !== null) {
+    await directoryLockTestHooks.beforeOwnerlessTakeover();
+  }
+  const claim = `${process.pid}\n${randomUUID()}\n`;
+  if (!await claimStale(lock, claim)) return false;
   const grave = `${lock}.stale-${process.pid}-${randomUUID()}`;
+  let consumed = false;
   try {
-    await rename(lock, grave);
-  } catch (error) {
-    if (isCode(error, "ENOENT")) return false;
-    throw error;
+    const ownerNow = await readMaybe(join(lock, "owner"));
+    const claimNow = await readMaybe(join(lock, "claim"));
+    if (ownerNow !== null || claimNow !== claim || ownerAlive(await readMaybe(join(lock, "pid")))) return false;
+    if (directoryLockTestHooks.beforeOwnerlessRename !== null) {
+      await directoryLockTestHooks.beforeOwnerlessRename();
+    }
+    try {
+      await rename(lock, grave);
+    } catch (error) {
+      if (isCode(error, "ENOENT")) return false;
+      throw error;
+    }
+    const movedOwner = await readMaybe(join(grave, "owner"));
+    const movedPid = await readMaybe(join(grave, "pid"));
+    const movedClaim = await readMaybe(join(grave, "claim"));
+    if (directoryLockTestHooks.beforeOwnerlessSettle !== null) {
+      await directoryLockTestHooks.beforeOwnerlessSettle();
+    }
+    if (movedOwner === null && movedClaim === claim && !ownerAlive(movedPid)) {
+      await rm(grave, { recursive: true, force: true });
+      consumed = true;
+      return true;
+    }
+    await restoreDir(grave, lock);
+    return false;
+  } finally {
+    if (!consumed) await dropClaim(lock, claim);
   }
-  const movedOwner = await readMaybe(join(grave, "owner"));
-  const movedPid = await readMaybe(join(grave, "pid"));
-  const movedClaim = await readMaybe(join(grave, "claim"));
-  if (movedOwner === null && !ownerAlive(movedPid) && !ownerAlive(movedClaim)) {
-    await rm(grave, { recursive: true, force: true });
-    return true;
-  }
-  await restoreDir(grave, lock);
-  return false;
 }
 
 async function claimStale(lock: string, claim: string): Promise<boolean> {
@@ -228,6 +254,7 @@ async function restoreDir(grave: string, lock: string): Promise<void> {
   } catch (error) {
     if (isCode(error, "ENOENT")) return;
     if (!isCode(error, "EEXIST") && !isCode(error, "ENOTEMPTY")) throw error;
+    if (await readMaybe(join(grave, "owner")) !== null) return;
     await rm(grave, { recursive: true, force: true });
   }
 }

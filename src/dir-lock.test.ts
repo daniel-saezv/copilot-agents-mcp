@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireDirectoryLock, directoryLockTestHooks, releaseDirectoryLock } from "./dir-lock.ts";
-import { readState, withStateLock } from "./state.ts";
+import { readState, withDirectoryLock, withStateLock } from "./state.ts";
 import { acquireWatcher, releaseWatcher, watcherLockPath } from "./watch.ts";
 
 const worker = fileURLToPath(new URL("./dir-lock.worker.ts", import.meta.url));
@@ -18,6 +18,9 @@ const directories: string[] = [];
 afterEach(async () => {
   directoryLockTestHooks.beforePublish = null;
   directoryLockTestHooks.beforeTakeEmpty = null;
+  directoryLockTestHooks.beforeOwnerlessTakeover = null;
+  directoryLockTestHooks.beforeOwnerlessRename = null;
+  directoryLockTestHooks.beforeOwnerlessSettle = null;
   directoryLockTestHooks.beforeRestore = null;
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -142,6 +145,9 @@ describe("directory lock", () => {
       restoreGate.resolve();
       directoryLockTestHooks.beforePublish = null;
       directoryLockTestHooks.beforeTakeEmpty = null;
+      directoryLockTestHooks.beforeOwnerlessTakeover = null;
+      directoryLockTestHooks.beforeOwnerlessRename = null;
+      directoryLockTestHooks.beforeOwnerlessSettle = null;
       directoryLockTestHooks.beforeRestore = null;
       const settled = await Promise.all(pending.map((attempt) => attempt.catch(() => null)));
       const released = new Set<string>();
@@ -178,7 +184,204 @@ describe("directory lock", () => {
     expect(await readFile(join(lock, "pid"), "utf8")).toBe(`${process.pid}\n`);
     expect(await staleNames(dir)).toEqual([]);
   }, 5_000);
+
+  it("does not delete a live owner when two takeovers race a stray pid directory", async () => {
+    await expectOwnerlessRace("pid", "delete");
+  }, 20_000);
+
+  it("does not restore a released owner when two takeovers race a stray claim", async () => {
+    await expectOwnerlessRace("claim", "restore");
+  }, 20_000);
 });
+
+async function expectOwnerlessRace(stray: "pid" | "claim", race: "delete" | "restore"): Promise<void> {
+  const dir = await tempDir();
+  const lock = await plantStray(dir, stray);
+  const takeover: Gate[] = [];
+  const rename: Gate[] = [];
+  const settle: Gate[] = [];
+  const park = (gates: Gate[]) => async () => {
+    const gate = deferred();
+    gates.push(gate);
+    await gate.promise;
+  };
+  directoryLockTestHooks.beforeOwnerlessTakeover = park(takeover);
+  directoryLockTestHooks.beforeOwnerlessRename = park(rename);
+  directoryLockTestHooks.beforeOwnerlessSettle = park(settle);
+  const options = { timeoutMs: 8_000, pollMs: 20 };
+  const first = acquireDirectoryLock(lock, options);
+  const second = acquireDirectoryLock(lock, options);
+  try {
+    expect(await reached(() => takeover.length, 2, 2_000)).toBe(true);
+    gateAt(takeover, 0).resolve();
+    expect(await reached(() => rename.length, 1, 2_000)).toBe(true);
+    gateAt(takeover, 1).resolve();
+    const sawSecondRename = await reached(() => rename.length, 2, 500);
+    if (sawSecondRename) {
+      if (race === "delete") await expectLiveOwnerSurvives(dir, lock, rename, settle);
+      else await expectReleasedOwnerStaysGone(lock, rename, settle);
+      return;
+    }
+    gateAt(rename, 0).resolve();
+    expect(await reached(() => settle.length, 1, 2_000)).toBe(true);
+    gateAt(settle, 0).resolve();
+    const winner = await Promise.race([first, second]);
+    expect(winner).not.toBeNull();
+    if (winner) await releaseDirectoryLock(lock, winner.owner);
+    const both = await Promise.all([first, second]);
+    for (const held of both) {
+      if (held && held.owner !== winner?.owner) await releaseDirectoryLock(lock, held.owner);
+    }
+    expect(await staleNames(dir)).toEqual([]);
+    const again = await acquireDirectoryLock(lock, { timeoutMs: 1_000, pollMs: 20 });
+    expect(again).not.toBeNull();
+    if (again) await releaseDirectoryLock(lock, again.owner);
+    expect(await exists(lock)).toBe(false);
+    expect(await staleNames(dir)).toEqual([]);
+  } finally {
+    releaseGates(takeover);
+    releaseGates(rename);
+    releaseGates(settle);
+    directoryLockTestHooks.beforeOwnerlessTakeover = null;
+    directoryLockTestHooks.beforeOwnerlessRename = null;
+    directoryLockTestHooks.beforeOwnerlessSettle = null;
+    directoryLockTestHooks.beforeRestore = null;
+    await rm(lock, { recursive: true, force: true });
+    await Promise.all([first, second].map(async (attempt) => {
+      const held = await attempt.catch(() => null);
+      if (held) await releaseDirectoryLock(lock, held.owner);
+    }));
+  }
+}
+
+async function expectLiveOwnerSurvives(
+  dir: string,
+  lock: string,
+  rename: Gate[],
+  settle: Gate[],
+): Promise<void> {
+  let inside = 0;
+  let maxInside = 0;
+  const releaseHolders = deferred();
+  const holders: Array<Promise<void>> = [];
+  const enter = (timeoutMs: number) => {
+    const attempt = (async () => {
+      const held = await acquireDirectoryLock(lock, { timeoutMs, pollMs: 20 });
+      if (!held) return;
+      inside += 1;
+      maxInside = Math.max(maxInside, inside);
+      await releaseHolders.promise;
+      inside -= 1;
+      await releaseDirectoryLock(lock, held.owner);
+    })();
+    holders.push(attempt);
+    return attempt;
+  };
+  try {
+    gateAt(rename, 0).resolve();
+    expect(await reached(() => settle.length, 1, 2_000)).toBe(true);
+    enter(3_000);
+    expect(await reached(() => inside, 1, 3_000)).toBe(true);
+    gateAt(rename, 1).resolve();
+    expect(await reached(() => settle.length, 2, 2_000), "second takeover did not rename").toBe(true);
+    const stolen = await staleOwnerBodies(dir);
+    expect(stolen.length, "live owner was not renamed aside").toBeGreaterThan(0);
+    enter(3_000);
+    expect(await reached(() => inside, 2, 3_000), "replacement holder did not enter").toBe(true);
+    gateAt(settle, 1).resolve();
+    await reached(async () => (await staleOwnerBodies(dir)).length === 0, true, 1_000);
+    expect({ holders: maxInside, liveGraves: (await staleOwnerBodies(dir)).length }).toEqual({
+      holders: 1,
+      liveGraves: stolen.length,
+    });
+  } finally {
+    releaseHolders.resolve();
+    releaseGates(settle);
+    await Promise.all(holders);
+  }
+}
+
+async function expectReleasedOwnerStaysGone(lock: string, rename: Gate[], settle: Gate[]): Promise<void> {
+  const restoreStarted = deferred();
+  directoryLockTestHooks.beforeRestore = async () => {
+    restoreStarted.resolve();
+  };
+  gateAt(rename, 0).resolve();
+  expect(await reached(() => settle.length, 1, 2_000)).toBe(true);
+  const held = await acquireDirectoryLock(lock, { timeoutMs: 3_000, pollMs: 20 });
+  expect(held).not.toBeNull();
+  if (!held) return;
+  gateAt(rename, 1).resolve();
+  expect(await reached(() => settle.length, 2, 2_000)).toBe(true);
+  await releaseDirectoryLock(lock, held.owner);
+  gateAt(settle, 1).resolve();
+  await restoreStarted.promise;
+  await reached(async () => (await readOwner(lock)) !== null, true, 1_000);
+  await expect(withDirectoryLock(lock, async () => "free", { timeoutMs: 400 })).resolves.toBe("free");
+}
+
+async function plantStray(dir: string, kind: "pid" | "claim"): Promise<string> {
+  const lock = join(dir, "lock");
+  await mkdir(lock);
+  const dead = await exitedPid();
+  if (kind === "pid") {
+    await writeFile(join(lock, "pid"), `${dead}\n`);
+  } else {
+    await writeFile(join(lock, `claim.${dead}.${randomUUID()}`), `${dead}\n${randomUUID()}\n`);
+  }
+  const aged = new Date(Date.now() - 10_000);
+  await utimes(lock, aged, aged);
+  return lock;
+}
+
+async function staleOwnerBodies(dir: string): Promise<string[]> {
+  const names = (await readdir(dir)).filter((name) => name.includes(".stale-"));
+  const bodies: string[] = [];
+  for (const name of names) {
+    const body = await readOwner(join(dir, name));
+    if (body !== null) bodies.push(body);
+  }
+  return bodies;
+}
+
+async function readOwner(lock: string): Promise<string | null> {
+  try {
+    return await readFile(join(lock, "owner"), "utf8");
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
+type Gate = ReturnType<typeof deferred>;
+
+function gateAt(gates: Gate[], index: number): Gate {
+  const gate = gates[index];
+  if (!gate) throw new Error(`missing lock gate ${index}`);
+  return gate;
+}
+
+function releaseGates(gates: Gate[]): void {
+  for (const gate of gates) gate.resolve();
+}
+
+async function reached(get: () => number | boolean | Promise<boolean>, countOrTrue: number | boolean, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  for (;;) {
+    const value = await get();
+    if (typeof countOrTrue === "number") {
+      if (typeof value === "number" && value >= countOrTrue) return true;
+    } else if (value === true) {
+      return true;
+    }
+    if (Date.now() - started > timeoutMs) return false;
+    await delay(10);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function runWorkers(kind: "state" | "watcher", dir: string): Promise<{ count: number; overlaps: number; errors: string[]; detail: string }> {
   const children = Array.from({ length: processes }, () => spawn(process.execPath, [worker, kind, dir, String(iterations)], {
