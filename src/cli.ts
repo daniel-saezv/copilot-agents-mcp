@@ -179,7 +179,8 @@ async function serve(): Promise<void> {
     readModels: async () => {
       const token = readToken();
       if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
-      return readSweModels({ token, tokens: session ?? undefined });
+      const baseUrl = githubApiBase(process.env);
+      return readSweModels({ token, tokens: session ?? undefined, ...(baseUrl ? { baseUrl } : {}) });
     },
     launchWatcher: defaultLaunchWatcher,
   };

@@ -289,14 +289,16 @@ export function buildServer(deps: ServerDeps): McpServer {
       annotations: toolAnnotations("list_copilot_models", "List Copilot models"),
     }, async () => run(async () => presentSweModelsResult(await deps.readModels())));
   }
-  server.registerTool("set_completion_strategy", {
-    title: "Set completion strategy",
-    description: "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. For webhook, the receiver must wake the agent that owns the task live—silent or muted handlers miss completions or deliver them late; see Platform notes in the README. Returns strategy and next_step.",
-    inputSchema: z.object({ owner_token: ownerTokenInput, strategy: completionStrategySchema.describe("User's choice: webhook notifications or scheduled checks.") }).strict(),
-    outputSchema: z.object({ strategy: completionStrategySchema, next_step: z.string() }).strict(),
-    annotations: toolAnnotations("set_completion_strategy", "Set completion strategy"),
-  }, async (args) => run(() => withStateLock(deps.statePath, (state) =>
-    setCompletionStrategy(state, resolveOwnerToken(state, args.owner_token), args.strategy))));
+  if (enabled.has("set_completion_strategy")) {
+    server.registerTool("set_completion_strategy", {
+      title: "Set completion strategy",
+      description: "Save the user's completion choice: webhook (recommended) or check_later. Webhook setup stays in the local CLI; never pass URLs or secrets through MCP. For webhook, the receiver must wake the agent that owns the task live—silent or muted handlers miss completions or deliver them late; see Platform notes in the README. Returns strategy and next_step.",
+      inputSchema: z.object({ owner_token: ownerTokenInput, strategy: completionStrategySchema.describe("User's choice: webhook notifications or scheduled checks.") }).strict(),
+      outputSchema: z.object({ strategy: completionStrategySchema, next_step: z.string() }).strict(),
+      annotations: toolAnnotations("set_completion_strategy", "Set completion strategy"),
+    }, async (args) => run(() => withStateLock(deps.statePath, (state) =>
+      setCompletionStrategy(state, resolveOwnerToken(state, args.owner_token), args.strategy))));
+  }
   return server;
 }
 
@@ -395,8 +397,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
     channels.length > 0 && !watcher_started,
     follow_up.check_after,
   );
-  const stored = await withStateLock(deps.statePath, (state) => state.tasks[task.id] ?? null);
-  const delivery = deliveryForTask(stored ?? localTask, channels);
+  const delivery = deliveryForTask(localTask, channels);
   const body: Record<string, unknown> = {
     task_id: task.id,
     repo,
@@ -410,7 +411,7 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
   if (taskOwner) body.owner = taskOwner;
   if (setup) body.setup = setup;
   if (session) body.session_url = session;
-  const createdPr = stored ? prUrl(stored) : undefined;
+  const createdPr = prUrl(localTask);
   if (createdPr) body.pr_url = createdPr;
   return body;
 }
@@ -418,12 +419,13 @@ async function createTask(args: z.infer<typeof createInput>, deps: ServerDeps) {
 async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const verbose = args.verbose === true;
-  const known = await withStateLock(deps.statePath, (state) => state.tasks[taskId] ?? null);
+  const currentState = await readState(deps.statePath);
+  const known = currentState.tasks[taskId] ?? null;
   const repo = args.repo?.trim() || known?.repo || "";
   const parsed = repo ? parseRepo(repo) : null;
   const token = deps.readToken();
   const channels = known
-    ? notificationChannelsForTask(known, await readState(deps.statePath))
+    ? notificationChannelsForTask(known, currentState)
     : activeNotificationChannels(process.platform, process.env);
   const freshness = freshnessMs();
   const now = Date.now();
@@ -452,7 +454,16 @@ async function readTask(args: z.infer<typeof getInput>, deps: ServerDeps) {
           owner: parsed.owner,
           repo: parsed.repo,
         });
+        tracked = await withStateLock(deps.statePath, (state) => {
+          const row = observe(state, remote, {
+            repo: repo || state.tasks[taskId]?.repo || "",
+            requestedModel: state.tasks[taskId]?.requested_model ?? known.requested_model ?? null,
+          });
+          row.last_fetched_at = new Date().toISOString();
+          return row;
+        });
         headRef = headRefOf(remote, tracked);
+        cached = false;
       }
       await fillPullRequest(
         tracked,
@@ -575,13 +586,13 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
       warnings.push(`could not refresh 1 task: ${reason}`);
     }
   }
-  const updated = await withStateLock(deps.statePath, (state) => {
-    const result = filterTasks(state, input, now);
-    return { page: result.tasks, matched: result.matched };
-  });
-  const counts = listCounts(updated.matched);
-  const checkAfter = aggregateNextCheckAfter(updated.matched, now);
-  const rows = updated.page.map((task) => toListRow(task, {
+  const updatedState = await readState(deps.statePath);
+  const updatedResult = filterTasks(updatedState, input, now);
+  registryEmpty = Object.keys(updatedState.tasks).length === 0;
+  matchedEmpty = !registryEmpty && updatedResult.total_matched === 0;
+  const counts = listCounts(updatedResult.matched);
+  const checkAfter = aggregateNextCheckAfter(updatedResult.matched, now);
+  const rows = updatedResult.tasks.map((task) => toListRow(task, {
     stale: staleIds.has(task.task_id) ? true : undefined,
     checkAfter: resolveNextCheckAfter(task, now),
   }));
@@ -602,32 +613,30 @@ async function listAgentTasks(args: z.infer<typeof listInput>, deps: ServerDeps)
 async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
   const content = required(args.content, "content");
-  const known = await withStateLock(deps.statePath, (state) => {
-    const owner = resolveOwnerToken(state, args.owner_token);
-    const task = state.tasks[taskId] ?? null;
-    if (task?.owner && task.owner !== owner) throw new OwnerTokenError();
-    return task;
-  });
+  const initialState = await readState(deps.statePath);
+  const initialOwner = resolveOwnerToken(initialState, args.owner_token);
+  const known = initialState.tasks[taskId] ?? null;
+  if (known?.owner && known.owner !== initialOwner) throw new OwnerTokenError();
   const token = deps.readToken();
-  if (!token) throw new ToolFailure(NO_SESSION_MESSAGE);
+  if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
   const client = deps.clientForToken(token);
   const remote = await client.getTask({
     taskId,
     ...(known?.repo ? parseRepo(known.repo) : {}),
   });
   const repo = known?.repo || repoFromTaskUrl(remote.html_url);
-  if (!repo) throw new ToolFailure(`The repository for task ${taskId} is unknown.`);
+  if (!repo) throw new CodedToolFailure("not_found", `The repository for task ${taskId} is unknown.`);
   const parsed = parseRepo(repo);
   const pull = pullArtifact(remote);
-  if (!pull) throw new ToolFailure(`${TASK_HAS_NO_PULL_REQUEST}: task ${taskId} has no pull request.`);
+  if (!pull) throw new CodedToolFailure("conflict", `${TASK_HAS_NO_PULL_REQUEST}: task ${taskId} has no pull request.`);
   const number = await resolvePullNumber(client, remote, known, parsed, pull);
   const opened = await client.getPullRequest({ owner: parsed.owner, repo: parsed.repo, number });
   if (opened.state !== "open") {
-    throw new ToolFailure(`${TASK_PULL_REQUEST_NOT_OPEN}: pull request ${number} in ${repo} is not open.`);
+    throw new CodedToolFailure("conflict", `${TASK_PULL_REQUEST_NOT_OPEN}: pull request ${number} in ${repo} is not open.`);
   }
   const sessionCount = taskSessionCount(remote);
   const steeredAt = new Date().toISOString();
-  await withStateLock(deps.statePath, async (state) => {
+  const { steered, channels } = await withStateLock(deps.statePath, async (state) => {
     const owner = resolveOwnerToken(state, args.owner_token);
     if (state.tasks[taskId]?.owner && state.tasks[taskId]?.owner !== owner) throw new OwnerTokenError();
     await client.steerTask(taskId, content);
@@ -642,10 +651,9 @@ async function steerTask(args: z.infer<typeof steerInput>, deps: ServerDeps) {
     if (!task.repo) task.repo = repo;
     armSteer(task, sessionCount, steeredAt);
     state.tasks[taskId] = task;
+    return { steered: task, channels: notificationChannelsForTask(task, state) };
   });
-  const savedState = await readState(deps.statePath);
-  const steered = savedState.tasks[taskId];
-  if (steered && shouldSpawnWatcher(notificationChannelsForTask(steered, savedState))) {
+  if (steered && shouldSpawnWatcher(channels)) {
     try {
       deps.launchWatcher();
     } catch (error) {
@@ -661,12 +669,10 @@ function isAbortNoSessionError(message: string): boolean {
 
 async function abortTask(args: z.infer<typeof abortInput>, deps: ServerDeps) {
   const taskId = required(args.task_id, "task_id");
-  const known = await withStateLock(deps.statePath, (state) => {
-    const owner = resolveOwnerToken(state, args.owner_token);
-    const task = state.tasks[taskId] ?? null;
-    if (task?.owner && task.owner !== owner) throw new OwnerTokenError();
-    return task;
-  });
+  const initialState = await readState(deps.statePath);
+  const initialOwner = resolveOwnerToken(initialState, args.owner_token);
+  const known = initialState.tasks[taskId] ?? null;
+  if (known?.owner && known.owner !== initialOwner) throw new OwnerTokenError();
   const token = deps.readToken();
   if (!token) throw new CodedToolFailure("not_authenticated", NO_SESSION_MESSAGE);
   if (known && isFinalState(known.state)) {
@@ -758,7 +764,7 @@ function repoFromTaskUrl(url: string | undefined): string | null {
   if (!url) return null;
   try {
     const parts = new URL(url).pathname.split("/").filter(Boolean);
-    if (parts.length >= 2 && parts[0] && parts[1]) return `${parts[0]}/${parts[1]}`;
+    if (parts.length >= 2 && parts[0] && parts[1] && parts[0] !== "copilot") return `${parts[0]}/${parts[1]}`;
   } catch {
     return null;
   }

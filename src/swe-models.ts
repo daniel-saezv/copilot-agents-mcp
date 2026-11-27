@@ -94,11 +94,13 @@ export async function readSweModels(options: {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   tokens?: AccessTokenSource;
+  baseUrl?: string;
 }): Promise<SweModelsResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
   const holder = { token: options.tokens ? await options.tokens.current() : options.token };
-  const api = await readApiBase(fetchImpl, holder, options.tokens);
+  const graphqlUrl = options.baseUrl ? `${options.baseUrl.replace(/\/$/, "")}/graphql` : GRAPHQL_URL;
+  const api = await readApiBase(fetchImpl, holder, options.tokens, graphqlUrl);
   const url = `${api}${SWE_MODELS_PATH}`;
   const body = await readJson(fetchImpl, holder, options.tokens, url, {
     method: "GET",
@@ -125,8 +127,8 @@ export async function readSweModels(options: {
   };
 }
 
-async function readApiBase(fetchImpl: typeof fetch, holder: { token: string }, tokens?: AccessTokenSource): Promise<string> {
-  const body = await readJson(fetchImpl, holder, tokens, GRAPHQL_URL, {
+async function readApiBase(fetchImpl: typeof fetch, holder: { token: string }, tokens?: AccessTokenSource, graphqlUrl = GRAPHQL_URL): Promise<string> {
+  const body = await readJson(fetchImpl, holder, tokens, graphqlUrl, {
     method: "POST",
     headers: {
       accept: "application/json",

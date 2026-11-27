@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GitHubClient } from "./github.ts";
 import { failureMessage } from "./errors.ts";
 import { appendWatcherLog, notificationChannelsForTask, type DeliveredNotice, type NotifyChannel } from "./notify.ts";
 import { shouldSpawnWatcher } from "./delivery.ts";
-import { awaitingSteer, fillPullRequest, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
+import { acquireDirectoryLock, releaseDirectoryLock } from "./dir-lock.ts";
+import { awaitingSteer, fillPullRequest, headRefOf, isFinalState, observe, presentUsage, readState, toDeliveryNotice, withStateLock, type TaskNotice, type TrackedTask } from "./state.ts";
 
 export async function runWatcher(options: {
   client: Pick<GitHubClient, "getTask" | "findPullRequest">;
@@ -56,7 +55,7 @@ async function refreshPending(options: {
 
 async function notifyFinal(
   options: {
-    client: Pick<GitHubClient, "findPullRequest">;
+    client: Pick<GitHubClient, "getTask" | "findPullRequest">;
     statePath: string;
     deliver: (notice: TaskNotice, task: TrackedTask) => Promise<DeliveredNotice>;
   },
@@ -75,7 +74,19 @@ async function notifyFinal(
       return task;
     });
     if (!tracked) continue;
-    await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line));
+    let headRef = tracked.branch?.head_ref;
+    if (tracked.pull_request && tracked.pull_request.number === null && !headRef) {
+      const slash = tracked.repo.indexOf("/");
+      const owner = slash > 0 ? tracked.repo.slice(0, slash) : undefined;
+      const repo = slash > 0 ? tracked.repo.slice(slash + 1) : undefined;
+      try {
+        const remote = await options.client.getTask({ taskId, owner, repo });
+        headRef = headRefOf(remote, tracked);
+      } catch {
+        // Fall through to fillPullRequest, which logs the missing head_ref.
+      }
+    }
+    await fillPullRequest(tracked, (input) => options.client.findPullRequest(input), (line) => appendWatcherLog(line), headRef);
     const claimed = await withStateLock(options.statePath, (state) => {
       const task = state.tasks[taskId];
       if (!task || !readyToNotify(task)) return null;
@@ -140,43 +151,20 @@ export function watcherLockPath(statePath: string): string {
   return `${statePath}.watcher`;
 }
 
+const heldWatchers = new Map<string, string>();
+
 export async function acquireWatcher(lockDir: string): Promise<boolean> {
-  await mkdir(dirname(lockDir), { recursive: true });
-  const started = Date.now();
-  for (;;) {
-    try {
-      await mkdir(lockDir);
-      await writeFile(join(lockDir, "pid"), String(process.pid));
-      return true;
-    } catch (error) {
-      if (!isCode(error, "EEXIST")) throw error;
-      if (!(await watcherAlive(lockDir))) {
-        await rm(lockDir, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() - started > 2_000) return false;
-      await delay(100);
-    }
-  }
+  const held = await acquireDirectoryLock(lockDir, { timeoutMs: 2_000, pollMs: 100 });
+  if (!held) return false;
+  heldWatchers.set(lockDir, held.owner);
+  return true;
 }
 
 export async function releaseWatcher(lockDir: string): Promise<void> {
-  await rm(lockDir, { recursive: true, force: true });
-}
-
-async function watcherAlive(lockDir: string): Promise<boolean> {
-  try {
-    const pid = Number((await readFile(join(lockDir, "pid"), "utf8")).trim());
-    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return isCode(error, "EPERM");
-    }
-  } catch {
-    return false;
-  }
+  const owner = heldWatchers.get(lockDir);
+  if (!owner) return;
+  await releaseDirectoryLock(lockDir, owner);
+  heldWatchers.delete(lockDir);
 }
 
 export function startDetachedWatcher(env: NodeJS.ProcessEnv = process.env): void {
@@ -201,8 +189,4 @@ function refreshUsage(task: TrackedTask): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }

@@ -127,5 +127,10 @@ describe("redact", () => {
       expect(failure).not.toHaveProperty("retry_after_s");
       expect(failure.message).not.toContain(retry);
     });
+
+    it("classifies unexpected internal errors as internal_error instead of invalid_argument", () => {
+      expect(failureToError(new Error("The local state is not valid JSON.")).error.code).toBe("internal_error");
+      expect(failureToError(new Error("missing required parameter: repo")).error.code).toBe("invalid_argument");
+    });
   });
 });

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { acquireDirectoryLock, releaseDirectoryLock } from "./dir-lock.ts";
 import type { AgentSession, AgentTask } from "./github.ts";
 import { failureMessage, isModelUnavailable, modelUnavailableMessage } from "./errors.ts";
 import { resolveTaskPageUrl } from "./task-urls.ts";
@@ -348,15 +350,15 @@ export async function withDirectoryLock<T>(
   fn: () => Promise<T>,
   options?: { timeoutMs?: number; busyMessage?: string },
 ): Promise<T> {
-  await acquire(
-    lock,
-    options?.timeoutMs ?? 10_000,
-    options?.busyMessage ?? "Could not save local state: the file is in use.",
-  );
+  const held = await acquireDirectoryLock(lock, {
+    timeoutMs: options?.timeoutMs ?? 35_000,
+    pollMs: 50,
+  });
+  if (!held) throw new Error(options?.busyMessage ?? "Could not save local state: the file is in use.");
   try {
     return await fn();
   } finally {
-    await rm(lock, { recursive: true, force: true });
+    await releaseDirectoryLock(lock, held.owner);
   }
 }
 
@@ -395,52 +397,22 @@ function parseState(text: string): StateFile {
 
 async function writeState(statePath: string, state: StateFile): Promise<void> {
   await mkdir(dirname(statePath), { recursive: true });
-  const tmp = `${statePath}.tmp`;
+  const tmp = `${statePath}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   try {
-    await rename(tmp, statePath);
-  } catch {
-    await rm(statePath, { force: true });
-    await rename(tmp, statePath);
-  }
-}
-
-async function acquire(lock: string, timeoutMs: number, busyMessage: string): Promise<void> {
-  await mkdir(dirname(lock), { recursive: true });
-  const started = Date.now();
-  for (;;) {
-    try {
-      await mkdir(lock);
-      await writeFile(join(lock, "pid"), String(process.pid));
-      return;
-    } catch (error) {
-      if (!isCode(error, "EEXIST")) throw error;
-      if (!(await lockAlive(lock))) {
-        await rm(lock, { recursive: true, force: true });
-        continue;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await rename(tmp, statePath);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await delay(25);
       }
-      if (Date.now() - started > timeoutMs) throw new Error(busyMessage);
-      await delay(50);
     }
-  }
-}
-
-async function lockAlive(lock: string): Promise<boolean> {
-  try {
-    const pid = Number((await readFile(join(lock, "pid"), "utf8")).trim());
-    return Number.isInteger(pid) && processAlive(pid);
-  } catch {
-    return false;
-  }
-}
-
-function processAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isCode(error, "EPERM");
+    throw lastError;
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
   }
 }
 
