@@ -152,6 +152,32 @@ describe("directory lock", () => {
       }
     }
   }, 20_000);
+
+  it.each(["state", "watcher"] as const)("reclaims a legacy dead-pid directory through the %s lock", async (kind) => {
+    const dead = await exitedPid();
+    const { dir, statePath, lock } = await agedLock(kind, async (path) => {
+      await writeFile(join(path, "pid"), `${dead}\n`);
+    });
+    await expectReclaimed(kind, dir, statePath, lock);
+  }, 45_000);
+
+  it.each(["state", "watcher"] as const)("reclaims a directory that only holds a stray claim file through the %s lock", async (kind) => {
+    const dead = await exitedPid();
+    const { dir, statePath, lock } = await agedLock(kind, async (path) => {
+      await writeFile(join(path, `claim.${dead}.${randomUUID()}`), `${dead}\n${randomUUID()}\n`);
+    });
+    await expectReclaimed(kind, dir, statePath, lock);
+  }, 45_000);
+
+  it.each(["state", "watcher"] as const)("does not steal a legacy pid directory while that pid is alive through the %s lock", async (kind) => {
+    const { dir, lock } = await agedLock(kind, async (path) => {
+      await writeFile(join(path, "pid"), `${process.pid}\n`);
+    });
+    const held = await acquireDirectoryLock(lock, { timeoutMs: 400, pollMs: 20 });
+    expect(held).toBeNull();
+    expect(await readFile(join(lock, "pid"), "utf8")).toBe(`${process.pid}\n`);
+    expect(await staleNames(dir)).toEqual([]);
+  }, 5_000);
 });
 
 async function runWorkers(kind: "state" | "watcher", dir: string): Promise<{ count: number; overlaps: number; errors: string[]; detail: string }> {
@@ -202,6 +228,47 @@ async function readCount(path: string): Promise<number> {
     if (isCode(error, "ENOENT")) return 0;
     throw error;
   }
+}
+
+async function agedLock(
+  kind: "state" | "watcher",
+  fill: (lock: string) => Promise<void>,
+): Promise<{ dir: string; statePath: string; lock: string }> {
+  const dir = await tempDir();
+  const statePath = join(dir, "state.json");
+  const lock = kind === "state" ? `${statePath}.lock` : watcherLockPath(statePath);
+  await mkdir(lock);
+  await fill(lock);
+  const aged = new Date(Date.now() - 10_000);
+  await utimes(lock, aged, aged);
+  return { dir, statePath, lock };
+}
+
+async function expectReclaimed(
+  kind: "state" | "watcher",
+  dir: string,
+  statePath: string,
+  lock: string,
+): Promise<void> {
+  const started = Date.now();
+  if (kind === "state") {
+    await withStateLock(statePath, (state) => {
+      state.models.accepted.push("recovered");
+    });
+    expect((await readState(statePath)).models.accepted).toEqual(["recovered"]);
+  } else {
+    const acquired = await acquireWatcher(lock);
+    expect(acquired, "watcher lock was not reclaimed").toBe(true);
+    await releaseWatcher(lock);
+  }
+  const elapsed = Date.now() - started;
+  expect(elapsed, `${kind} took ${elapsed}ms`).toBeLessThan(1_000);
+  expect(await exists(lock)).toBe(false);
+  expect(await staleNames(dir)).toEqual([]);
+}
+
+async function staleNames(dir: string): Promise<string[]> {
+  return (await readdir(dir)).filter((name) => name.includes(".stale-"));
 }
 
 async function plantDeadLock(lock: string, pid: number): Promise<void> {

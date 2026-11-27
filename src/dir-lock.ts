@@ -85,6 +85,8 @@ async function inspect(lock: string): Promise<Inspection> {
     const info = await stat(lock);
     const claim = await readMaybe(join(lock, "claim"));
     if (claim !== null && ownerAlive(claim)) return { kind: "live" };
+    const pid = await readMaybe(join(lock, "pid"));
+    if (pid !== null && ownerAlive(pid)) return { kind: "live" };
     if (claim === null && Date.now() - info.mtimeMs < EMPTY_LOCK_GRACE_MS) return { kind: "live" };
     return { kind: "stale", owner: null };
   } catch (error) {
@@ -125,27 +127,54 @@ async function steal(lock: string, expected: string | null): Promise<boolean> {
 
 async function removeAbandonedEmpty(lock: string): Promise<boolean> {
   if (directoryLockTestHooks.beforeTakeEmpty !== null) await directoryLockTestHooks.beforeTakeEmpty();
-  if (await readMaybe(join(lock, "owner")) !== null) return false;
-  try {
-    const info = await stat(lock);
-    if (Date.now() - info.mtimeMs < EMPTY_LOCK_GRACE_MS) return false;
-  } catch (error) {
-    if (isCode(error, "ENOENT")) return false;
-    throw error;
-  }
+  if (!await ownerlessPastGrace(lock)) return false;
   const claim = await readMaybe(join(lock, "claim"));
   if (claim !== null) {
     if (ownerAlive(claim)) return false;
     if (!await removeFileIfContent(join(lock, "claim"), claim)) return false;
+    if (!await ownerlessPastGrace(lock)) return false;
   }
-  if (await readMaybe(join(lock, "owner")) !== null) return false;
   try {
     await rmdir(lock);
     return true;
   } catch (error) {
-    if (isCode(error, "ENOENT") || isCode(error, "ENOTEMPTY")) return false;
+    if (isCode(error, "ENOENT")) return false;
+    if (!isCode(error, "ENOTEMPTY")) throw error;
+  }
+  return takeoverOwnerless(lock);
+}
+
+async function ownerlessPastGrace(lock: string): Promise<boolean> {
+  if (await readMaybe(join(lock, "owner")) !== null) return false;
+  if (ownerAlive(await readMaybe(join(lock, "pid")))) return false;
+  try {
+    const info = await stat(lock);
+    return Date.now() - info.mtimeMs >= EMPTY_LOCK_GRACE_MS;
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return false;
     throw error;
   }
+}
+
+async function takeoverOwnerless(lock: string): Promise<boolean> {
+  if (!await ownerlessPastGrace(lock)) return false;
+  if (ownerAlive(await readMaybe(join(lock, "claim")))) return false;
+  const grave = `${lock}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    await rename(lock, grave);
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return false;
+    throw error;
+  }
+  const movedOwner = await readMaybe(join(grave, "owner"));
+  const movedPid = await readMaybe(join(grave, "pid"));
+  const movedClaim = await readMaybe(join(grave, "claim"));
+  if (movedOwner === null && !ownerAlive(movedPid) && !ownerAlive(movedClaim)) {
+    await rm(grave, { recursive: true, force: true });
+    return true;
+  }
+  await restoreDir(grave, lock);
+  return false;
 }
 
 async function claimStale(lock: string, claim: string): Promise<boolean> {
