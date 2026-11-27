@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Taking an empty directory lock uses `rmdir`, so a stalled acquire cannot overlap another holder or leave a `.stale-*` directory. If a displaced lock cannot be renamed back, that copy is deleted.
+- A directory lock with no owner record but a legacy `pid` file or any other file is reclaimed after the empty-lock grace. The directory is renamed aside and deleted only when it still has no live owner or pid. A live legacy pid is left in place.
+
 ## 0.3.1
 
 ### Changed
