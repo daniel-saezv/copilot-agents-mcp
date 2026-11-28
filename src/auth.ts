@@ -93,7 +93,7 @@ export function ignoredTokenWarning(env: NodeJS.ProcessEnv): string | null {
 }
 
 export function authLockPath(statePath: string): string {
-  return join(dirname(statePath), "auth.lock");
+  return join(dirname(statePath), "auth.lock.sqlite");
 }
 
 export function createMemoryStore(): SecretStore {

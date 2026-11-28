@@ -13,7 +13,7 @@ export type LocalStatusDiagnostics = {
 };
 
 export function stateLockDir(statePath: string): string {
-  return `${statePath}.lock`;
+  return `${statePath}.lock.sqlite`;
 }
 
 export function envFlagSet(env: NodeJS.ProcessEnv, name: string): boolean {
@@ -63,8 +63,8 @@ export async function probeStateWritable(statePath: string): Promise<{ statePath
     await access(parent, constants.W_OK);
     await writeFile(fileProbe, "", { flag: "w" });
     await rm(fileProbe, { force: true });
-    await mkdir(lockProbe);
-    await rm(lockProbe, { recursive: true, force: true });
+    await writeFile(lockProbe, "", { flag: "w" });
+    await rm(lockProbe, { force: true });
     return { statePath, lockDir, writable: "ok" };
   } catch {
     return { statePath, lockDir, writable: "fail" };
@@ -81,7 +81,7 @@ export async function buildLocalStatusDiagnostics(
   const lines = [
     "Local diagnostics:",
     `State file: ${state.statePath} — writable: ${state.writable}`,
-    `State lock dir: ${state.lockDir} — writable: ${state.writable}`,
+    `State lock: ${state.lockDir} — writable: ${state.writable}`,
     ...formatNotifyEnvDiagnostics(env),
     ...formatDbusDiagnostics(env, platform),
   ];

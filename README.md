@@ -27,7 +27,7 @@ npx -y github:daniel-saezv/copilot-agents-mcp login
 npx -y github:daniel-saezv/copilot-agents-mcp auth status
 ```
 
-Complete the device flow in the browser. `auth status` shows the active credential without printing tokens, then **local diagnostics** (no network, never reading notify secret values): state file and lock directory writability (non-writable → exit code 1); webhook env set yes/no only (both unset → info: optional; exactly one set → warning); `DBUS_SESSION_BUS_ADDRESS` yes/no plus an info line on Linux when unset. Optional webhook and notify warnings do not change the exit code. Alternatively set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP server process environment (never commit tokens in project config).
+Complete the device flow in the browser. `auth status` shows the active credential without printing tokens, then **local diagnostics** (no network, never reading notify secret values): state file and lock file writability (non-writable → exit code 1); webhook env set yes/no only (both unset → info: optional; exactly one set → warning); `DBUS_SESSION_BUS_ADDRESS` yes/no plus an info line on Linux when unset. Optional webhook and notify warnings do not change the exit code. Alternatively set `GITHUB_PERSONAL_ACCESS_TOKEN` in the MCP server process environment (never commit tokens in project config).
 
 Optional: `COPILOT_AGENTS_GITHUB_APP_CLIENT_ID`, `COPILOT_AGENTS_GITHUB_API_BASE_URL` (GitHub Enterprise).
 
@@ -136,7 +136,7 @@ Point stdio transport at `npx -y github:daniel-saezv/copilot-agents-mcp`. Pass a
 npx -y github:daniel-saezv/copilot-agents-mcp watch
 ```
 
-`create_agent_task` also starts a detached watcher when an eligible owner webhook or `COPILOT_AGENTS_NOTIFY_URL` is configured. The watcher polls pending tasks, updates local state under a directory lock, and records completion delivery.
+`create_agent_task` also starts a detached watcher when an eligible owner webhook or `COPILOT_AGENTS_NOTIFY_URL` is configured. The watcher polls pending tasks, updates local state under a lock, and records completion delivery.
 
 Several agents can share one connector and identical server environment. Pass each agent's private `owner_token` on create, steer, abort, and `set_completion_strategy`; filter `list_agent_tasks` by its label-style `owner`. That read filter is not identity. No environment variable, client name, or session identifies an owner.
 
