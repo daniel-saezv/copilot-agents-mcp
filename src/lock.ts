@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { type DatabaseSync, type DatabaseSyncOptions } from "node:sqlite";
-import * as sqlite from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 const SQLITE_BUSY = 5;
 const SQLITE_LOCKED = 6;
 
-const Database = (sqlite as unknown as {
-  Database: new (path: string, options?: DatabaseSyncOptions) => DatabaseSync;
-}).Database;
-
-// The connection finalizes on GC and drops the kernel lock. This map is the strong reference.
+// DatabaseSync finalizes on GC and drops the kernel lock. This map is the strong reference.
 const heldDatabases = new Map<string, { lock: string; db: DatabaseSync }>();
 
 export async function acquireDirectoryLock(
@@ -21,7 +16,7 @@ export async function acquireDirectoryLock(
   await mkdir(dirname(lock), { recursive: true });
   let db: DatabaseSync;
   try {
-    db = new Database(lock, { timeout: 0 });
+    db = new DatabaseSync(lock, { timeout: 0 });
   } catch (error) {
     throw lockFailure(lock, error);
   }
