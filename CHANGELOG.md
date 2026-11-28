@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-11-28
+
 ### Fixed
 
 - State, watcher and auth locks now use a kernel-held SQLite lock released automatically when the holder dies.
